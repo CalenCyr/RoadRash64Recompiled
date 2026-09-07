@@ -1,0 +1,368 @@
+[
+  {
+    "path": "tools/N64Recomp",
+    "url": "https://github.com/N64Recomp/N64Recomp.git",
+    "commit": "ffb39cdad1da5de07eaaa48bd1db4a89a7986771",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "tools/N64Recomp/lib/ELFIO",
+    "url": "https://github.com/serge1/ELFIO",
+    "commit": "ad8b641f9682b6091ba8b9f7c8152255c1a2c803",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "tools/N64Recomp/lib/fmt",
+    "url": "https://github.com/fmtlib/fmt",
+    "commit": "407c905e45ad75fc29bf0f9bb7c5c2fd3475976f",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "tools/N64Recomp/lib/rabbitizer",
+    "url": "https://github.com/Decompollaborate/rabbitizer",
+    "commit": "e0d8003047938e2ec3697eaf8d61a84d11d17b43",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "tools/N64Recomp/lib/sljit",
+    "url": "https://github.com/zherczeg/sljit",
+    "commit": "f6326087b3404efb07c6d3deed97b3c3b8098c0c",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "tools/N64Recomp/lib/tomlplusplus",
+    "url": "https://github.com/marzer/tomlplusplus",
+    "commit": "1f7884e59165e517462f922e7b6de131bd9844f3",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/N64ModernRuntime",
+    "url": "https://github.com/N64Recomp/N64ModernRuntime.git",
+    "commit": "ca568b6ad79b9029d14077f0c3ffa757727c5559",
+    "patch": "dependency-patches/native_lib_N64ModernRuntime.patch",
+    "extraFiles": [
+      {
+        "path": "ultramodern/include/ultramodern/audio_policy.hpp",
+        "sha256": "6aabf9d55dc23aecb880e5285b2660bd58180511e48a15047d722f27b8314d48"
+      },
+      {
+        "path": "ultramodern/include/ultramodern/rr64_scheduler_diagnostics.hpp",
+        "sha256": "2ef012dd2af06f35093995c5a4f3d64f4c6818a5559081745abdbc1a14935f67"
+      }
+    ]
+  },
+  {
+    "path": "native/lib/N64ModernRuntime/N64Recomp",
+    "url": "https://github.com/N64Recomp/N64Recomp",
+    "commit": "2b6f05688de2abc7d86da5b4a89b84c2c6acbabe",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/N64ModernRuntime/N64Recomp/lib/ELFIO",
+    "url": "https://github.com/serge1/ELFIO",
+    "commit": "ad8b641f9682b6091ba8b9f7c8152255c1a2c803",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/N64ModernRuntime/N64Recomp/lib/fmt",
+    "url": "https://github.com/fmtlib/fmt",
+    "commit": "0e8aad961d66904cfda8d7cc894f6f6eee2d9f30",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/N64ModernRuntime/N64Recomp/lib/rabbitizer",
+    "url": "https://github.com/Decompollaborate/rabbitizer",
+    "commit": "e0d8003047938e2ec3697eaf8d61a84d11d17b43",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/N64ModernRuntime/N64Recomp/lib/sljit",
+    "url": "https://github.com/zherczeg/sljit",
+    "commit": "f6326087b3404efb07c6d3deed97b3c3b8098c0c",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/N64ModernRuntime/N64Recomp/lib/tomlplusplus",
+    "url": "https://github.com/marzer/tomlplusplus",
+    "commit": "1f7884e59165e517462f922e7b6de131bd9844f3",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/N64ModernRuntime/thirdparty/miniz",
+    "url": "https://github.com/richgel999/miniz",
+    "commit": "8573fd7cd6f49b262a0ccc447f3c6acfc415e556",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/N64ModernRuntime/thirdparty/o1heap",
+    "url": "https://github.com/N64Recomp/o1heap",
+    "commit": "a124b850791db2a33f7354d2b0aa7da821cef6f5",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/N64ModernRuntime/thirdparty/xxHash",
+    "url": "https://github.com/Cyan4973/xxHash.git",
+    "commit": "ac3a25da3d957d9ef3e4114d9f8332d34ce83a46",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64",
+    "url": "https://github.com/rt64/rt64.git",
+    "commit": "6f1c2d99a4ea571c139f449c326fd176ba8f3496",
+    "patch": "dependency-patches/native_lib_rt64.patch",
+    "extraFiles": [
+      {
+        "path": "src/common/rt64_jabo_texture_hasher.cpp",
+        "sha256": "41e97f9562754b8bc1ce7ba3c2ccfbc363004e54dbf19901a2ef29ef06b877ab"
+      },
+      {
+        "path": "src/common/rt64_jabo_texture_hasher.h",
+        "sha256": "54f98641e13f06daed8da1dc3fd8b581df9040b2334e4f25fb03fa9fd0b648d6"
+      },
+      {
+        "path": "src/common/rt64_rr64_texture_hash_cache.h",
+        "sha256": "2a3bf4c4bcbef360c0b8a22ca300973760cbaad85f9b9934af1dce63a7315c47"
+      },
+      {
+        "path": "src/common/rt64_rr64_texture_load_cache.h",
+        "sha256": "877b7b202fc53ae59b76e8762d0f46495e74250fe0f5401cbf758ab9b8d4758c"
+      },
+      {
+        "path": "src/common/rt64_rr64_video_aspect.h",
+        "sha256": "3820c2194e0c7705ede81531f58eaa6045237cdf2f4818cf88e81433faa5dbbe"
+      },
+      {
+        "path": "src/hle/rt64_rr64_authored_cadence.h",
+        "sha256": "d11c14acd7f1ce7774b6985b7884733275dc1317ccc8fc4154d439a287fe52e4"
+      },
+      {
+        "path": "src/hle/rt64_rr64_authored_frame.h",
+        "sha256": "d886235c3e45c1b9dab7852fcde2cc1b86687ffadc845e73528e4384f74245da"
+      },
+      {
+        "path": "src/hle/rt64_rr64_coordinate_consistency.h",
+        "sha256": "cce57975dc3689a04bb705c544e626562ae9e8a6d1014126b4223a1590c45082"
+      },
+      {
+        "path": "src/hle/rt64_rr64_frame_metadata.h",
+        "sha256": "a2da5c5441b0071e6254bb5a216848a377ce3f9efe9e75fdfc2e94cea005e50a"
+      },
+      {
+        "path": "src/hle/rt64_rr64_frame_pacing.h",
+        "sha256": "044e6b6eb55c49b3126cceb3625a5ab3d902f8806149290e3f3565dd18d9f950"
+      },
+      {
+        "path": "src/hle/rt64_rr64_geometry_match.h",
+        "sha256": "184c77431a0d96f272d259cb60eec28a5e6a4249698559b0fff8b832d56c8bd2"
+      },
+      {
+        "path": "src/hle/rt64_rr64_matching_preflight.h",
+        "sha256": "dea7353654d81eb9fc30c7af6f45b61710cd69b14c3948ef199035da6c84e2ed"
+      },
+      {
+        "path": "src/hle/rt64_rr64_owned_frame_batch.h",
+        "sha256": "9eff9eb7ac96207e05cbcf8657a4b3b16da0e4df0159d1449a2b764573fdc12a"
+      },
+      {
+        "path": "src/hle/rt64_rr64_pipeline_diagnostics.h",
+        "sha256": "8c58dd57fca3f8faec4cc86da8956744b6042a4b076cff485217ce707ad938ae"
+      },
+      {
+        "path": "src/hle/rt64_rr64_translation_rejection.h",
+        "sha256": "302df89ef9b86a98117ebbab3ae6d876e75134dea4878f814223a7034230b9f0"
+      },
+      {
+        "path": "src/render/rt64_rr64_frame_overwrite.h",
+        "sha256": "dff303cbea767593553f43b11f6b0cc3b0eb8bdedc088ad06de7c89f43a4c670"
+      }
+    ]
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/ddspp",
+    "url": "https://github.com/redorav/ddspp.git",
+    "commit": "21ca0c4319dfd5a161c5f2a0c406e8f60194ea6c",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/dxc",
+    "url": "https://github.com/rt64/dxc-bin",
+    "commit": "cc15e715ee378a4f675b335bd1071ff105873fc8",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/hlslpp",
+    "url": "https://github.com/redorav/hlslpp",
+    "commit": "6f5274c66132e8f951c400103d897582b8f21491",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/im3d",
+    "url": "https://github.com/john-chapman/im3d",
+    "commit": "d03941725fd0bd08c78c46e3e5b0265526e9d060",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/imgui",
+    "url": "https://github.com/ocornut/imgui",
+    "commit": "277ae93c41314ba5f4c7444f37c4319cdf07e8cf",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/implot",
+    "url": "https://github.com/epezent/implot",
+    "commit": "f156599faefe316f7dd20fe6c783bf87c8bb6fd9",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/mupen64plus-core",
+    "url": "https://github.com/mupen64plus/mupen64plus-core",
+    "commit": "860fac3fbae94194a392c1d9857e185eda6d083e",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/mupen64plus-win32-deps",
+    "url": "https://github.com/mupen64plus/mupen64plus-win32-deps",
+    "commit": "de8111fdcb89144abc16c85650ce4e21e028bfb5",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/nativefiledialog-extended",
+    "url": "https://github.com/btzy/nativefiledialog-extended",
+    "commit": "17b6e8ce219c0677f94b63636abb9296b28841ca",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/plume",
+    "url": "https://github.com/renderbag/plume.git",
+    "commit": "d890ac899e505fb30040e037a4037cdeca68f033",
+    "patch": "dependency-patches/native_lib_rt64_src_contrib_plume.patch",
+    "extraFiles": [
+      {
+        "path": "plume_present_outcome.h",
+        "sha256": "28c66fefb7ea04f5872e34e094281c4ba93e45db9c5b8d87aac9f15beaad9a62"
+      }
+    ]
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/plume/contrib/D3D12MemoryAllocator",
+    "url": "https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator",
+    "commit": "9ef66bc14edd10dee0de3a545b98578363552f66",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/plume/contrib/Vulkan-Headers",
+    "url": "https://github.com/KhronosGroup/Vulkan-Headers",
+    "commit": "2fa203425eb4af9dfc6b03f97ef72b0b5bcb8350",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/plume/contrib/VulkanMemoryAllocator",
+    "url": "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator",
+    "commit": "29b35ea4232688c0f42cdff0c10848290760a417",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/plume/contrib/volk",
+    "url": "https://github.com/zeux/volk",
+    "commit": "be3dbd49bf77052665e96b6c7484af855e7e5f67",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/re-spirv",
+    "url": "https://github.com/rt64/re-spirv",
+    "commit": "5d6b756ee62760f71b65d37e41a0b5a3dab90507",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/re-spirv/external/SPIRV-Headers",
+    "url": "https://github.com/KhronosGroup/SPIRV-Headers",
+    "commit": "f013f08e4455bcc1f0eed8e3dd5e2009682656d9",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/spirv-cross",
+    "url": "https://github.com/KhronosGroup/SPIRV-Cross.git",
+    "commit": "6173e24b31f09a0c3217103a130e74c4ddec14a6",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/stb",
+    "url": "https://github.com/nothings/stb",
+    "commit": "ae721c50eaf761660b4f90cc590453cdb0c2acd0",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/xxHash",
+    "url": "https://github.com/Cyan4973/xxHash",
+    "commit": "1864a50c9b5cf8500d8e9e61ed92aa0dd3772750",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/rt64/src/contrib/zstd",
+    "url": "https://github.com/facebook/zstd",
+    "commit": "0ff651dd876823b99fa5c5f53292be28381aee9b",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/RecompFrontend",
+    "url": "https://github.com/N64Recomp/RecompFrontend.git",
+    "commit": "d0d90ba49f46f4896aaeda362056c21b1e342561",
+    "patch": "dependency-patches/native_lib_RecompFrontend.patch",
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/RecompFrontend/recompui/lib/RmlUi",
+    "url": "https://github.com/mikke89/RmlUi",
+    "commit": "7a06f27db04fe5d13a5dacc19b2b4544673a4eca",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/RecompFrontend/recompui/lib/freetype-windows-binaries",
+    "url": "https://github.com/ubawurinna/freetype-windows-binaries/",
+    "commit": "9124a2073f3a7055726be46bab1d54bf14f68f63",
+    "patch": null,
+    "extraFiles": []
+  },
+  {
+    "path": "native/lib/RecompFrontend/recompui/lib/lunasvg",
+    "url": "https://github.com/sammycage/lunasvg",
+    "commit": "83c58df8103dc7dca423dfd824992af94d49bed6",
+    "patch": null,
+    "extraFiles": []
+  }
+]

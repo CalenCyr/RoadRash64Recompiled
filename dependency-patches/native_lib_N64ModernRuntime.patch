@@ -1,0 +1,1107 @@
+diff --git a/librecomp/include/librecomp/game.hpp b/librecomp/include/librecomp/game.hpp
+index 7f1533e..28334ec 100644
+--- a/librecomp/include/librecomp/game.hpp
++++ b/librecomp/include/librecomp/game.hpp
+@@ -96,6 +96,10 @@ namespace recomp {
+     void do_rom_read(uint8_t* rdram, gpr ram_address, uint32_t physical_addr, size_t num_bytes);
+     void do_rom_pio(uint8_t* rdram, gpr ram_address, uint32_t physical_addr);
+     const Version& get_project_version();
++    // Optional compatibility floor for projects that renumber a public release.
++    // Configure before start; this does not change the displayed app version.
++    void set_mod_compatibility_version(const Version& version);
++    const Version& get_mod_compatibility_version();
+ 
+     /**
+      * The following arguments contain mandatory callbacks that need to be registered (i.e., can't be `nullptr`):
+diff --git a/librecomp/src/ai.cpp b/librecomp/src/ai.cpp
+index 0195f2b..8c82d68 100644
+--- a/librecomp/src/ai.cpp
++++ b/librecomp/src/ai.cpp
+@@ -1,6 +1,4 @@
+ #include "recomp.h"
+-#include <cstdio>
+-#include <string>
+ #include <ultramodern/ultra64.h>
+ #include <ultramodern/ultramodern.hpp>
+ 
+diff --git a/librecomp/src/cont.cpp b/librecomp/src/cont.cpp
+index 7ad6c21..5856b33 100644
+--- a/librecomp/src/cont.cpp
++++ b/librecomp/src/cont.cpp
+@@ -1,5 +1,8 @@
+ #include "ultramodern/ultramodern.hpp"
+ 
++#include <array>
++#include <cstdio>
++
+ #include "helpers.hpp"
+ 
+ #define MAXCONTROLLERS 4
+@@ -45,16 +48,44 @@ extern "C" void osContStartReadData_recomp(uint8_t* rdram, recomp_context* ctx)
+ extern "C" void osContGetReadData_recomp(uint8_t* rdram, recomp_context* ctx) {
+     PTR(OSContPad) data = _arg<0, PTR(OSContPad)>(rdram, ctx);
+ 
+-    OSContPad dummy_data[MAXCONTROLLERS];
++    OSContPad dummy_data[MAXCONTROLLERS]{};
++    for (OSContPad& pad : dummy_data) {
++        // osContSetCh may ask the runtime to poll fewer than four ports. Mark
++        // every untouched slot as no-response before the host poll fills the
++        // requested range.
++        pad.err_no = 0x8;
++    }
+ 
+     osContGetReadData(dummy_data);
+ 
++    static std::array<u8, MAXCONTROLLERS> previous_errors{0xFF, 0xFF, 0xFF, 0xFF};
++    const std::array<u8, MAXCONTROLLERS> current_errors{
++        dummy_data[0].err_no,
++        dummy_data[1].err_no,
++        dummy_data[2].err_no,
++        dummy_data[3].err_no,
++    };
++    if (current_errors != previous_errors) {
++        std::fprintf(
++            stderr,
++            "[RR64-CONT] read errors=(%u,%u,%u,%u)\n",
++            current_errors[0],
++            current_errors[1],
++            current_errors[2],
++            current_errors[3]);
++        std::fflush(stderr);
++        previous_errors = current_errors;
++    }
++
+     for (int controller = 0; controller < MAXCONTROLLERS; controller++) {
++        // The error byte is meaningful even when a controller does not
++        // respond. Leaving it untouched makes a previously zeroed OSContPad
++        // look permanently connected to games such as Road Rash 64.
++        MEM_B(6 * controller + 4, data) = dummy_data[controller].err_no; // RR64_FIX_CONTROLLER_ERROR_PROPAGATION
+         if (dummy_data[controller].err_no == 0) {
+             MEM_H(6 * controller + 0, data) = dummy_data[controller].button;
+             MEM_B(6 * controller + 2, data) = dummy_data[controller].stick_x;
+             MEM_B(6 * controller + 3, data) = dummy_data[controller].stick_y;
+-            MEM_B(6 * controller + 4, data) = dummy_data[controller].err_no;
+         }
+     }
+ }
+diff --git a/librecomp/src/mods.cpp b/librecomp/src/mods.cpp
+index 0f7de83..e5ccfa0 100644
+--- a/librecomp/src/mods.cpp
++++ b/librecomp/src/mods.cpp
+@@ -613,7 +613,7 @@ recomp::mods::ModLoadError recomp::mods::ModContext::load_mod(recomp::mods::ModH
+     mod.section_load_addresses.clear();
+ 
+     // Check that the mod's minimum recomp version is met.
+-    if (get_project_version() < mod.manifest.minimum_recomp_version) {
++    if (get_mod_compatibility_version() < mod.manifest.minimum_recomp_version) {
+         error_param = mod.manifest.minimum_recomp_version.to_string();
+         return ModLoadError::MinimumRecompVersionNotMet;
+     }
+diff --git a/librecomp/src/pak.cpp b/librecomp/src/pak.cpp
+index 0be1513..9facf31 100644
+--- a/librecomp/src/pak.cpp
++++ b/librecomp/src/pak.cpp
+@@ -1,51 +1,476 @@
++#include <algorithm>
++#include <array>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <filesystem>
++#include <fstream>
++#include <mutex>
++#include <vector>
++
+ #include "ultramodern/ultra64.h"
+ #include "ultramodern/ultramodern.hpp"
+ 
+ #include "recomp.h"
+ #include "helpers.hpp"
++#include "librecomp/files.hpp"
++
++namespace {
++
++// RR64_FIX_VIRTUAL_CONTROLLER_PAK
++constexpr s32 kPfsOk = 0;
++constexpr s32 kPfsErrNoPack = 1;
++constexpr s32 kPfsErrInvalid = 5;
++constexpr s32 kPfsDataFull = 7;
++constexpr s32 kPfsDirFull = 8;
++constexpr s32 kPfsErrExist = 9;
++constexpr s32 kPfsErrDevice = 11;
++constexpr u8 kPfsRead = 0;
++constexpr size_t kDirectoryEntries = 16;
++constexpr size_t kUsableBytes = 123 * 256;
++constexpr size_t kGameNameBytes = 16;
++constexpr size_t kExtensionBytes = 4;
++constexpr std::array<char, 8> kDiskMagic{'R', 'R', '6', '4', 'P', 'F', 'S', '1'};
++constexpr uint32_t kDiskVersion = 1;
++
++struct VirtualPakFile {
++    bool used = false;
++    u16 company_code = 0;
++    u32 game_code = 0;
++    std::array<u8, kGameNameBytes> game_name{};
++    std::array<u8, kExtensionBytes> extension{};
++    std::vector<u8> data{};
++};
+ 
+-extern "C" void osPfsInitPak_recomp(uint8_t * rdram, recomp_context* ctx) {
+-    ctx->r2 = 1; // PFS_ERR_NOPACK
++std::array<VirtualPakFile, kDirectoryEntries> g_files{};
++std::mutex g_pak_mutex;
++bool g_loaded = false;
++
++std::filesystem::path pak_path() {
++    std::filesystem::path path = ultramodern::get_save_file_path();
++    if (path.empty()) {
++        path = std::filesystem::current_path() / "saves" / "rr64.n64.us.1.0.bin";
++    }
++    path.replace_extension(".mpk");
++    return path;
+ }
+ 
+-extern "C" void osPfsFreeBlocks_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    ctx->r2 = 1; // PFS_ERR_NOPACK
++template <typename T>
++bool read_value(std::istream& stream, T& value) {
++    stream.read(reinterpret_cast<char*>(&value), sizeof(value));
++    return stream.good();
+ }
+ 
+-extern "C" void osPfsAllocateFile_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    ctx->r2 = 1; // PFS_ERR_NOPACK
++template <typename T>
++bool write_value(std::ostream& stream, const T& value) {
++    stream.write(reinterpret_cast<const char*>(&value), sizeof(value));
++    return stream.good();
+ }
+ 
+-extern "C" void osPfsDeleteFile_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    ctx->r2 = 1; // PFS_ERR_NOPACK
++bool load_stream(std::istream& stream, std::array<VirtualPakFile, kDirectoryEntries>& files) {
++    std::array<char, 8> magic{};
++    uint32_t version = 0;
++    uint32_t count = 0;
++    stream.read(magic.data(), magic.size());
++    if (!stream.good() || magic != kDiskMagic || !read_value(stream, version) ||
++        !read_value(stream, count) || version != kDiskVersion || count > kDirectoryEntries) {
++        return false;
++    }
++
++    size_t total_bytes = 0;
++    for (uint32_t entry = 0; entry < count; ++entry) {
++        uint32_t slot = 0;
++        uint32_t data_size = 0;
++        VirtualPakFile file{};
++        if (!read_value(stream, slot) || !read_value(stream, file.company_code) ||
++            !read_value(stream, file.game_code) || !read_value(stream, data_size) ||
++            slot >= kDirectoryEntries || files[slot].used || data_size > kUsableBytes) {
++            return false;
++        }
++
++        stream.read(reinterpret_cast<char*>(file.game_name.data()), file.game_name.size());
++        stream.read(reinterpret_cast<char*>(file.extension.data()), file.extension.size());
++        file.data.resize(data_size);
++        if (data_size != 0) {
++            stream.read(reinterpret_cast<char*>(file.data.data()), file.data.size());
++        }
++        total_bytes += file.data.size();
++        if (!stream.good() || total_bytes > kUsableBytes) {
++            return false;
++        }
++
++        file.used = true;
++        files[slot] = std::move(file);
++    }
++    return true;
+ }
+ 
+-extern "C" void osPfsFileState_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    ctx->r2 = 1; // PFS_ERR_NOPACK
++void load_once() {
++    if (g_loaded) {
++        return;
++    }
++    g_loaded = true;
++
++    const std::filesystem::path path = pak_path();
++    std::array<VirtualPakFile, kDirectoryEntries> loaded_files{};
++    std::ifstream input = recomp::open_input_file_with_backup(path, std::ios_base::binary);
++    bool loaded = input.good() && load_stream(input, loaded_files);
++    if (!loaded) {
++        input.close();
++        loaded_files = {};
++        std::ifstream backup = recomp::open_input_backup_file(path, std::ios_base::binary);
++        loaded = backup.good() && load_stream(backup, loaded_files);
++    }
++
++    if (loaded) {
++        g_files = std::move(loaded_files);
++        std::fprintf(stderr, "[RR64-PFS] Loaded virtual Controller Pak: %s\n", path.string().c_str());
++    } else {
++        std::fprintf(stderr, "[RR64-PFS] Starting with an empty virtual Controller Pak: %s\n", path.string().c_str());
++    }
+ }
+ 
+-extern "C" void osPfsFindFile_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    ctx->r2 = 1; // PFS_ERR_NOPACK
++bool save_files() {
++    const std::filesystem::path path = pak_path();
++    std::error_code error;
++    std::filesystem::create_directories(path.parent_path(), error);
++    if (error) {
++        return false;
++    }
++
++    std::ofstream output = recomp::open_output_file_with_backup(path, std::ios_base::binary);
++    if (!output.good()) {
++        return false;
++    }
++
++    uint32_t count = 0;
++    for (const VirtualPakFile& file : g_files) {
++        count += file.used ? 1u : 0u;
++    }
++
++    output.write(kDiskMagic.data(), kDiskMagic.size());
++    if (!write_value(output, kDiskVersion) || !write_value(output, count)) {
++        return false;
++    }
++
++    for (uint32_t slot = 0; slot < g_files.size(); ++slot) {
++        const VirtualPakFile& file = g_files[slot];
++        if (!file.used) {
++            continue;
++        }
++
++        const uint32_t data_size = static_cast<uint32_t>(file.data.size());
++        if (!write_value(output, slot) || !write_value(output, file.company_code) ||
++            !write_value(output, file.game_code) || !write_value(output, data_size)) {
++            return false;
++        }
++        output.write(reinterpret_cast<const char*>(file.game_name.data()), file.game_name.size());
++        output.write(reinterpret_cast<const char*>(file.extension.data()), file.extension.size());
++        if (!file.data.empty()) {
++            output.write(reinterpret_cast<const char*>(file.data.data()), file.data.size());
++        }
++        if (!output.good()) {
++            return false;
++        }
++    }
++
++    output.close();
++    return recomp::finalize_output_file_with_backup(path);
++}
++
++gpr stack_pointer_arg(uint8_t* rdram, recomp_context* ctx, int offset) {
++    return static_cast<gpr>(static_cast<int64_t>(static_cast<int32_t>(MEM_W(offset, ctx->r29))));
++}
++
++template <size_t Size>
++std::array<u8, Size> read_guest_bytes(uint8_t* rdram, gpr address) {
++    std::array<u8, Size> result{};
++    if (address == 0) {
++        return result;
++    }
++    for (size_t index = 0; index < Size; ++index) {
++        result[index] = MEM_BU(index, address);
++    }
++    return result;
++}
++
++bool valid_pfs(uint8_t* rdram, PTR(OSPfs) pfs) {
++    if (pfs == 0) {
++        return false;
++    }
++    OSPfs* native_pfs = TO_PTR(OSPfs, pfs);
++    return native_pfs->channel == 0;
+ }
+ 
+-extern "C" void osPfsReadWriteFile_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    ctx->r2 = 1; // PFS_ERR_NOPACK
++size_t used_bytes() {
++    size_t result = 0;
++    for (const VirtualPakFile& file : g_files) {
++        if (file.used) {
++            result += file.data.size();
++        }
++    }
++    return result;
+ }
+ 
+-extern "C" void osPfsChecker_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    ctx->r2 = 1; // PFS_ERR_NOPACK
++int find_file(u16 company_code, u32 game_code,
++              const std::array<u8, kGameNameBytes>& game_name,
++              const std::array<u8, kExtensionBytes>& extension) {
++    for (size_t slot = 0; slot < g_files.size(); ++slot) {
++        const VirtualPakFile& file = g_files[slot];
++        if (file.used && file.company_code == company_code && file.game_code == game_code &&
++            file.game_name == game_name && file.extension == extension) {
++            return static_cast<int>(slot);
++        }
++    }
++    return -1;
+ }
+ 
+-extern "C" void osPfsNumFiles_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    s32* max_files = _arg<1, s32*>(rdram, ctx);
+-    s32* files_used = _arg<2, s32*>(rdram, ctx);
++} // namespace
++
++extern "C" void osPfsInitPak_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<1, PTR(OSPfs)>(rdram, ctx);
++    const s32 channel = _arg<2, s32>(rdram, ctx);
++    if (pfs == 0 || channel != 0) {
++        _return<s32>(ctx, kPfsErrNoPack);
++        return;
++    }
++
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    OSPfs* native_pfs = TO_PTR(OSPfs, pfs);
++    native_pfs->status = 0;
++    native_pfs->channel = channel;
++    native_pfs->version = 1;
++    native_pfs->dir_size = static_cast<int>(kDirectoryEntries);
++    native_pfs->banks = 1;
++    _return<s32>(ctx, kPfsOk);
++}
++
++extern "C" void osPfsFreeBlocks_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<0, PTR(OSPfs)>(rdram, ctx);
++    PTR(s32) bytes_not_used = _arg<1, PTR(s32)>(rdram, ctx);
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    if (!valid_pfs(rdram, pfs)) {
++        _return<s32>(ctx, kPfsErrNoPack);
++        return;
++    }
++    if (bytes_not_used != 0) {
++        MEM_W(0, bytes_not_used) = static_cast<s32>(kUsableBytes - used_bytes());
++    }
++    _return<s32>(ctx, kPfsOk);
++}
++
++extern "C" void osPfsAllocateFile_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<0, PTR(OSPfs)>(rdram, ctx);
++    const u16 company_code = _arg<1, u16>(rdram, ctx);
++    const u32 game_code = _arg<2, u32>(rdram, ctx);
++    const gpr game_name_address = _arg<3, PTR(u8)>(rdram, ctx);
++    const gpr extension_address = stack_pointer_arg(rdram, ctx, 0x10);
++    const s32 file_size = MEM_W(0x14, ctx->r29);
++    const gpr file_no_address = stack_pointer_arg(rdram, ctx, 0x18);
++    const auto game_name = read_guest_bytes<kGameNameBytes>(rdram, game_name_address);
++    const auto extension = read_guest_bytes<kExtensionBytes>(rdram, extension_address);
++
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    if (!valid_pfs(rdram, pfs)) {
++        _return<s32>(ctx, kPfsErrNoPack);
++        return;
++    }
++    if (file_size <= 0 || static_cast<size_t>(file_size) > kUsableBytes) {
++        _return<s32>(ctx, kPfsErrInvalid);
++        return;
++    }
++    if (find_file(company_code, game_code, game_name, extension) >= 0) {
++        _return<s32>(ctx, kPfsErrExist);
++        return;
++    }
++    if (used_bytes() + static_cast<size_t>(file_size) > kUsableBytes) {
++        _return<s32>(ctx, kPfsDataFull);
++        return;
++    }
++
++    auto free_slot = std::find_if(g_files.begin(), g_files.end(), [](const VirtualPakFile& file) {
++        return !file.used;
++    });
++    if (free_slot == g_files.end()) {
++        _return<s32>(ctx, kPfsDirFull);
++        return;
++    }
++
++    free_slot->used = true;
++    free_slot->company_code = company_code;
++    free_slot->game_code = game_code;
++    free_slot->game_name = game_name;
++    free_slot->extension = extension;
++    free_slot->data.assign(static_cast<size_t>(file_size), 0);
++    const s32 slot = static_cast<s32>(std::distance(g_files.begin(), free_slot));
++    if (file_no_address != 0) {
++        MEM_W(0, file_no_address) = slot;
++    }
++    _return<s32>(ctx, save_files() ? kPfsOk : kPfsErrDevice);
++}
++
++extern "C" void osPfsDeleteFile_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<0, PTR(OSPfs)>(rdram, ctx);
++    const u16 company_code = _arg<1, u16>(rdram, ctx);
++    const u32 game_code = _arg<2, u32>(rdram, ctx);
++    const gpr game_name_address = _arg<3, PTR(u8)>(rdram, ctx);
++    const gpr extension_address = stack_pointer_arg(rdram, ctx, 0x10);
++    const auto game_name = read_guest_bytes<kGameNameBytes>(rdram, game_name_address);
++    const auto extension = read_guest_bytes<kExtensionBytes>(rdram, extension_address);
++
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    if (!valid_pfs(rdram, pfs)) {
++        _return<s32>(ctx, kPfsErrNoPack);
++        return;
++    }
++    const int slot = find_file(company_code, game_code, game_name, extension);
++    if (slot < 0) {
++        _return<s32>(ctx, kPfsErrInvalid);
++        return;
++    }
++    g_files[slot] = {};
++    _return<s32>(ctx, save_files() ? kPfsOk : kPfsErrDevice);
++}
++
++extern "C" void osPfsFileState_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<0, PTR(OSPfs)>(rdram, ctx);
++    const s32 file_no = _arg<1, s32>(rdram, ctx);
++    const gpr state_address = _arg<2, PTR(u8)>(rdram, ctx);
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    if (!valid_pfs(rdram, pfs)) {
++        _return<s32>(ctx, kPfsErrNoPack);
++        return;
++    }
++    if (file_no < 0 || static_cast<size_t>(file_no) >= g_files.size() ||
++        !g_files[file_no].used || state_address == 0) {
++        _return<s32>(ctx, kPfsErrInvalid);
++        return;
++    }
++
++    const VirtualPakFile& file = g_files[file_no];
++    for (size_t offset = 0; offset < 32; ++offset) {
++        MEM_B(offset, state_address) = 0;
++    }
++    MEM_W(0, state_address) = static_cast<s32>(file.data.size());
++    MEM_W(4, state_address) = static_cast<s32>(file.game_code);
++    MEM_H(8, state_address) = static_cast<s16>(file.company_code);
++    for (size_t index = 0; index < file.extension.size(); ++index) {
++        MEM_B(10 + index, state_address) = file.extension[index];
++    }
++    for (size_t index = 0; index < file.game_name.size(); ++index) {
++        MEM_B(14 + index, state_address) = file.game_name[index];
++    }
++    _return<s32>(ctx, kPfsOk);
++}
++
++extern "C" void osPfsFindFile_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<0, PTR(OSPfs)>(rdram, ctx);
++    const u16 company_code = _arg<1, u16>(rdram, ctx);
++    const u32 game_code = _arg<2, u32>(rdram, ctx);
++    const gpr game_name_address = _arg<3, PTR(u8)>(rdram, ctx);
++    const gpr extension_address = stack_pointer_arg(rdram, ctx, 0x10);
++    const gpr file_no_address = stack_pointer_arg(rdram, ctx, 0x14);
++    const auto game_name = read_guest_bytes<kGameNameBytes>(rdram, game_name_address);
++    const auto extension = read_guest_bytes<kExtensionBytes>(rdram, extension_address);
++
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    if (!valid_pfs(rdram, pfs)) {
++        _return<s32>(ctx, kPfsErrNoPack);
++        return;
++    }
++    const int slot = find_file(company_code, game_code, game_name, extension);
++    if (slot < 0) {
++        _return<s32>(ctx, kPfsErrInvalid);
++        return;
++    }
++    if (file_no_address != 0) {
++        MEM_W(0, file_no_address) = slot;
++    }
++    _return<s32>(ctx, kPfsOk);
++}
++
++extern "C" void osPfsReadWriteFile_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<0, PTR(OSPfs)>(rdram, ctx);
++    const s32 file_no = _arg<1, s32>(rdram, ctx);
++    const u8 flag = _arg<2, u8>(rdram, ctx);
++    const s32 offset = _arg<3, s32>(rdram, ctx);
++    const s32 size = MEM_W(0x10, ctx->r29);
++    const gpr data_address = stack_pointer_arg(rdram, ctx, 0x14);
++
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    if (!valid_pfs(rdram, pfs)) {
++        _return<s32>(ctx, kPfsErrNoPack);
++        return;
++    }
++    if (file_no < 0 || static_cast<size_t>(file_no) >= g_files.size() ||
++        !g_files[file_no].used || offset < 0 || size < 0 || data_address == 0) {
++        _return<s32>(ctx, kPfsErrInvalid);
++        return;
++    }
++
++    VirtualPakFile& file = g_files[file_no];
++    const size_t first = static_cast<size_t>(offset);
++    const size_t byte_count = static_cast<size_t>(size);
++    if (first > file.data.size() || byte_count > file.data.size() - first) {
++        _return<s32>(ctx, kPfsErrInvalid);
++        return;
++    }
++
++    if (flag == kPfsRead) {
++        for (size_t index = 0; index < byte_count; ++index) {
++            MEM_B(index, data_address) = file.data[first + index];
++        }
++        _return<s32>(ctx, kPfsOk);
++        return;
++    }
++
++    for (size_t index = 0; index < byte_count; ++index) {
++        file.data[first + index] = MEM_BU(index, data_address);
++    }
++    _return<s32>(ctx, save_files() ? kPfsOk : kPfsErrDevice);
++}
++
++extern "C" void osPfsChecker_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<0, PTR(OSPfs)>(rdram, ctx);
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    _return<s32>(ctx, valid_pfs(rdram, pfs) ? kPfsOk : kPfsErrNoPack);
++}
+ 
+-    *max_files = 0;
+-    *files_used = 0;
++extern "C" void osPfsNumFiles_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<0, PTR(OSPfs)>(rdram, ctx);
++    PTR(s32) max_files = _arg<1, PTR(s32)>(rdram, ctx);
++    PTR(s32) files_used = _arg<2, PTR(s32)>(rdram, ctx);
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    if (!valid_pfs(rdram, pfs)) {
++        _return<s32>(ctx, kPfsErrNoPack);
++        return;
++    }
+ 
+-    _return<s32>(ctx, 1); // PFS_ERR_NOPACK
++    s32 used = 0;
++    for (const VirtualPakFile& file : g_files) {
++        used += file.used ? 1 : 0;
++    }
++    if (max_files != 0) {
++        MEM_W(0, max_files) = static_cast<s32>(kDirectoryEntries);
++    }
++    if (files_used != 0) {
++        MEM_W(0, files_used) = used;
++    }
++    _return<s32>(ctx, kPfsOk);
+ }
+ 
+-extern "C" void osPfsRepairId_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    _return<s32>(ctx, 1); // PFS_ERR_NOPACK
++extern "C" void osPfsRepairId_recomp(uint8_t* rdram, recomp_context* ctx) {
++    PTR(OSPfs) pfs = _arg<0, PTR(OSPfs)>(rdram, ctx);
++    std::lock_guard lock{g_pak_mutex};
++    load_once();
++    _return<s32>(ctx, valid_pfs(rdram, pfs) ? kPfsOk : kPfsErrNoPack);
+ }
+diff --git a/librecomp/src/recomp.cpp b/librecomp/src/recomp.cpp
+index 1200f77..c36d982 100644
+--- a/librecomp/src/recomp.cpp
++++ b/librecomp/src/recomp.cpp
+@@ -243,6 +243,19 @@ const recomp::Version& recomp::get_project_version() {
+     return project_version;
+ }
+ 
++static recomp::Version mod_compatibility_version{};
++static bool has_mod_compatibility_version = false;
++void recomp::set_mod_compatibility_version(const recomp::Version& version) {
++    mod_compatibility_version = version;
++    has_mod_compatibility_version = true;
++}
++const recomp::Version& recomp::get_mod_compatibility_version() {
++    if (has_mod_compatibility_version && project_version < mod_compatibility_version) {
++        return mod_compatibility_version;
++    }
++    return project_version;
++}
++
+ bool recomp::Version::from_string(const std::string& str, Version& out) {
+     std::array<size_t, 2> period_indices;
+     size_t cur_pos = 0;
+diff --git a/ultramodern/include/ultramodern/config.hpp b/ultramodern/include/ultramodern/config.hpp
+index 2f22456..5d3a7c0 100644
+--- a/ultramodern/include/ultramodern/config.hpp
++++ b/ultramodern/include/ultramodern/config.hpp
+@@ -36,6 +36,8 @@ namespace ultramodern {
+             Original,
+             Expand,
+             Manual,
++            Stretch,
++            WideHighRes,
+             OptionCount
+         };
+         enum class Antialiasing {
+@@ -74,6 +76,7 @@ namespace ultramodern {
+             Antialiasing msaa_option;
+             RefreshRate rr_option;
+             HighPrecisionFramebuffer hpfb_option;
++            bool vsync_enabled;
+             int rr_manual_value;
+             int ds_option;
+ 
+@@ -113,6 +116,8 @@ namespace ultramodern {
+             {ultramodern::renderer::AspectRatio::Original, "Original"},
+             {ultramodern::renderer::AspectRatio::Expand, "Expand"},
+             {ultramodern::renderer::AspectRatio::Manual, "Manual"},
++            {ultramodern::renderer::AspectRatio::Stretch, "Stretch"},
++            {ultramodern::renderer::AspectRatio::WideHighRes, "WideHighRes"},
+         });
+ 
+         NLOHMANN_JSON_SERIALIZE_ENUM(ultramodern::renderer::Antialiasing, {
+diff --git a/ultramodern/src/audio.cpp b/ultramodern/src/audio.cpp
+index 3198be0..919c935 100644
+--- a/ultramodern/src/audio.cpp
++++ b/ultramodern/src/audio.cpp
+@@ -1,5 +1,6 @@
+ #include "ultramodern/ultra64.h"
+ #include "ultramodern/ultramodern.hpp"
++#include "ultramodern/audio_policy.hpp"
+ #include <cassert>
+ 
+ static uint32_t sample_rate = 48000;
+@@ -35,11 +36,6 @@ void ultramodern::queue_audio_buffer(RDRAM_ARG PTR(int16_t) audio_data_, uint32_
+     }
+ }
+ 
+-// For SDL2
+-//uint32_t buffer_offset_frames = 1;
+-// For Godot
+-float buffer_offset_frames = 0.5f;
+-
+ // If there's ever any audio popping, check here first. Some games are very sensitive to
+ // the remaining sample count and reporting a number that's too high here can lead to issues.
+ // Reporting a number that's too low can lead to audio lag in some games.
+@@ -56,12 +52,7 @@ uint32_t ultramodern::get_remaining_audio_bytes() {
+     // there are enough samples even if the audio thread experiences a small amount of lag. This prevents
+     // audio popping on games that use the buffered audio byte count to determine how many samples
+     // to generate.
+-    uint32_t samples_per_vi = (sample_rate / 60);
+-    if (buffered_byte_count > static_cast<uint32_t>(buffer_offset_frames * sizeof(int16_t) * samples_per_vi)) {
+-        buffered_byte_count -= static_cast<uint32_t>(buffer_offset_frames * sizeof(int16_t) * samples_per_vi);
+-    }
+-    else {
+-        buffered_byte_count = 0;
+-    }
+-    return buffered_byte_count;
++    const uint32_t actual_buffered_frames = buffered_byte_count /
++        (kAudioOutputChannels * sizeof(int16_t));
++    return audio_remaining_bytes_for_game(actual_buffered_frames, sample_rate);
+ }
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index 090cc42..47b9d27 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -8,6 +8,7 @@
+ #include <mutex>
+ #include <queue>
+ #include <cstring>
++#include <cstdio>
+ 
+ #include "blockingconcurrentqueue.h"
+ 
+@@ -17,6 +18,9 @@
+ 
+ #include "ultramodern/rsp.hpp"
+ #include "ultramodern/renderer_context.hpp"
++#include "ultramodern/rr64_scheduler_diagnostics.hpp"
++
++namespace scheduler_diagnostics = ultramodern::rr64_diagnostics;
+ 
+ static ultramodern::events::callbacks_t events_callbacks{};
+ 
+@@ -26,10 +30,12 @@ void ultramodern::events::set_callbacks(const ultramodern::events::callbacks_t&
+ 
+ struct SpTaskAction {
+     OSTask task;
++    scheduler_diagnostics::Clock::time_point enqueued = scheduler_diagnostics::Clock::now();
+ };
+ 
+ struct ScreenUpdateAction {
+     ultramodern::renderer::ViRegs regs;
++    scheduler_diagnostics::Clock::time_point enqueued = scheduler_diagnostics::Clock::now();
+ };
+ 
+ struct UpdateConfigAction {
+@@ -187,6 +193,8 @@ void vi_thread_func() {
+     using namespace std::chrono_literals;
+ 
+     int remaining_retraces = 1;
++    scheduler_diagnostics::Clock::time_point previous_wake{};
++    bool has_previous_wake = false;
+ 
+     while (!exited) {
+         // Determine the next VI time (more accurate than adding 16ms each VI interrupt)
+@@ -206,9 +214,26 @@ void vi_thread_func() {
+         }
+         ultramodern::sleep_until(next);
+         auto time_now = ultramodern::time_since_start();
++        const auto wake = scheduler_diagnostics::Clock::now();
++        if (has_previous_wake) {
++            const auto wake_gap = wake - previous_wake;
++            scheduler_diagnostics::record(scheduler_diagnostics::Stage::ViWakeGap, wake_gap);
++            if (wake_gap > 22ms) { scheduler_diagnostics::count(scheduler_diagnostics::Event::ViWakeOver22ms); }
++            if (wake_gap > 30ms) { scheduler_diagnostics::count(scheduler_diagnostics::Event::ViWakeOver30ms); }
++        }
++        previous_wake = wake;
++        has_previous_wake = true;
++        // Keep deadline arithmetic in the existing clock's domain. Only the
++        // elapsed duration crosses into the diagnostics' steady-clock type.
++        const auto deadline_lateness = (ultramodern::get_start() + time_now) - next;
++        scheduler_diagnostics::record(scheduler_diagnostics::Stage::ViWakeLate,
++            deadline_lateness > decltype(deadline_lateness)::zero()
++                ? std::chrono::duration_cast<scheduler_diagnostics::Clock::duration>(deadline_lateness)
++                : scheduler_diagnostics::Clock::duration::zero());
+         // Calculate how many VIs have passed
+         uint64_t new_total_vis = (time_now * (60 * ultramodern::get_speed_multiplier()) / 1000ms) + 1;
+         if (new_total_vis > total_vis + 1) {
++            scheduler_diagnostics::count(scheduler_diagnostics::Event::ViSkipped, new_total_vis - total_vis - 1);
+             //printf("Skipped % " PRId64 " frames in VI interupt thread!\n", new_total_vis - total_vis - 1);
+         }
+         total_vis = new_total_vis;
+@@ -249,19 +274,24 @@ void vi_thread_func() {
+             }
+         }
+ 
++        scheduler_diagnostics::record(scheduler_diagnostics::Stage::ViDispatch,
++            scheduler_diagnostics::Clock::now() - wake);
+         if (events_callbacks.vi_callback != nullptr) {
++            scheduler_diagnostics::Scope callback_scope{scheduler_diagnostics::Stage::ViCallback};
+             events_callbacks.vi_callback();
+         }
+     }
+ }
+ 
+ void sp_complete() {
++    scheduler_diagnostics::Scope completion_scope{scheduler_diagnostics::Stage::SpComplete};
+     uint8_t* rdram = events_context.rdram;
+     std::lock_guard lock{ events_context.message_mutex };
+     ultramodern::enqueue_external_message(events_context.sp.mq, events_context.sp.msg, false, true);
+ }
+ 
+ void dp_complete() {
++    scheduler_diagnostics::Scope completion_scope{scheduler_diagnostics::Stage::DpComplete};
+     uint8_t* rdram = events_context.rdram;
+     std::lock_guard lock{ events_context.message_mutex };
+     ultramodern::enqueue_external_message(events_context.dp.mq, events_context.dp.msg, false, true);
+@@ -359,20 +389,27 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+         if (events_context.action_queue.wait_dequeue_timed(action, 1ms)) {
+             // Determine the action type and act on it
+             if (const auto* task_action = std::get_if<SpTaskAction>(&action)) {
+-                // Tell the game that the RSP completed instantly. This will allow it to queue other task types, but it won't
+-                // start another graphics task until the RDP is also complete. Games usually preserve the RSP inputs until the RDP
+-                // is finished as well, so sending this early shouldn't be an issue in most cases.
+-                // If this causes issues then the logic can be replaced with responding to yield requests.
+-                sp_complete();
++                scheduler_diagnostics::record(scheduler_diagnostics::Stage::GfxTaskQueue,
++                    scheduler_diagnostics::Clock::now() - task_action->enqueued);
+                 ultramodern::measure_input_latency();
+ 
+                 PTR(u64) displaylist = task_action->task.t.data_ptr;
+                 ultramodern::extensions::on_displaylist_submitted(displaylist);
+ 
+                 [[maybe_unused]] auto renderer_start = std::chrono::high_resolution_clock::now();
+-                renderer_context->send_dl(&task_action->task);
++                {
++                    scheduler_diagnostics::Scope send_scope{scheduler_diagnostics::Stage::SendDisplayList};
++                    renderer_context->send_dl(&task_action->task);
++                }
+                 [[maybe_unused]] auto renderer_end = std::chrono::high_resolution_clock::now();
+ 
++                // RR64_FIX_DEFER_GFX_SP_COMPLETION: Do not release the graphics
++                // task's RSP inputs until RT64 has
++                // finished parsing them. Road Rash 64 reuses display-list and
++                // world-geometry storage after the SP completion message; an
++                // early message can therefore race the renderer and produce a
++                // frame with missing terrain while later draw layers survive.
++                sp_complete();
+                 dp_complete();
+                 // TODO hook the parsed event up to the actual parsing point when a callback is added to RT64.
+                 ultramodern::extensions::on_displaylist_parsed(displaylist);
+@@ -380,8 +417,13 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+                 // printf("Renderer ProcessDList time: %d us\n", static_cast<u32>(std::chrono::duration_cast<std::chrono::microseconds>(renderer_end - renderer_start).count()));
+             }
+             else if (const auto* screen_update_action = std::get_if<ScreenUpdateAction>(&action)) {
++                scheduler_diagnostics::record(scheduler_diagnostics::Stage::ScreenQueue,
++                    scheduler_diagnostics::Clock::now() - screen_update_action->enqueued);
+                 events_context.vi.update_screen_regs = screen_update_action->regs;
+-                renderer_context->update_screen();
++                {
++                    scheduler_diagnostics::Scope screen_scope{scheduler_diagnostics::Stage::ScreenUpdate};
++                    renderer_context->update_screen();
++                }
+                 display_refresh_rate = renderer_context->get_display_framerate();
+                 resolution_scale = renderer_context->get_resolution_scale();
+             }
+@@ -571,7 +613,10 @@ void ultramodern::submit_rsp_task(RDRAM_ARG PTR(OSTask) task_) {
+ }
+ 
+ void ultramodern::send_si_message() {
+-    ultramodern::enqueue_external_message(events_context.si.mq, events_context.si.msg, false, true);
++    // Match the original SI interrupt sender (800899BC): discard a notification
++    // when the guest queue is full. Menu confirmations can start extra reads;
++    // retrying their surplus completions indefinitely delays other guest events.
++    ultramodern::enqueue_external_message(events_context.si.mq, events_context.si.msg, false, false);
+ }
+ 
+ void ultramodern::init_events(RDRAM_ARG ultramodern::renderer::WindowHandle window_handle) {
+diff --git a/ultramodern/src/input.cpp b/ultramodern/src/input.cpp
+index a170407..0146a59 100644
+--- a/ultramodern/src/input.cpp
++++ b/ultramodern/src/input.cpp
+@@ -72,7 +72,7 @@ static void __osContGetInitData(u8* pattern, OSContStatus *data) {
+             data[controller].status = device_info.connected_pak != ultramodern::input::Pak::None;
+             data[controller].err_no = 0x00;
+ 
+-            *pattern = 1 << controller;
++            *pattern |= 1 << controller;
+         }
+         else {
+             // Mark controller as not connected
+diff --git a/ultramodern/src/mesgqueue.cpp b/ultramodern/src/mesgqueue.cpp
+index 961de3d..b71ab9e 100644
+--- a/ultramodern/src/mesgqueue.cpp
++++ b/ultramodern/src/mesgqueue.cpp
+@@ -1,51 +1,144 @@
++#include <chrono>
++#include <condition_variable>
++#include <deque>
++#include <mutex>
+ #include <thread>
+-
+-#include "blockingconcurrentqueue.h"
++#include <vector>
+ 
+ #include "ultramodern/ultra64.h"
+ #include "ultramodern/ultramodern.hpp"
++#include "ultramodern/rr64_scheduler_diagnostics.hpp"
++
++namespace rr64_diagnostics = ultramodern::rr64_diagnostics;
+ 
+ struct QueuedMessage {
+     PTR(OSMesgQueue) mq;
+     OSMesg mesg;
+     bool jam;
+     bool requeue_if_blocked;
++    rr64_diagnostics::Clock::time_point created_at;
+ };
+ 
+-static moodycamel::BlockingConcurrentQueue<QueuedMessage> external_messages {};
++// The host event stream is deliberately low volume (VI, AI, RSP/RDP and input
++// completions), and only the currently scheduled game thread consumes it. A
++// lock-free BlockingConcurrentQueue is unnecessary here and can fail badly if
++// its semaphore count ever diverges from the underlying MPMC queue: its
++// wait_dequeue implementation then busy-spins forever trying to consume an item
++// that does not exist. That exact state leaves the active N64 thread at 100% CPU
++// while emulation and presentation stop.
++//
++// Keep the availability predicate and the messages under the same mutex. This
++// makes sleeping, waking and requeueing atomic with respect to the queue and
++// prevents both the long-session pacing degradation and the permanent
++// focus-change hang caused by a phantom semaphore token.
++static std::mutex external_messages_mutex;
++static std::condition_variable external_messages_condition;
++static std::deque<QueuedMessage> external_messages;
++
++static void enqueue_external_message_impl(QueuedMessage message) {
++    {
++        const std::lock_guard lock(external_messages_mutex);
++        external_messages.push_back(message);
++    }
++    external_messages_condition.notify_one();
++}
++
++static bool try_dequeue_external_message(QueuedMessage& message) {
++    const std::lock_guard lock(external_messages_mutex);
++    if (external_messages.empty()) {
++        return false;
++    }
++
++    message = external_messages.front();
++    external_messages.pop_front();
++    return true;
++}
++
++static void wait_dequeue_external_message(QueuedMessage& message) {
++    std::unique_lock lock(external_messages_mutex);
++    external_messages_condition.wait(lock, []() {
++        return !external_messages.empty();
++    });
++    message = external_messages.front();
++    external_messages.pop_front();
++}
++
++static bool wait_dequeue_external_message_timed(QueuedMessage& message, u32 millis) {
++    std::unique_lock lock(external_messages_mutex);
++    if (!external_messages_condition.wait_for(
++        lock,
++        std::chrono::milliseconds{millis},
++        []() { return !external_messages.empty(); }))
++    {
++        return false;
++    }
++
++    message = external_messages.front();
++    external_messages.pop_front();
++    return true;
++}
+ 
+ void ultramodern::enqueue_external_message(PTR(OSMesgQueue) mq, OSMesg msg, bool jam, bool requeue_if_blocked) {
+-    external_messages.enqueue({mq, msg, jam, requeue_if_blocked});
++    const auto created_at = rr64_diagnostics::Clock::now();
++    rr64_diagnostics::count(rr64_diagnostics::Event::ExternalEnqueued);
++    enqueue_external_message_impl({mq, msg, jam, requeue_if_blocked, created_at});
+ }
+ 
+ bool do_send(RDRAM_ARG PTR(OSMesgQueue) mq_, OSMesg msg, bool jam, bool block);
+ 
++static bool deliver_external_message(RDRAM_ARG const QueuedMessage& message) {
++    const bool delivered = do_send(PASS_RDRAM message.mq, message.mesg, message.jam, false);
++    if (delivered) {
++        rr64_diagnostics::record(rr64_diagnostics::Stage::ExternalDelivery,
++            rr64_diagnostics::Clock::now() - message.created_at);
++        rr64_diagnostics::count(rr64_diagnostics::Event::ExternalDelivered);
++    }
++    else {
++        rr64_diagnostics::count(message.requeue_if_blocked
++            ? rr64_diagnostics::Event::ExternalRequeued
++            : rr64_diagnostics::Event::ExternalDropped);
++    }
++    const auto age_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
++        rr64_diagnostics::Clock::now() - message.created_at).count();
++    if (age_ns >= 0) {
++        rr64_record_external_queue_event(static_cast<unsigned int>(message.mq),
++            delivered ? 0u : (message.requeue_if_blocked ? 1u : 2u),
++            static_cast<unsigned long long>(age_ns));
++    }
++    return delivered;
++}
++
+ void dequeue_external_messages(RDRAM_ARG1) {
+     QueuedMessage to_send;
+     std::vector<QueuedMessage> requeued_messages{};
+-    while (external_messages.try_dequeue(to_send)) {
+-        if (!do_send(PASS_RDRAM to_send.mq, to_send.mesg, to_send.jam, false) && to_send.requeue_if_blocked) {
++    while (try_dequeue_external_message(to_send)) {
++        if (!deliver_external_message(PASS_RDRAM to_send) && to_send.requeue_if_blocked) {
+             requeued_messages.push_back(to_send);
+         }
+     }
+     for (QueuedMessage& cur_mesg : requeued_messages) {
+-        external_messages.enqueue(cur_mesg);
++        enqueue_external_message_impl(cur_mesg);
+     }
+ }
+ 
+ void ultramodern::wait_for_external_message(RDRAM_ARG1) {
+     QueuedMessage to_send;
+-    external_messages.wait_dequeue(to_send);
+-    if (!do_send(PASS_RDRAM to_send.mq, to_send.mesg, to_send.jam, false) && to_send.requeue_if_blocked) {
+-        external_messages.enqueue(to_send);
++    wait_dequeue_external_message(to_send);
++    if (!deliver_external_message(PASS_RDRAM to_send) && to_send.requeue_if_blocked) {
++        enqueue_external_message_impl(to_send);
++        // A completion message can legitimately target a temporarily full N64
++        // queue. Do not let pause_self consume and requeue that same message in
++        // a zero-delay loop while it waits for another game thread to make room.
++        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+     }
+ }
+ 
+ void ultramodern::wait_for_external_message_timed(RDRAM_ARG u32 millis) {
+     QueuedMessage to_send;
+-    if (external_messages.wait_dequeue_timed(to_send, std::chrono::milliseconds{millis})) {
+-        if (!do_send(PASS_RDRAM to_send.mq, to_send.mesg, to_send.jam, false) && to_send.requeue_if_blocked) {
+-            external_messages.enqueue(to_send);
++    if (wait_dequeue_external_message_timed(to_send, millis)) {
++        if (!deliver_external_message(PASS_RDRAM to_send) && to_send.requeue_if_blocked) {
++            enqueue_external_message_impl(to_send);
++            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+         }
+     }
+ }
+@@ -188,6 +281,8 @@ extern "C" s32 osJamMesg(RDRAM_ARG PTR(OSMesgQueue) mq_, OSMesg msg, s32 flags)
+ }
+ 
+ extern "C" s32 osRecvMesg(RDRAM_ARG PTR(OSMesgQueue) mq_, PTR(OSMesg) msg_, s32 flags) {
++    const bool measure_wait = flags == OS_MESG_BLOCK;
++    const auto wait_start = measure_wait ? rr64_diagnostics::Clock::now() : rr64_diagnostics::Clock::time_point{};
+     OSMesgQueue *mq = TO_PTR(OSMesgQueue, mq_);
+     
+     assert(ultramodern::is_game_thread() && "RecvMesg not allowed outside of game threads.");
+@@ -201,5 +296,14 @@ extern "C" s32 osRecvMesg(RDRAM_ARG PTR(OSMesgQueue) mq_, PTR(OSMesg) msg_, s32
+     // Check the queue to see if this thread should swap execution to another.
+     ultramodern::check_running_queue(PASS_RDRAM1);
+ 
++    if (measure_wait) {
++        const auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
++            rr64_diagnostics::Clock::now() - wait_start).count();
++        if (elapsed_ns >= 0) {
++            rr64_record_guest_queue_wait(static_cast<unsigned int>(mq_),
++                static_cast<unsigned long long>(elapsed_ns));
++        }
++    }
++
+     return received ? 0 : -1;
+ }
+diff --git a/ultramodern/src/threads.cpp b/ultramodern/src/threads.cpp
+index 812c556..87e9c14 100644
+--- a/ultramodern/src/threads.cpp
++++ b/ultramodern/src/threads.cpp
+@@ -240,7 +240,10 @@ extern "C" void osStartThread(RDRAM_ARG PTR(OSThread) t_) {
+     else {
+         t->state = OSThreadState::QUEUED;
+         resume_thread(t);
+-        //throw ultramodern::thread_terminated{};
++        // The initial cartridge bootstrap is not an emulated OSThread. Once it
++        // starts the first real N64 thread, unwind back to wait_for_game_started
++        // instead of returning to the ROM's intentional post-boot BREAK.
++        throw ultramodern::thread_terminated{}; // RR64_FIX_BOOTSTRAP_THREAD_TERMINATION
+     }
+ }
+ 
+diff --git a/ultramodern/src/timer.cpp b/ultramodern/src/timer.cpp
+index 276301b..124fc50 100644
+--- a/ultramodern/src/timer.cpp
++++ b/ultramodern/src/timer.cpp
+@@ -1,3 +1,4 @@
++#include <atomic>
+ #include <thread>
+ #include <variant>
+ #include <set>
+@@ -158,10 +159,24 @@ std::chrono::high_resolution_clock::duration ultramodern::time_since_start() {
+ }
+ 
+ extern "C" u32 osGetCount() {
+-    uint64_t total_count = time_now();
+-
+-    // Allow for overflows, which is how osGetCount behaves
+-    return (uint32_t)total_count;
++    static std::atomic<uint64_t> last_count{0};
++    const uint64_t host_count = time_now();
++    uint64_t previous = last_count.load(std::memory_order_relaxed);
++
++    // Road Rash reads CP0 Count closely enough that two calls can land in the
++    // same host microsecond. Real N64 Count continues advancing between those
++    // instructions; returning equality makes the game mistake it for a full
++    // 32-bit wrap and inject an enormous physics delta.
++    for (;;) {
++        const uint64_t next = host_count > previous ? host_count : previous + 1;
++        if (last_count.compare_exchange_weak(
++                previous,
++                next,
++                std::memory_order_relaxed,
++                std::memory_order_relaxed)) {
++            return static_cast<uint32_t>(next); // RR64_FIX_STRICT_MONOTONIC_COUNT
++        }
++    }
+ }
+ 
+ extern "C" void osSetCount(u32 count) {

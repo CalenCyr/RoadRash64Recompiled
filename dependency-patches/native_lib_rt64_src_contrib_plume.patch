@@ -1,0 +1,102 @@
+diff --git a/plume_d3d12.cpp b/plume_d3d12.cpp
+index 2cdcf18..6d3dfb1 100644
+--- a/plume_d3d12.cpp
++++ b/plume_d3d12.cpp
+@@ -6,7 +6,9 @@
+ //
+ 
+ #include "plume_d3d12.h"
++#include "plume_present_outcome.h"
+ 
++#include <atomic>
+ #include <unordered_set>
+ 
+ #include <dxgi1_5.h>
+@@ -44,6 +46,18 @@ extern "C" {
+ #endif
+ 
+ namespace plume {
++    static std::atomic<D3D12PresentOutcomeCallback> presentOutcomeCallback{nullptr};
++
++    void setD3D12PresentOutcomeCallback(D3D12PresentOutcomeCallback callback) noexcept {
++        presentOutcomeCallback.store(callback, std::memory_order_release);
++    }
++
++    static void recordPresentOutcome(D3D12PresentOutcome outcome, uint32_t resultCode) noexcept {
++        if (const auto callback = presentOutcomeCallback.load(std::memory_order_acquire)) {
++            callback(outcome, resultCode);
++        }
++    }
++
+     static const uint32_t ShaderDescriptorHeapSize = 65536;
+     static const uint32_t SamplerDescriptorHeapSize = 1024;
+     static const uint32_t TargetDescriptorHeapSize = 16384;
+@@ -1389,17 +1403,54 @@ namespace plume {
+     }
+ 
+     bool D3D12SwapChain::present(uint32_t textureIndex, RenderCommandSemaphore **waitSemaphores, uint32_t waitSemaphoreCount) {
+-        // If using present wait, we prefer using a SyncInterval of 0 even when Vsync is enabled. Tearing won't happen if DXGI_PRESENT_ALLOW_TEARING is not specified.
+         const bool tearingAllowed = (swapChainFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0U;
+-        UINT syncInterval = (vsyncEnabled && !desc.enablePresentWait) ? 1 : 0;
++        UINT syncInterval = vsyncEnabled ? 1 : 0;
+         UINT flags = (!vsyncEnabled && tearingAllowed) ? DXGI_PRESENT_ALLOW_TEARING : 0;
++
++        // A borderless-fullscreen flip chain can stop draining while another
++        // window owns the foreground. Submitting into that stalled chain can
++        // block indefinitely and back up both RT64 queues. Keep rendering and
++        // emulation alive, but defer scan-out until the game regains focus.
++        if (GetForegroundWindow() != desc.renderWindow) {
++            presentationDeferredForFocus = true;
++            recordPresentOutcome(D3D12PresentOutcome::FocusDeferred, 0);
++            return true;
++        }
++
++        // Software-paced, tearing-enabled output must never acquire a second
++        // implicit pacing gate inside Present(). If the compositor queue is
++        // momentarily full, retain the current back buffer for the next frame
++        // instead of blocking for an entire refresh interval.
++        if (!vsyncEnabled && tearingAllowed) {
++            flags |= DXGI_PRESENT_DO_NOT_WAIT;
++        }
++
+         HRESULT res = d3d->Present(syncInterval, flags);
++        presentationDeferredForFocus = false;
++        if (res == DXGI_ERROR_WAS_STILL_DRAWING) {
++            recordPresentOutcome(D3D12PresentOutcome::Busy, static_cast<uint32_t>(res));
++            return true;
++        }
++        if (res == DXGI_STATUS_OCCLUDED) {
++            recordPresentOutcome(D3D12PresentOutcome::Occluded, static_cast<uint32_t>(res));
++            return true;
++        }
++
++        recordPresentOutcome(SUCCEEDED(res) ? D3D12PresentOutcome::Accepted :
++            D3D12PresentOutcome::Error, static_cast<uint32_t>(res));
+         return SUCCEEDED(res);
+     }
+ 
+     void D3D12SwapChain::wait() {
+         assert(desc.enablePresentWait && "Present wait should've been explicitly enabled during swap chain creation before using the wait function.");
+ 
++        // Do not consume the auto-reset frame-latency signal while presentation
++        // is intentionally deferred. On focus return the first Present must be
++        // allowed through without waiting so it can prime the signal again.
++        if ((GetForegroundWindow() != desc.renderWindow) || presentationDeferredForFocus) {
++            return;
++        }
++
+         if (waitableObject != NULL) {
+             WaitForSingleObject(waitableObject, INFINITE);
+         }
+diff --git a/plume_d3d12.h b/plume_d3d12.h
+index 4827452..abd3a2f 100644
+--- a/plume_d3d12.h
++++ b/plume_d3d12.h
+@@ -110,6 +110,7 @@ namespace plume {
+         uint32_t height = 0;
+         uint32_t refreshRate = 0;
+         bool vsyncEnabled = true;
++        bool presentationDeferredForFocus = false;
+         UINT swapChainFlags = 0;
+ 
+         D3D12SwapChain(D3D12CommandQueue *commandQueue, const RenderSwapChainDesc &desc);

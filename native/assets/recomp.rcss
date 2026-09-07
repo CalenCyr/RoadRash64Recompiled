@@ -1,0 +1,5 @@
+/*
+ * RecompFrontend supplies the shared component stylesheet in code.  Keep one
+ * port-specific rule so RmlUi can merge this sheet with those base styles.
+ */
+.road-rash-frontend-theme {}

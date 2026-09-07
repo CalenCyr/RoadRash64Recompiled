@@ -1,0 +1,85 @@
+# Road Rash 64 Recompiled — Release 1.0
+
+An unofficial Windows PC recompilation of **Road Rash 64**, built with N64Recomp, N64ModernRuntime, RT64, and RecompFrontend.
+
+**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** The application version and release tag are **1.0.0** and **v1.0.0**. This is the first public release designation, following internal development builds; it is not a claim that every feature is finished.
+
+## Why this exists, credits, and AI disclosure
+
+I wanted a childhood game to be playable on PC in all its glory: clearer presentation, smoother motion, detailed riders and bikes, and a practical way to keep playing it on modern hardware.
+
+I do not want to take credit for creating Road Rash 64, the recompilation technology, the renderer, the libraries, or other people's artwork. That credit belongs to the original game developers and the authors and contributors of the tools listed in [CREDITS.md](CREDITS.md). My role has been bringing this project together, testing it, and describing the experience I hoped to achieve.
+
+**AI was used extensively during development**, including code changes, debugging assistance, documentation, and parts of the launcher artwork. I am sorry to people who are disappointed by that choice or concerned about its effects on this work. I want to be upfront about how the project was made rather than imply it was entirely hand-written. AI assistance does not establish correctness or ownership, and it does not shift responsibility away from this project. Please judge the implementation by reviewable code and reproducible results. Upstream projects have their own contribution policies; this project's changes are not endorsed by them.
+
+## Getting started
+
+1. Download **RoadRash64Recompiled-v1.0.0-Win64.zip** from this repository's Releases page. Players do not need the source-code download or a compiler.
+2. Extract the entire ZIP to a writable folder. Do not run it inside the archive.
+3. Open **RoadRash64Recompiled.exe**. Choose **Select Game ROM** and select your supported `.z64`, `.n64`, or `.v64` dump.
+4. After validation, choose **Start Game**. Use **Settings** to configure your controller, graphics, and sound.
+
+**RoadRash64DirectStart.exe** skips the launcher once a valid ROM has been configured. It falls back to ROM selection if necessary. Neither executable should open a command window.
+
+Your ROM is validated and stored locally by the runtime. It is not uploaded by ROM selection. Do not upload ROMs to Issues, Discussions, pull requests, or release attachments.
+
+Supported normalized ROM SHA-1: `87727a298f583ec8325f5655088ff21e37b335b2` (USA v1.0, 32 MiB). This identifies the supported dump; it is not a download link.
+
+## What the project does
+
+N64Recomp translates the game's machine-code routines into native code during the **developer build**. The distributed executable already contains that translated code. At play time, the runtime reads game content from the player's ROM. Selecting a ROM does **not** compile the whole game on the player's computer.
+
+This is the same broad static-recompilation/user-ROM architecture described by [Zelda 64: Recompiled](https://github.com/Zelda64Recomp/Zelda64Recomp#plug-and-play). It is not an endorsement from that project, a claim of identical implementation, or a legal conclusion. Gameplay content and soundtrack data remain ROM-supplied; launcher and achievement imagery are included and credited separately.
+
+## Features
+
+- **Improved presentation targeting smooth 60 FPS**, with fixes for pacing regressions, interpolation, and rendering flicker. Actual performance depends on hardware, settings, and scene complexity.
+- **MAX LOD** for riders and bikes, including work on distant, crashed, airborne, paused, and finish-area models. It preserves the highest detail the game supplies; it does not create new high-resolution models.
+- **MAX World Distance** and terrain/object rendering optimizations. These remain more demanding than original draw distances and are not a promise that every object is visible from every point.
+- **Widescreen and high-resolution presentation**, configurable graphics and HUD behavior, with D3D12/Vulkan rendering through RT64.
+- **Keyboard and controller remapping**, including **Eject from Bike** (left-stick click by default) and **Spoke Jam Attack** (right-stick click by default). With fists selected, the latter retains the existing punch/weapon-steal behavior and original proximity/timing rules.
+- **Persistent saves** through the virtual Controller Pak implementation and saved frontend settings.
+- **Optional custom music rotation** from the `music` folder. WAV/OGG and Windows-decoded formats including FLAC, MP3, MP4/M4A, AAC, and WMA are supported subject to codec availability. No additional music is included and there is no song-title popout.
+- **52 local achievements**, saved on this computer, with paged browsing. There is no RetroAchievements account login, account scoring, or unlock synchronization.
+- **Mod/texture-pack support** through Settings. The Windows package includes an optional conversion of Crisaty’s Remastered Edition pack; see its credits and installation instructions below.
+- A compact launcher, direct-start executable, and input guards intended to stop overlay dismissal from activating a menu behind it.
+
+The separate MAX LOD and MAX World Distance settings are applied before game start. If changed while playing, restart the application to apply them. Existing mods made for the internal 1.0.6 interface remain accepted through an explicit mod-compatibility floor; the application itself reports 1.0.0.
+
+## Requirements
+
+The supplied build targets **64-bit Windows**, with a CPU compatible with the build's Nehalem/SSE4-era instruction target and a GPU/driver supporting the selected RT64 D3D12 or Vulkan backend. Windows 10/11 are the intended environments; a broad hardware compatibility matrix has not been established. Custom media decoding uses Windows Media Foundation. Other operating systems are not supported by this release's build configuration.
+
+## Multiplayer — early and very untested
+
+**Treat online multiplayer as experimental.** Connection reliability, synchronization, player control assignment, race completion, and larger sessions need considerably more testing. Earlier tests reported connection failures, incorrect peer state/maps, and a host crash at the finish. Later fixes and offline protocol tests do not establish that every issue is resolved.
+
+The game offers local split-screen multiplayer and an early direct-connect online path. Online sessions have an experimental limit of 14 participants, but large-session gameplay has not been established as reliable. There is no promise of matchmaking, relay fallback, or automatic NAT traversal. Direct connections may require appropriate UDP forwarding/firewall settings; CGNAT can prevent hosting. Do not disable your firewall wholesale.
+
+Please include host/client roles, player count, exact map/game type, and both machines' observations when reporting an online bug. Report problems to this repository, not to the upstream tools' maintainers.
+
+## Known limitations and testing status
+
+- The release owner reports successful live testing and a source build by another person on a different computer. Thirty offline regression checks passed. Broader hardware, map and online coverage remains limited.
+- High detail/distance settings can expose performance or visibility problems on particular maps, cameras, and hardware.
+- Mods may affect stability. Reproduce issues with mods disabled where practical.
+- Routine performance logs are disabled. Fatal failures can write `RoadRash64Recompiled-runtime.log` beside the EXE; writing can fail in a protected folder. A normal run need not create a log.
+- Existing local achievements are not verified RetroAchievements account progress. Their current [standalone policy](https://docs.retroachievements.org/general/standalone-support.html) excludes recompilations.
+
+See [BUILDING.md](BUILDING.md) to compile it yourself and [LEGAL.md](LEGAL.md) for copyright, licensing, and distribution limitations.
+
+## Bugs, discussion, and suggested commits
+
+Use **Issues → Bug report** for reproducible problems and **Issues → Feature or patch proposal** for suggested changes. Include the release version, map/mode, steps, hardware, and expected versus observed behavior. Short screenshots or video are useful; remove private information from logs.
+
+Use **Discussions**, when enabled, for setup questions, map-testing results, ideas, and general conversation. Until it is enabled, the discussion issue template provides a place for those conversations.
+
+Code contributions are welcome as focused pull requests. Explain the problem, implementation, tests, and remaining uncertainty. Disclose AI assistance and preserve upstream notices. Do not submit ROMs, extracted game data, generated game code, credentials, or unrelated large files. Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing commits.
+
+## Included optional texture conversion
+
+Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. This package includes an **RT64 conversion of that original Jabo texture pack** for Road Rash 64 Recompiled. All credit for the original mod and artwork belongs to its creator; the recompilation project does not claim authorship of those textures or endorsement by the creator.
+
+[Original creator and project page](https://crisaty.tumblr.com/post/113116999840/road-rash-64-remastered-edition)
+
+The optional RTZ is in `optional-mods`. Install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.

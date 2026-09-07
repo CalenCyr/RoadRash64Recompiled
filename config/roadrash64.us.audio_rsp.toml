@@ -1,0 +1,28 @@
+# Road Rash 64's task-type-2 audio microcode. The input remains the user's
+# locally staged ROM; the generated C++ output belongs under ignored build/.
+text_offset = 0x0007E890
+text_size = 0x00000C60
+text_address = 0x00001080
+rom_file_path = "../build/roadrash64.us.z64"
+output_file_path = "../build/RecompiledFuncs/rr64_audio_rsp.cpp"
+output_function_name = "rr64_audio_rsp"
+
+# Command handlers are selected through the halfword table at ucode-data
+# offset zero. RSPRecomp cannot infer these data-driven jr destinations.
+extra_indirect_branch_targets = [
+    0x10EC,
+    0x139C,
+    0x119C,
+    0x1A64,
+    0x11C8,
+    0x17EC,
+    0x1208,
+    0x127C,
+    0x1348,
+    0x1248,
+    0x1C84,
+    0x12D4,
+    0x12B0,
+    0x1384,
+    0x1080,
+]

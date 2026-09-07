@@ -1,0 +1,27 @@
+# User data and generated game material
+build/
+native/build/
+engine/build/
+RecompiledFuncs/
+*.z64
+*.n64
+*.v64
+*.rom
+*.sav
+*.eep
+*.mpk
+*.log
+*.csv
+*.pdb
+*.rtz
+music/*
+!music/README.txt
+# Reconstructed pinned dependencies
+tools/N64Recomp/
+native/lib/
+# Local tools/cache
+__pycache__/
+*.pyc
+.vs/
+.vscode/
+Thumbs.db

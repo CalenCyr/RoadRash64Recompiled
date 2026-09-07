@@ -1,0 +1,1517 @@
+diff --git a/recompinput/include/recompinput/input_state.h b/recompinput/include/recompinput/input_state.h
+index 1961e29..aab3cec 100644
+--- a/recompinput/include/recompinput/input_state.h
++++ b/recompinput/include/recompinput/input_state.h
+@@ -20,6 +20,10 @@ namespace recompinput {
+         std::array<float, 2> rotation_delta{};
+         std::array<float, 2> pending_rotation_delta{};
+         bool rumble_failed;
++        uint16_t last_rumble_low = 0;
++        uint16_t last_rumble_high = 0;
++        uint64_t last_rumble_command_ms = 0;
++        bool rumble_output_active = false;
+ 
+         ControllerState() : controller{}, latest_accelerometer{}, motion{}, prev_gyro_timestamp{}, rotation_delta{}, pending_rotation_delta{}, rumble_failed{} {
+             motion.Reset();
+@@ -29,7 +33,13 @@ namespace recompinput {
+ 
+     void poll_inputs();
+     void set_rumble(int controller_num, bool on);
++    void set_road_rumble(int controller_num, float strength);
++    void trigger_rumble_pulse(int controller_num, float strength);
++    void suspend_all_rumble();
++    void stop_all_rumble();
+     void update_rumble();
++    void set_game_window_focused(bool focused);
++    bool game_window_focused();
+     bool should_override_keystate(SDL_Scancode key, SDL_Keymod mod);
+     float get_input_analog(int controller_num, const InputField& field);
+     float get_input_analog(int controller_num, const std::span<const InputField> fields);
+@@ -42,6 +52,10 @@ namespace recompinput {
+     void set_right_analog_suppressed(bool suppressed);
+     bool game_input_disabled();
+     bool all_input_disabled();
++    void mark_keyboard_active();
++    void mark_controller_active(SDL_JoystickID joystick_id);
++    InputDevice get_active_input_device();
++    SDL_GameControllerType get_active_controller_type();
+     ControllerState &get_controller_state(SDL_JoystickID joystick_id);
+     SDL_GameController *get_controller_from_joystick_id(SDL_JoystickID joystick_id);
+     void add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller);
+diff --git a/recompinput/include/recompinput/input_types.h b/recompinput/include/recompinput/input_types.h
+index f5ed6c0..01c856c 100644
+--- a/recompinput/include/recompinput/input_types.h
++++ b/recompinput/include/recompinput/input_types.h
+@@ -40,7 +40,9 @@ namespace recompinput {
+     #define DEFINE_ALL_INPUTS() \
+         DEFINE_N64_AXIS_INPUTS() \
+         DEFINE_N64_BUTTON_INPUTS() \
+-        DEFINE_RECOMP_UI_INPUTS()
++        DEFINE_RECOMP_UI_INPUTS() \
++        DEFINE_INPUT(RR64_EJECT, 0, "Eject from Bike") \
++        DEFINE_INPUT(RR64_SPOKE_JAM, 0, "Spoke Jam Attack")
+ 
+     #define DEFINE_INPUT(name, value, readable) name,
+     // - Enum containing every recomp input.
+@@ -132,3 +134,4 @@ namespace recompinput {
+ }
+ 
+ #endif
++
+diff --git a/recompinput/include/recompinput/profiles.h b/recompinput/include/recompinput/profiles.h
+index 45bedd1..74cd6cd 100644
+--- a/recompinput/include/recompinput/profiles.h
++++ b/recompinput/include/recompinput/profiles.h
+@@ -61,6 +61,7 @@ namespace recompinput {
+         int get_sp_keyboard_profile_index();
+         int get_or_create_mp_keyboard_profile_index(int player_index);
+         std::string get_string_from_controller_guid(ControllerGUID guid);
++        bool get_action_input(int player_index, GameInput input);
+         bool get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out);
+ 
+         bool load_controls_config(const std::filesystem::path& path);
+@@ -69,3 +70,4 @@ namespace recompinput {
+ }
+ 
+ #endif // __RECOMP_INPUT_PROFILES_H__
++
+diff --git a/recompinput/src/input_events.cpp b/recompinput/src/input_events.cpp
+index c76a1dc..1931a01 100644
+--- a/recompinput/src/input_events.cpp
++++ b/recompinput/src/input_events.cpp
+@@ -1,3 +1,5 @@
++#include <cstdio>
++
+ #include "recompinput/recompinput.h"
+ #include "recompinput/input_binding.h"
+ #include "recompinput/input_events.h"
+@@ -43,6 +45,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+     case SDL_EventType::SDL_KEYDOWN:
+     {
+         SDL_KeyboardEvent* keyevent = &event->key;
++        recompinput::mark_keyboard_active();
+ 
+         // Skip repeated events when not in the menu
+         if (!recompui::is_context_capturing_input() &&
+@@ -74,10 +77,18 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+     {
+         SDL_ControllerDeviceEvent* controller_event = &event->cdevice;
+         SDL_GameController* controller = SDL_GameControllerOpen(controller_event->which);
+-        printf("Controller added: %d\n", controller_event->which);
++        std::fprintf(stderr, "[RR64-CONTROLLER] Added device index %d.\n", controller_event->which);
+         if (controller != nullptr) {
+-            printf("  Instance ID: %d\n", SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)));
+-            printf("  Path: %s\n", SDL_JoystickPath(SDL_GameControllerGetJoystick(controller)));
++            SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
++            std::fprintf(
++                stderr,
++                "[RR64-CONTROLLER] name=%s instance=%d player=%d rumble=%d path=%s\n",
++                SDL_GameControllerName(controller),
++                static_cast<int>(SDL_JoystickInstanceID(joystick)),
++                SDL_GameControllerGetPlayerIndex(controller),
++                static_cast<int>(SDL_JoystickHasRumble(joystick)),
++                SDL_JoystickPath(joystick));
++            std::fflush(stderr);
+             recompinput::add_controller_state(SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)), controller);
+ 
+             if (SDL_GameControllerHasSensor(controller, SDL_SensorType::SDL_SENSOR_GYRO) && SDL_GameControllerHasSensor(controller, SDL_SensorType::SDL_SENSOR_ACCEL)) {
+@@ -100,10 +111,30 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+     case SDL_EventType::SDL_CONTROLLERDEVICEREMOVED:
+     {
+         SDL_ControllerDeviceEvent* controller_event = &event->cdevice;
+-        printf("Controller removed: %d\n", controller_event->which);
++        std::fprintf(
++            stderr,
++            "[RR64-CONTROLLER] Removed instance %d.\n",
++            controller_event->which);
++        std::fflush(stderr);
+         recompinput::remove_controller_state(controller_event->which);
+     }
+     break;
++    case SDL_EventType::SDL_WINDOWEVENT:
++        if (event->window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
++            event->window.event == SDL_WINDOWEVENT_MINIMIZED ||
++            event->window.event == SDL_WINDOWEVENT_HIDDEN) {
++            recompinput::set_game_window_focused(false);
++        }
++        else if (event->window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
++            recompinput::set_game_window_focused(true);
++        }
++        queue_if_enabled(event);
++        break;
++    case SDL_EventType::SDL_APP_WILLENTERBACKGROUND:
++    case SDL_EventType::SDL_APP_DIDENTERBACKGROUND:
++        recompinput::set_game_window_focused(false);
++        queue_if_enabled(event);
++        break;
+     case SDL_EventType::SDL_QUIT: {
+         if (!ultramodern::is_game_started()) {
+             ultramodern::quit();
+@@ -122,6 +153,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+     queue_if_enabled(event);
+     break;
+     case SDL_EventType::SDL_CONTROLLERBUTTONDOWN:
++        recompinput::mark_controller_active(event->cbutton.which);
+         if (binding::is_binding() && binding::is_controller_being_bound(event->cbutton.which)) {
+             // TODO: Needs the controller profile index.
+             auto menuToggleBinding0 = profiles::get_input_binding(0, GameInput::TOGGLE_MENU, 0);
+@@ -152,6 +184,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+         }
+         break;
+     case SDL_EventType::SDL_CONTROLLERAXISMOTION:
++        if (event->caxis.value > 8192 || event->caxis.value < -8192) {
++            recompinput::mark_controller_active(event->caxis.which);
++        }
+         if (binding::is_controller_being_bound(event->caxis.which)) {
+             GameInput scanning_game_input = binding::get_scanning_game_input();
+             if (scanning_game_input == GameInput::TOGGLE_MENU ||
+@@ -270,6 +305,10 @@ void handle_events() {
+ 
+     binding::stop_skipping_events();
+ 
++    // Recover from any platform/window-manager sequence that restores the
++    // window without delivering the exact focus event we expected.
++    recompinput::set_game_window_focused(SDL_GetKeyboardFocus() != nullptr);
++
+     if (!started && ultramodern::is_game_started()) {
+         started = true;
+         recompui::process_game_started();
+diff --git a/recompinput/src/input_mapping.cpp b/recompinput/src/input_mapping.cpp
+index bfcfef4..1ab997e 100644
+--- a/recompinput/src/input_mapping.cpp
++++ b/recompinput/src/input_mapping.cpp
+@@ -35,6 +35,8 @@ namespace recompinput {
+     };
+ 
+     default_game_input_device_mapping default_n64_mappings_controller = {
++        { GameInput::RR64_EJECT, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSTICK) } },
++        { GameInput::RR64_SPOKE_JAM, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK) } },
+         { GameInput::A,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_SOUTH) } },
+         { GameInput::B,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_WEST) } },
+         { GameInput::L,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) } },
+@@ -97,3 +99,4 @@ namespace recompinput {
+         default_n64_mappings_keyboard[input] = fields;
+     }
+ }
++
+diff --git a/recompinput/src/input_state.cpp b/recompinput/src/input_state.cpp
+index 03ed871..8ab66b5 100644
+--- a/recompinput/src/input_state.cpp
++++ b/recompinput/src/input_state.cpp
+@@ -1,7 +1,8 @@
+ #include <algorithm>
++#include <atomic>
++#include <cstdio>
+ #include <mutex>
+ #include <span>
+-#include <atomic>
+ 
+ #include "recompinput/recompinput.h"
+ #include "recompinput/input_state.h"
+@@ -22,13 +23,19 @@ static struct {
+     std::mutex controllers_mutex;
+     std::vector<SDL_GameController*> detected_controllers{};
+     std::unordered_map<SDL_JoystickID, ControllerState> controller_states;
++    std::atomic<SDL_JoystickID> active_controller_id{ -1 };
++    std::atomic<InputDevice> active_input_device{ InputDevice::Keyboard };
+ 
+     std::array<float, 2> mouse_delta{};
+     std::mutex pending_input_mutex;
+     std::array<float, 2> pending_mouse_delta{};
+ 
++    std::mutex rumble_mutex;
+     InputArray<float> cur_rumble{};
+-    InputArray<bool> rumble_active{};
++    InputArray<std::atomic_bool> rumble_active{};
++    InputArray<std::atomic<float>> road_rumble{};
++    InputArray<std::atomic<float>> rumble_pulse{};
++    std::atomic_bool game_window_focused{ true };
+ } InputState;
+ 
+ void recompinput::poll_inputs() {
+@@ -69,7 +76,101 @@ void recompinput::poll_inputs() {
+ }
+ 
+ void recompinput::set_rumble(int controller_num, bool on) {
+-    InputState.rumble_active[controller_num] = on;
++    if (controller_num < 0 || controller_num >= static_cast<int>(InputState.rumble_active.size())) {
++        return;
++    }
++    InputState.rumble_active[controller_num].store(on, std::memory_order_relaxed);
++}
++
++void recompinput::set_road_rumble(int controller_num, float strength) {
++    if (controller_num < 0 || controller_num >= static_cast<int>(InputState.road_rumble.size())) {
++        return;
++    }
++    InputState.road_rumble[controller_num].store(
++        std::clamp(strength, 0.0f, 0.24f),
++        std::memory_order_relaxed);
++}
++
++void recompinput::trigger_rumble_pulse(int controller_num, float strength) {
++    if (controller_num < 0 || controller_num >= static_cast<int>(InputState.rumble_pulse.size())) {
++        return;
++    }
++
++    auto& pulse = InputState.rumble_pulse[controller_num];
++    const float requested = std::clamp(strength, 0.0f, 1.0f);
++    float current = pulse.load(std::memory_order_relaxed);
++    while (current < requested &&
++           !pulse.compare_exchange_weak(
++               current, requested, std::memory_order_relaxed, std::memory_order_relaxed))
++    {
++    }
++}
++
++static void stop_physical_rumble_locked() {
++    // Always send a zeroed command at a gameplay/focus boundary. The normal
++    // output commands self-expire as a safety net, but this keeps pause and
++    // Alt-Tab stops immediate when the device is still reachable.
++    std::lock_guard lock{ InputState.controllers_mutex };
++    for (SDL_GameController* controller : InputState.detected_controllers) {
++        if (controller == nullptr) {
++            continue;
++        }
++
++        SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
++        const SDL_JoystickID joystick_id = SDL_JoystickInstanceID(joystick);
++        SDL_JoystickRumble(joystick, 0, 0, 0);
++
++        const auto state_it = InputState.controller_states.find(joystick_id);
++        if (state_it != InputState.controller_states.end()) {
++            state_it->second.last_rumble_low = 0;
++            state_it->second.last_rumble_high = 0;
++            state_it->second.last_rumble_command_ms = SDL_GetTicks64();
++            state_it->second.rumble_output_active = false;
++        }
++    }
++}
++
++void recompinput::suspend_all_rumble() {
++    std::lock_guard rumble_lock{ InputState.rumble_mutex };
++    for (size_t i = 0; i < InputState.rumble_active.size(); ++i) {
++        // Preserve the Rumble Pak's authored on/off state across a pause or
++        // focus loss. Road feedback and impact pulses are transient and are
++        // rebuilt from live gameplay input after resume.
++        InputState.road_rumble[i].store(0.0f, std::memory_order_relaxed);
++        InputState.rumble_pulse[i].store(0.0f, std::memory_order_relaxed);
++        InputState.cur_rumble[i] = 0.0f;
++    }
++    stop_physical_rumble_locked();
++}
++
++void recompinput::stop_all_rumble() {
++    std::lock_guard rumble_lock{ InputState.rumble_mutex };
++    for (size_t i = 0; i < InputState.rumble_active.size(); ++i) {
++        InputState.rumble_active[i].store(false, std::memory_order_relaxed);
++        InputState.road_rumble[i].store(0.0f, std::memory_order_relaxed);
++        InputState.rumble_pulse[i].store(0.0f, std::memory_order_relaxed);
++        InputState.cur_rumble[i] = 0.0f;
++    }
++    stop_physical_rumble_locked();
++}
++
++void recompinput::set_game_window_focused(bool focused) {
++    const bool was_focused = InputState.game_window_focused.exchange(
++        focused, std::memory_order_acq_rel);
++    if (was_focused != focused) {
++        std::fprintf(
++            stderr,
++            "[RR64-RUMBLE] Window focus %s.\n",
++            focused ? "restored" : "lost");
++        std::fflush(stderr);
++    }
++    if (was_focused && !focused) {
++        suspend_all_rumble();
++    }
++}
++
++bool recompinput::game_window_focused() {
++    return InputState.game_window_focused.load(std::memory_order_acquire);
+ }
+ 
+ static float smoothstep(float from, float to, float amount) {
+@@ -79,55 +180,141 @@ static float smoothstep(float from, float to, float amount) {
+ 
+ // Update rumble to attempt to mimic the way n64 rumble ramps up and falls off
+ void recompinput::update_rumble() {
+-    auto do_rumble = [](SDL_GameController* controller, uint16_t rumble_strength, uint32_t duration) {
++    auto do_rumble = [](SDL_GameController* controller, uint16_t low_frequency_strength,
++                        uint16_t high_frequency_strength) {
++        if (controller == nullptr || !SDL_GameControllerGetAttached(controller)) {
++            return;
++        }
++
+         SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
+         SDL_JoystickID joystick_id = SDL_JoystickInstanceID(joystick);
+-        ControllerState &state = InputState.controller_states[joystick_id];
++        const auto state_it = InputState.controller_states.find(joystick_id);
++        // A device-removal event may arrive between input polls. Never recreate
++        // its state from the stale detected-controller snapshot.
++        if (state_it == InputState.controller_states.end()) {
++            return;
++        }
++        ControllerState &state = state_it->second;
+ 
+         // Skip setting rumble for controllers that failed to rumble previously.
+         if (state.rumble_failed) {
+            return;
+         }
+-        int err = SDL_JoystickRumble(joystick, 0, rumble_strength, duration);
++
++        constexpr uint64_t changed_command_interval_ms = 25;
++        constexpr uint64_t refresh_interval_ms = 100;
++        constexpr uint32_t command_duration_ms = 250;
++        const auto quantize_strength = [](uint16_t strength) {
++            if (strength == 0 || strength == 0xFFFF) {
++                return strength;
++            }
++            constexpr uint32_t quantum = 0x0400;
++            const uint32_t quantized =
++                ((static_cast<uint32_t>(strength) + (quantum / 2)) / quantum) * quantum;
++            return static_cast<uint16_t>(std::min(quantized, 0xFFFFu));
++        };
++
++        low_frequency_strength = quantize_strength(low_frequency_strength);
++        high_frequency_strength = quantize_strength(high_frequency_strength);
++        const bool output_requested =
++            low_frequency_strength != 0 || high_frequency_strength != 0;
++        const bool output_changed =
++            low_frequency_strength != state.last_rumble_low ||
++            high_frequency_strength != state.last_rumble_high;
++        const uint64_t now_ms = SDL_GetTicks64();
++        const uint64_t elapsed_ms = now_ms - state.last_rumble_command_ms;
++        const bool immediate_stop = !output_requested && state.rumble_output_active;
++        const bool changed_due =
++            output_requested && output_changed &&
++            (!state.rumble_output_active || elapsed_ms >= changed_command_interval_ms);
++        const bool refresh_due =
++            output_requested && elapsed_ms >= refresh_interval_ms;
++        if (!immediate_stop && !changed_due && !refresh_due) {
++            return;
++        }
++
++        // A short, periodically refreshed command cannot remain stuck for
++        // minutes if the game pauses, loses focus, or a wireless device drops.
++        const uint32_t duration = output_requested ? command_duration_ms : 0;
++        int err = SDL_JoystickRumble(
++            joystick, low_frequency_strength, high_frequency_strength, duration);
+         if (err != 0) {
+             state.rumble_failed = true;
++            std::fprintf(
++                stderr,
++                "[RR64-RUMBLE] Disabled output for controller %d after SDL error: %s\n",
++                static_cast<int>(joystick_id),
++                SDL_GetError());
++            std::fflush(stderr);
++            return;
+         }
++
++        state.last_rumble_low = low_frequency_strength;
++        state.last_rumble_high = high_frequency_strength;
++        state.last_rumble_command_ms = now_ms;
++        state.rumble_output_active = output_requested;
+     };
+ 
+     // Skip rumble processing if the game doesn't have a rumble strength option. 
+     if (!recompui::config::general::has_rumble_strength_option()) {
+         return;
+     }
++    std::lock_guard rumble_lock{ InputState.rumble_mutex };
+     size_t rumbles_to_run = recompinput::players::is_single_player_mode() ? 1 : recompinput::players::get_number_of_assigned_players();
+     if (rumbles_to_run > InputState.cur_rumble.size()) {
+         rumbles_to_run = InputState.cur_rumble.size();
+     }
+     for (size_t i = 0; i < rumbles_to_run; i++) {
+         // Note: values are not accurate! just approximations based on feel
+-        if (InputState.rumble_active[i]) {
+-            InputState.cur_rumble[i] += 0.17f;
++        if (InputState.rumble_active[i].load(std::memory_order_relaxed)) {
++            InputState.cur_rumble[i] += 0.28f;
+             if (InputState.cur_rumble[i] > 1) InputState.cur_rumble[i] = 1;
+         }
+         else {
+-            InputState.cur_rumble[i] *= 0.92f;
+-            InputState.cur_rumble[i] -= 0.01f;
++            InputState.cur_rumble[i] *= 0.78f;
++            InputState.cur_rumble[i] -= 0.025f;
+             if (InputState.cur_rumble[i] < 0) InputState.cur_rumble[i] = 0;
+         }
+-        float smooth_rumble = smoothstep(0, 1, InputState.cur_rumble[i]);
++        const float authored_rumble = smoothstep(0, 1, InputState.cur_rumble[i]);
++        const float road_rumble = InputState.road_rumble[i].load(std::memory_order_relaxed);
++        auto& pulse_state = InputState.rumble_pulse[i];
++        float impact_rumble = pulse_state.load(std::memory_order_relaxed);
++        while (!pulse_state.compare_exchange_weak(
++            impact_rumble,
++            std::max(impact_rumble * 0.72f - 0.04f, 0.0f),
++            std::memory_order_relaxed,
++            std::memory_order_relaxed))
++        {
++        }
+ 
+-        uint16_t rumble_strength = smooth_rumble * (recompui::config::general::get_rumble_strength() * 0xFFFF / 100);
+-        uint32_t duration = 1000000; // Dummy duration value that lasts long enough to matter as the game will reset rumble on its own.
++        // Road feedback stays mostly in the controller's lighter, fast motor.
++        // The game's authored Rumble Pak events drive both motors so weapon
++        // impacts, incoming hits, and crashes have substantially more weight.
++        const float user_scale = std::clamp(
++            static_cast<float>(recompui::config::general::get_rumble_strength()) / 100.0f,
++            0.0f,
++            1.0f);
++        const float low_frequency = std::max(
++            std::max(authored_rumble * 0.95f, road_rumble * 0.35f),
++            impact_rumble);
++        const float high_frequency = std::max(
++            std::max(authored_rumble * 0.82f, road_rumble),
++            impact_rumble * 0.72f);
++        const uint16_t low_frequency_strength = static_cast<uint16_t>(
++            std::clamp(low_frequency * user_scale, 0.0f, 1.0f) * 0xFFFF);
++        const uint16_t high_frequency_strength = static_cast<uint16_t>(
++            std::clamp(high_frequency * user_scale, 0.0f, 1.0f) * 0xFFFF);
+         {
+             std::lock_guard lock{ InputState.controllers_mutex };
+             if (recompinput::players::is_single_player_mode()) {
+                 for (const auto &controller : InputState.detected_controllers) {
+-                    do_rumble(controller, rumble_strength, duration);
++                    do_rumble(controller, low_frequency_strength, high_frequency_strength);
+                 }
+             }
+             else {
+                 auto &player = recompinput::players::get_player(i);
+                 if (player.controller != nullptr) {
+-                    do_rumble(player.controller, rumble_strength, duration);
++                    do_rumble(player.controller, low_frequency_strength, high_frequency_strength);
+                 }
+             }
+         }
+@@ -374,6 +561,38 @@ bool recompinput::all_input_disabled() {
+         recompinput::binding::is_binding();
+ }
+ 
++void recompinput::mark_keyboard_active() {
++    InputState.active_input_device.store(InputDevice::Keyboard, std::memory_order_relaxed);
++}
++
++void recompinput::mark_controller_active(SDL_JoystickID joystick_id) {
++    InputState.active_controller_id.store(joystick_id, std::memory_order_relaxed);
++    InputState.active_input_device.store(InputDevice::Controller, std::memory_order_relaxed);
++}
++
++InputDevice recompinput::get_active_input_device() {
++    return InputState.active_input_device.load(std::memory_order_relaxed);
++}
++
++SDL_GameControllerType recompinput::get_active_controller_type() {
++    std::lock_guard lock{ InputState.controllers_mutex };
++
++    const SDL_JoystickID active_id =
++        InputState.active_controller_id.load(std::memory_order_relaxed);
++    const auto active_it = InputState.controller_states.find(active_id);
++    if (active_it != InputState.controller_states.end() && active_it->second.controller != nullptr) {
++        return SDL_GameControllerGetType(active_it->second.controller);
++    }
++
++    for (SDL_GameController* controller : InputState.detected_controllers) {
++        if (controller != nullptr) {
++            return SDL_GameControllerGetType(controller);
++        }
++    }
++
++    return SDL_CONTROLLER_TYPE_UNKNOWN;
++}
++
+ ControllerState &recompinput::get_controller_state(SDL_JoystickID joystick_id) {
+     std::lock_guard lock{ InputState.controllers_mutex };
+     return InputState.controller_states[joystick_id];
+@@ -392,11 +611,35 @@ void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameContr
+     std::lock_guard lock{ InputState.controllers_mutex };
+     ControllerState& state = InputState.controller_states[SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))];
+     state.controller = controller;
++    state.rumble_failed = false;
++    state.last_rumble_low = 0;
++    state.last_rumble_high = 0;
++    state.last_rumble_command_ms = 0;
++    state.rumble_output_active = false;
++    SDL_JoystickID expected = -1;
++    InputState.active_controller_id.compare_exchange_strong(
++        expected,
++        joystick_id,
++        std::memory_order_relaxed);
++    InputState.active_input_device.store(InputDevice::Controller, std::memory_order_relaxed);
+ }
+ 
+ void recompinput::remove_controller_state(SDL_JoystickID joystick_id) {
+     std::lock_guard lock{ InputState.controllers_mutex };
+-    InputState.controller_states.erase(joystick_id);
++    const auto state_it = InputState.controller_states.find(joystick_id);
++    if (state_it != InputState.controller_states.end()) {
++        SDL_GameController* controller = state_it->second.controller;
++        if (controller != nullptr) {
++            SDL_JoystickRumble(SDL_GameControllerGetJoystick(controller), 0, 0, 0);
++            std::erase(InputState.detected_controllers, controller);
++        }
++        InputState.controller_states.erase(state_it);
++    }
++    SDL_JoystickID expected = joystick_id;
++    InputState.active_controller_id.compare_exchange_strong(
++        expected,
++        -1,
++        std::memory_order_relaxed);
+ }
+ 
+ void recompinput::add_rotation_deltas(SDL_JoystickID joystick_id, float rot_x, float rot_y) {
+diff --git a/recompinput/src/input_types.cpp b/recompinput/src/input_types.cpp
+index c6786e6..f447a78 100644
+--- a/recompinput/src/input_types.cpp
++++ b/recompinput/src/input_types.cpp
+@@ -17,6 +17,8 @@ constexpr std::array<std::string, num_game_inputs> get_default_game_input_descri
+     std::array<std::string, num_game_inputs> descriptions = {
+         DEFINE_ALL_INPUTS()
+     };
++    descriptions[static_cast<size_t>(GameInput::RR64_EJECT)] = "Eject your rider from the bike during gameplay. Default: left-stick click. Uses the existing local-rider shortcut.";
++    descriptions[static_cast<size_t>(GameInput::RR64_SPOKE_JAM)] = "Hold to attempt a spoke jam with a weapon. With fists selected, press to punch or steal a weapon. Default: right-stick click. Opponent range and timing rules still apply.";
+     descriptions[static_cast<size_t>(GameInput::TOGGLE_MENU)] = "Open or close this configuration menu from in game.";
+     descriptions[static_cast<size_t>(GameInput::ACCEPT_MENU)] = "In the recomp interface, performs the action for the currently highlighted item. Like pressing a button, or toggling a switch.";
+     descriptions[static_cast<size_t>(GameInput::BACK_MENU)] = "In the recomp interface, returns to the header or backs out to a previous menu.";
+@@ -266,3 +268,4 @@ std::string recompinput::InputField::to_string() const {
+ }
+ 
+ };
++
+diff --git a/recompinput/src/profiles.cpp b/recompinput/src/profiles.cpp
+index c89956e..03e26f9 100644
+--- a/recompinput/src/profiles.cpp
++++ b/recompinput/src/profiles.cpp
+@@ -371,6 +371,20 @@ namespace recompinput {
+         return "SERIAL_" + guid.serial + "_VID_" + std::to_string(guid.vendor) + "_PID_" + std::to_string(guid.product) +"_VERSION_" + std::to_string(guid.version) +"_CRC16_" + std::to_string(guid.crc16);
+     }
+ 
++    // Read a named action through the same selected keyboard/controller profiles
++    // as N64 input. The caller owns gameplay/focus gating and held-edge tracking.
++    bool profiles::get_action_input(int player_index, GameInput input) {
++        if (player_index < 0 || player_index >= static_cast<int>(players_input_profile_indices.size()) ||
++            static_cast<size_t>(input) >= num_game_inputs) return false;
++        const int controller = players::is_single_player_mode() ? get_sp_controller_profile_index() : players_input_profile_indices[player_index].first;
++        const int keyboard = players::is_single_player_mode() ? get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second;
++        const auto held = [&](int profile) {
++            return profile >= 0 && static_cast<size_t>(profile) < input_profiles.size() &&
++                recompinput::get_input_digital(player_index,input_profiles[profile].mappings[static_cast<size_t>(input)]);
++        };
++        return held(controller) || held(keyboard);
++    }
++
+     bool profiles::get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out) {
+         uint16_t cur_buttons = 0;
+         float cur_x = 0.0f;
+@@ -575,3 +589,4 @@ namespace recompinput {
+         return true;
+     }
+ }
++
+diff --git a/recompui/include/recompui/config.h b/recompui/include/recompui/config.h
+index 38b84f5..d4d90c3 100644
+--- a/recompui/include/recompui/config.h
++++ b/recompui/include/recompui/config.h
+@@ -58,6 +58,7 @@ namespace recompui {
+                 inline const std::string ar_option = "ar_option";
+                 inline const std::string msaa_option = "msaa_option";
+                 inline const std::string rr_option = "rr_option";
++                inline const std::string vsync_enabled = "vsync_enabled";
+                 inline const std::string hpfb_option = "hpfb_option";
+                 inline const std::string rr_manual_value = "rr_manual_value";
+                 inline const std::string ds_option = "ds_option";
+diff --git a/recompui/include/recompui/recompui.h b/recompui/include/recompui/recompui.h
+index 30c463b..96a639d 100644
+--- a/recompui/include/recompui/recompui.h
++++ b/recompui/include/recompui/recompui.h
+@@ -42,6 +42,10 @@ namespace recompui {
+     // Use this to update the launcher each frame.
+     void register_launcher_update_callback(std::function<void(LauncherMenu *menu)> callback);
+ 
++    // Use this for UI work that must continue after the launcher is hidden.
++    // The callback runs on the render/UI thread after queued input is handled.
++    void register_update_callback(std::function<void()> callback);
++
+     class UiEventListenerInstancer;
+ 
+     using event_handler_t = void(const std::string& param, Rml::Event&);
+diff --git a/recompui/src/base/ui_launcher.cpp b/recompui/src/base/ui_launcher.cpp
+index 6de7a94..90981fa 100644
+--- a/recompui/src/base/ui_launcher.cpp
++++ b/recompui/src/base/ui_launcher.cpp
+@@ -537,6 +537,12 @@ namespace recompui {
+             default_title_wrapper->set_translate_2D(-50.0f, -50.0f, Unit::Percent);
+             default_title_wrapper->set_width_auto();
+             default_title_wrapper->set_height_auto();
++            default_title_wrapper->set_padding_top(8.0f);
++            default_title_wrapper->set_padding_right(20.0f);
++            default_title_wrapper->set_padding_bottom(8.0f);
++            default_title_wrapper->set_padding_left(20.0f);
++            default_title_wrapper->set_background_color(Color{ 0, 0, 0, 152 });
++            default_title_wrapper->set_border_radius(theme::border::radius_md);
+             Label *title = context.create_element<Label>(default_title_wrapper, programconfig::get_program_name(), theme::Typography::Header1);
+             title->set_color(theme::color::Primary);
+         }
+@@ -573,9 +579,10 @@ namespace recompui {
+ 
+     Svg *LauncherMenu::set_launcher_background_svg(const std::string& svg_path) {
+         auto context = get_current_context();
+-        if (background_svg != nullptr) {
++        if ((background_svg != nullptr) || (background_image != nullptr)) {
+             background_wrapper->clear_children();
+             background_svg = nullptr;
++            background_image = nullptr;
+         }
+         background_svg = context.create_element<Svg>(background_wrapper, svg_path);
+         background_svg->set_position(Position::Absolute);
+@@ -587,6 +594,22 @@ namespace recompui {
+         return background_svg;
+     }
+ 
++    Image *LauncherMenu::set_launcher_background_image(const std::string& image_path) {
++        auto context = get_current_context();
++        if ((background_svg != nullptr) || (background_image != nullptr)) {
++            background_wrapper->clear_children();
++            background_svg = nullptr;
++            background_image = nullptr;
++        }
++        background_image = context.create_element<Image>(background_wrapper, image_path);
++        background_image->set_position(Position::Absolute);
++        background_image->set_top(0.0f);
++        background_image->set_left(0.0f);
++        background_image->set_width(100.0f, Unit::Percent);
++        background_image->set_height(100.0f, Unit::Percent);
++        return background_image;
++    }
++
+     void LauncherMenu::show_game_mode_menu(std::u8string game_id, std::string game_display_name, std::span<const char> game_thumbnail) {
+         game_options_menu->display_hide();
+         auto context = get_current_context();
+diff --git a/recompui/src/base/ui_launcher.h b/recompui/src/base/ui_launcher.h
+index eb8833e..5204422 100644
+--- a/recompui/src/base/ui_launcher.h
++++ b/recompui/src/base/ui_launcher.h
+@@ -6,6 +6,7 @@
+ #include "elements/ui_label.h"
+ #include "base/ui_game_option.h"
+ #include "base/ui_launcher_common.h"
++#include "elements/ui_image.h"
+ #include "elements/ui_svg.h"
+ 
+ namespace recompui {
+@@ -56,6 +57,7 @@ namespace recompui {
+         std::string_view get_type_name() override { return "LauncherMenu"; }
+         Element *background_wrapper;
+         Svg *background_svg = nullptr;
++        Image *background_image = nullptr;
+         Element *menu_container;
+         Label *version_label;
+         Element *default_title_wrapper;
+@@ -71,6 +73,7 @@ namespace recompui {
+         void hide_game_mode_menu();
+         void remove_default_title();
+         Svg *set_launcher_background_svg(const std::string& svg_path);
++        Image *set_launcher_background_image(const std::string& image_path);
+         Element *get_background_container() { return background_wrapper; }
+         Element *get_menu_container() { return menu_container; }
+     };
+diff --git a/recompui/src/base/ui_state.cpp b/recompui/src/base/ui_state.cpp
+index 277a421..7592771 100644
+--- a/recompui/src/base/ui_state.cpp
++++ b/recompui/src/base/ui_state.cpp
+@@ -1,3 +1,4 @@
++#include "rr64_popup_input.hpp"
+ #ifdef _WIN32
+ #define WIN32_LEAN_AND_MEAN
+ #include <SDL_video.h>
+@@ -5,6 +6,9 @@
+ #include <SDL2/SDL_video.h>
+ #endif
+ #include <chrono>
++#include <cstdio>
++#include <exception>
++// RR64_DIAG_V0313_UI_STATE_INCLUDES
+ 
+ #include "rt64_render_hooks.h"
+ 
+@@ -34,6 +38,11 @@
+ #include "util/file.h"
+ 
+ static std::atomic_bool cursor_enabled = true;
++static std::function<void()> update_callback = nullptr;
++
++void recompui::register_update_callback(std::function<void()> callback) {
++    update_callback = std::move(callback);
++}
+ 
+ void recompui::open_quit_game_prompt() {
+     recompui::open_choice_prompt(
+@@ -223,28 +232,48 @@ public:
+     UIState& operator=(UIState&& rhs) = delete;
+ 
+     UIState(SDL_Window* window, plume::RenderInterface* interface, plume::RenderDevice* device) {
++        // RR64_DIAG_V0313_UI_STATE_CTOR
++        fprintf(stderr, "[RR64-RF-STATE] UIState ctor entered.\n"); fflush(stderr);
+ 
++        fprintf(stderr, "[RR64-RF-STATE] creating SDL system interface...\n"); fflush(stderr);
+         system_interface = std::make_unique<SystemInterface_SDL>();
++        fprintf(stderr, "[RR64-RF-STATE] SDL system interface created.\n"); fflush(stderr);
+         system_interface->SetWindow(window);
++        fprintf(stderr, "[RR64-RF-STATE] SDL window assigned.\n"); fflush(stderr);
+         render_interface.init(interface, device);
++        fprintf(stderr, "[RR64-RF-STATE] render interface initialized.\n"); fflush(stderr);
+ 
+         Rml::SetSystemInterface(system_interface.get());
+-        Rml::SetRenderInterface(render_interface.get_rml_interface());
++        fprintf(stderr, "[RR64-RF-STATE] Rml system interface assigned.\n"); fflush(stderr);
++        Rml::RenderInterface* rr64RmlRenderInterface = render_interface.get_rml_interface();
++        fprintf(stderr, "[RR64-RF-STATE] adapted render interface acquired: %p.\n", static_cast<void*>(rr64RmlRenderInterface)); fflush(stderr);
++        Rml::SetRenderInterface(rr64RmlRenderInterface);
++        fprintf(stderr, "[RR64-RF-STATE] Rml render interface assigned.\n"); fflush(stderr);
+         Rml::Factory::RegisterEventListenerInstancer(&event_listener_instancer);
++        fprintf(stderr, "[RR64-RF-STATE] event-listener instancer registered.\n"); fflush(stderr);
+ 
+-        Rml::Initialise();
++        fprintf(stderr, "[RR64-RF-STATE] calling Rml::Initialise...\n"); fflush(stderr);
++        const bool rr64RmlInitialized = Rml::Initialise();
++        fprintf(stderr, "[RR64-RF-STATE] Rml::Initialise returned %d.\n", rr64RmlInitialized ? 1 : 0); fflush(stderr);
+ 
++        fprintf(stderr, "[RR64-RF-STATE] registering custom elements...\n"); fflush(stderr);
+         recompui::register_custom_elements();
++        fprintf(stderr, "[RR64-RF-STATE] custom elements registered.\n"); fflush(stderr);
+ 
+         // Apply the hack to replace RmlUi's default color parser with one that conforms to HTML5 alpha parsing for SASS compatibility
+         recompui::apply_color_hack();
++        fprintf(stderr, "[RR64-RF-STATE] color parser hack applied.\n"); fflush(stderr);
+ 
+         int width, height;
+         SDL_GetWindowSizeInPixels(window, &width, &height);
+-        
++        fprintf(stderr, "[RR64-RF-STATE] window dimensions: %d x %d.\n", width, height); fflush(stderr);
++
++        fprintf(stderr, "[RR64-RF-STATE] creating main Rml context...\n"); fflush(stderr);
+         context = Rml::CreateContext("main", Rml::Vector2i(width, height));
++        fprintf(stderr, "[RR64-RF-STATE] main Rml context returned: %p.\n", static_cast<void*>(context)); fflush(stderr);
+ 
+         Rml::Debugger::Initialise(context);
++        fprintf(stderr, "[RR64-RF-STATE] Rml debugger initialized.\n"); fflush(stderr);
+         {
+             struct FontFace {
+                 const char* filename;
+@@ -257,29 +286,47 @@ public:
+ 
+             for (const FontFace& face : font_faces) {
+                 auto font = recompui::file::get_asset_path(face.filename);
+-                Rml::LoadFontFace(font.string(), face.fallback_face);
++                const std::string fontPath = font.string();
++                fprintf(stderr, "[RR64-RF-STATE] loading bundled font '%s' (path_len=%zu fallback=%d)...\n", face.filename, fontPath.size(), face.fallback_face ? 1 : 0); fflush(stderr);
++                const bool loaded = Rml::LoadFontFace(fontPath, face.fallback_face);
++                fprintf(stderr, "[RR64-RF-STATE] bundled font load returned %d.\n", loaded ? 1 : 0); fflush(stderr);
+             }
+ 
++            fprintf(stderr, "[RR64-RF-STATE] primary font name length=%zu.\n", primary_font.size()); fflush(stderr);
+             if (primary_font.empty()) {
+                 throw std::runtime_error("No primary font was registered with recompui::register_primary_font");
+             }
+ 
+             auto primary_font_path = recompui::file::get_asset_path(primary_font.c_str());
+-            Rml::LoadFontFace(primary_font_path.string(), false);
++            const std::string primaryFontPath = primary_font_path.string();
++            fprintf(stderr, "[RR64-RF-STATE] loading primary font (path_len=%zu)...\n", primaryFontPath.size()); fflush(stderr);
++            const bool primaryLoaded = Rml::LoadFontFace(primaryFontPath, false);
++            fprintf(stderr, "[RR64-RF-STATE] primary font load returned %d.\n", primaryLoaded ? 1 : 0); fflush(stderr);
+ 
+             for (const auto& extra_font : extra_fonts) {
+                 auto extra_font_path = recompui::file::get_asset_path(extra_font.c_str());
+-                Rml::LoadFontFace(extra_font_path.string(), false);
++                const std::string extraFontPath = extra_font_path.string();
++                fprintf(stderr, "[RR64-RF-STATE] loading extra font (name_len=%zu path_len=%zu)...\n", extra_font.size(), extraFontPath.size()); fflush(stderr);
++                const bool extraLoaded = Rml::LoadFontFace(extraFontPath, false);
++                fprintf(stderr, "[RR64-RF-STATE] extra font load returned %d.\n", extraLoaded ? 1 : 0); fflush(stderr);
+             }
+         }
++        fprintf(stderr, "[RR64-RF-STATE] UIState ctor COMPLETE.\n"); fflush(stderr);
+     }
+ 
+     void create_menus() {
++        // RR64_DIAG_V0313_UI_MENUS
++        fprintf(stderr, "[RR64-RF-STATE] initializing UI styling...\n"); fflush(stderr);
+         recompui::init_styling(recompui::file::get_asset_path("recomp.rcss"));
++        fprintf(stderr, "[RR64-RF-STATE] UI styling initialized.\n"); fflush(stderr);
+         recompui::init_launcher_menu();
++        fprintf(stderr, "[RR64-RF-STATE] launcher menu initialized.\n"); fflush(stderr);
+         recompui::init_prompt_context();
++        fprintf(stderr, "[RR64-RF-STATE] prompt context initialized.\n"); fflush(stderr);
+         recompui::AssignPlayersModal::init();
++        fprintf(stderr, "[RR64-RF-STATE] player-assignment modal initialized.\n"); fflush(stderr);
+         recompui::config::init_modal();
++        fprintf(stderr, "[RR64-RF-STATE] configuration modal initialized.\n"); fflush(stderr);
+     }
+ 
+     void unload() {
+@@ -419,6 +466,12 @@ public:
+     }
+ 
+     void hide_context(recompui::ContextId context) {
++        // Arm before removing input capture so the game thread cannot observe
++        // an uncovered menu with the button that dismissed this overlay held.
++        // Non-interactive toasts must not interrupt gameplay when they hide.
++        if (context.captures_input()) {
++            rr64::popup_input::closed();
++        }
+         auto remove_it = std::remove_if(shown_contexts.begin(), shown_contexts.end(), [context](auto& c) { return c.context == context; });
+         if (remove_it == shown_contexts.end()) {
+             recompui::message_box("Attemped to hide a context that isn't shown");
+@@ -431,6 +484,9 @@ public:
+     
+     void hide_all_contexts() {
+         for (auto& context : shown_contexts) {
++            if (context.context.captures_input()) {
++                rr64::popup_input::closed();
++            }
+             context.document->Hide();
+         }
+ 
+@@ -513,8 +569,22 @@ void init_hook(plume::RenderInterface* interface, plume::RenderDevice* device) {
+ #if defined(__linux__)
+     std::locale::global(std::locale::classic());
+ #endif
+-    ui_state = std::make_unique<UIState>(window, interface, device);
+-    ui_state->create_menus();
++    // RR64_DIAG_V0313_INIT_HOOK
++    fprintf(stderr, "[RR64-RF-STATE] init_hook entered.\n"); fflush(stderr);
++    try {
++        ui_state = std::make_unique<UIState>(window, interface, device);
++        fprintf(stderr, "[RR64-RF-STATE] UIState allocation/constructor returned.\n"); fflush(stderr);
++        ui_state->create_menus();
++        fprintf(stderr, "[RR64-RF-STATE] init_hook COMPLETE.\n"); fflush(stderr);
++    }
++    catch (const std::exception& ex) {
++        fprintf(stderr, "[RR64-RF-STATE] init_hook exception: %s\n", ex.what()); fflush(stderr);
++        throw;
++    }
++    catch (...) {
++        fprintf(stderr, "[RR64-RF-STATE] init_hook unknown exception.\n"); fflush(stderr);
++        throw;
++    }
+ }
+ 
+ moodycamel::ConcurrentQueue<SDL_Event> ui_event_queue{};
+@@ -859,6 +929,12 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+     ui_state->update_primary_input(mouse_moved, non_mouse_interacted);
+     ui_state->update_focus(mouse_moved, non_mouse_interacted);
+ 
++    // This runs after the current input batch so a button that requested a
++    // new context cannot also activate that context in the same frame.
++    if (update_callback) {
++        update_callback();
++    }
++
+     if (recompui::is_any_context_shown()) {
+         if (recompui::is_context_shown(recompui::get_launcher_context_id())) {
+             recompui::update_launcher_menu();
+@@ -1133,3 +1209,4 @@ void recompui::drop_files(const std::list<std::filesystem::path> &file_list) {
+         );
+     }
+ }
++
+diff --git a/recompui/src/composites/ui_mod_installer.cpp b/recompui/src/composites/ui_mod_installer.cpp
+index 1f98b3c..a83a958 100644
+--- a/recompui/src/composites/ui_mod_installer.cpp
++++ b/recompui/src/composites/ui_mod_installer.cpp
+@@ -1,5 +1,8 @@
+ #include "ui_mod_installer.h"
+ 
++#include <algorithm>
++#include <cctype>
++
+ #include "librecomp/mods.hpp"
+ 
+ namespace recompui {
+@@ -313,6 +316,18 @@ namespace recompui {
+         }
+ 
+         for (const std::filesystem::path &path : file_paths) {
++            std::string extension = path.extension().string();
++            std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
++                return static_cast<char>(std::tolower(ch));
++            });
++            if (extension == ".rar" || extension == ".7z") {
++                result.error_messages.emplace_back(
++                    path.filename().string() +
++                    " is a legacy archive and cannot be installed directly. Install an .nrm or RT64 .rtz file instead."
++                );
++                continue;
++            }
++
+             recomp::mods::ModOpenError open_error;
+             recomp::mods::ZipModFileHandle file_handle(path, open_error);
+             if (open_error != recomp::mods::ModOpenError::Good) {
+diff --git a/recompui/src/config/ui_config_tab_graphics.cpp b/recompui/src/config/ui_config_tab_graphics.cpp
+index 4fdf81f..3dc2827 100644
+--- a/recompui/src/config/ui_config_tab_graphics.cpp
++++ b/recompui/src/config/ui_config_tab_graphics.cpp
+@@ -66,7 +66,9 @@ namespace recompui {
+ 
+         static EnumOptionVector aspect_ratio_options = {
+             {ultramodern::renderer::AspectRatio::Original, "Original"},
+-            {ultramodern::renderer::AspectRatio::Expand, "Expand"},
++            {ultramodern::renderer::AspectRatio::Stretch, "Stretch", "Stretched"},
++            {ultramodern::renderer::AspectRatio::Expand, "Expand", "16:9"},
++            {ultramodern::renderer::AspectRatio::WideHighRes, "WideHighRes", "16:9 + High Res"},
+             // {ultramodern::renderer::AspectRatio::Manual, "Manual"},
+         };
+ 
+@@ -77,10 +79,16 @@ namespace recompui {
+             // {ultramodern::renderer::Antialiasing::MSAA8X, "MSAA8X"},
+         };
+ 
++        enum class FrameratePreset : uint32_t {
++            FPS30,
++            FPS60,
++            FPS120,
++        };
++
+         static EnumOptionVector refresh_rate_options = {
+-            {ultramodern::renderer::RefreshRate::Original, "Original"},
+-            {ultramodern::renderer::RefreshRate::Display, "Display"},
+-            {ultramodern::renderer::RefreshRate::Manual, "Manual"},
++            {FrameratePreset::FPS30, "30 FPS"},
++            {FrameratePreset::FPS60, "60 FPS"},
++            {FrameratePreset::FPS120, "120 FPS"},
+         };
+ 
+         static EnumOptionVector hpfb_options = {
+@@ -151,12 +159,24 @@ namespace recompui {
+             get_graphics_config().update_option_enum_details(graphics::options::ds_option, get_downsampling_details(res_option, ds_opt));
+         }
+ 
++        static int framerate_for_preset(FrameratePreset preset) {
++            switch (preset) {
++            case FrameratePreset::FPS30:
++                return 30;
++            case FrameratePreset::FPS120:
++                return 120;
++            case FrameratePreset::FPS60:
++            default:
++                return 60;
++            }
++        }
++
+         static std::string get_framerate_text(uint32_t refresh_rate) {
+             return
+-                "Sets the game's output framerate. This option does not affect gameplay."
++                "Sets the game's output framerate to 30, 60, or 120 FPS. The original simulation timing remains unchanged."
+                 "<br />"
+                 "<br />"
+-                "Note: If you have issues with <recomp-color primary>Display</recomp-color> mode while using an external frame limiter, use <recomp-color primary>Manual</recomp-color> mode instead and configure it to that same frame limit."
++                "Higher choices use RT64 presentation interpolation, remain vertically synchronized to prevent tearing, and are limited by the display's supported refresh rate."
+                 "<br />"
+                 "<br />"
+                 "<recomp-color primary>Detected display refresh rate: " + std::to_string(refresh_rate) + "hz</recomp-color>";
+@@ -171,9 +191,13 @@ namespace recompui {
+             new_config.api_option = get_graphics_enum_value<ultramodern::renderer::GraphicsApi>(graphics::options::api_option);
+             new_config.ar_option = get_graphics_enum_value<ultramodern::renderer::AspectRatio>(graphics::options::ar_option);
+             new_config.msaa_option = get_graphics_enum_value<ultramodern::renderer::Antialiasing>(graphics::options::msaa_option);
+-            new_config.rr_option = get_graphics_enum_value<ultramodern::renderer::RefreshRate>(graphics::options::rr_option);
++            const auto framerate_preset =
++                get_graphics_enum_value<FrameratePreset>(graphics::options::rr_option);
++            new_config.rr_option = ultramodern::renderer::RefreshRate::Manual;
++            new_config.vsync_enabled =
++                get_graphics_bool_value(graphics::options::vsync_enabled);
+             new_config.hpfb_option = get_graphics_enum_value<ultramodern::renderer::HighPrecisionFramebuffer>(graphics::options::hpfb_option);
+-            new_config.rr_manual_value = get_graphics_number_value<int>(graphics::options::rr_manual_value);
++            new_config.rr_manual_value = framerate_for_preset(framerate_preset);
+ 
+             new_config.ds_option = get_graphics_enum_value<int>(graphics::options::ds_option);
+ 
+@@ -206,7 +230,6 @@ namespace recompui {
+             recomp::config::Config& config = get_graphics_config();
+             std::string framerate_text = get_framerate_text(refresh_rate);
+             config.update_option_description(graphics::options::rr_option, framerate_text);
+-            config.update_option_description(graphics::options::rr_manual_value, framerate_text);
+         }
+ 
+         void graphics::toggle_fullscreen() {
+@@ -286,7 +309,7 @@ namespace recompui {
+             config.add_enum_option(
+                 graphics::options::ar_option,
+                 "Aspect Ratio",
+-                "Sets the horizontal aspect ratio. <recomp-color primary>Original</recomp-color> uses the game's original 4:3 aspect ratio. <recomp-color primary>Expand</recomp-color> will adjust to match the game window's aspect ratio.",
++                "Sets the game presentation. <recomp-color primary>Original</recomp-color> preserves the native 4:3 frame with side bars. <recomp-color primary>Stretched</recomp-color> fills the window by stretching the original frame. <recomp-color primary>16:9</recomp-color> uses corrected widescreen presentation. <recomp-color primary>16:9 + High Res</recomp-color> also enables the game's full-height High Res mode during single-player races, overriding the original resolution menu without changing your saved selection.",
+                 aspect_ratio_options,
+                 ultramodern::renderer::AspectRatio::Expand
+             );
+@@ -304,23 +327,15 @@ namespace recompui {
+                 "Framerate",
+                 get_framerate_text(60),
+                 refresh_rate_options,
+-                ultramodern::renderer::RefreshRate::Display
++                FrameratePreset::FPS60
+             );
+ 
+-            config.add_number_option(
+-                graphics::options::rr_manual_value,
+-                "",
+-                get_framerate_text(60),
+-                20.0, 240.0, 1.0, 0, false, 60.0
++            config.add_bool_option(
++                graphics::options::vsync_enabled,
++                "VSync",
++                "Synchronizes completed frames with the display to prevent visible tearing. Keep this enabled for normal displays. You may disable it when G-SYNC, FreeSync, or another variable-refresh system is handling synchronization.",
++                true
+             );
+-            {
+-                config.add_option_hidden_dependency(
+-                    graphics::options::rr_manual_value,
+-                    graphics::options::rr_option,
+-                    ultramodern::renderer::RefreshRate::Original,
+-                    ultramodern::renderer::RefreshRate::Display
+-                );
+-            }
+ 
+             config.add_enum_option(
+                 graphics::options::msaa_option,
+diff --git a/recompui/src/core/ui_context.cpp b/recompui/src/core/ui_context.cpp
+index e99229a..be8d0fb 100644
+--- a/recompui/src/core/ui_context.cpp
++++ b/recompui/src/core/ui_context.cpp
+@@ -2,6 +2,8 @@
+ #include <string>
+ #include <unordered_map>
+ #include <fstream>
++#include <stdexcept>
++// RR64_FIX_V0314_STYLESHEET_INCLUDE
+ 
+ #include "slot_map.h"
+ #include "RmlUi/Core/StreamMemory.h"
+@@ -235,12 +237,25 @@ void recompui::init_styling(const std::filesystem::path& rcss_file) {
+     // Load user rcss.
+     std::string style{};
+     {
+-        std::ifstream style_stream{rcss_file};
+-        style_stream.seekg(0, std::ios::end);
+-        style.resize(style_stream.tellg());
+-        style_stream.seekg(0, std::ios::beg);
++        // RR64_FIX_V0314_STYLESHEET_READ
++        std::ifstream style_stream{rcss_file, std::ios::binary | std::ios::ate};
++        if (!style_stream.is_open()) {
++            throw std::runtime_error("Unable to open RecompFrontend stylesheet: " + rcss_file.string());
++        }
++
++        const std::streampos style_end = style_stream.tellg();
++        if (style_end < 0) {
++            throw std::runtime_error("Unable to determine RecompFrontend stylesheet size: " + rcss_file.string());
++        }
+ 
+-        style_stream.read(style.data(), style.size());
++        style.resize(static_cast<std::size_t>(style_end));
++        style_stream.seekg(0, std::ios::beg);
++        if (!style.empty()) {
++            style_stream.read(style.data(), static_cast<std::streamsize>(style.size()));
++            if (!style_stream) {
++                throw std::runtime_error("Unable to read RecompFrontend stylesheet: " + rcss_file.string());
++            }
++        }
+     }
+     std::unique_ptr<Rml::StreamMemory> rml_stream = std::make_unique<Rml::StreamMemory>(reinterpret_cast<Rml::byte*>(style.data()), style.size());
+     rml_stream->SetSourceURL(rcss_file.filename().string());
+diff --git a/recompui/src/renderer/rt64_render_context.cpp b/recompui/src/renderer/rt64_render_context.cpp
+index a7954c7..4671d90 100644
+--- a/recompui/src/renderer/rt64_render_context.cpp
++++ b/recompui/src/renderer/rt64_render_context.cpp
+@@ -2,6 +2,9 @@
+ #include <cstring>
+ #include <variant>
+ #include <algorithm>
++#include <cstdio>
++#include <cstdlib>
++// RR64_DIAG_V0310_FRONTEND_INCLUDES
+ 
+ #include "hle/rt64_application.h"
+ #include "rt64_render_hooks.h"
+@@ -79,8 +82,12 @@ RT64::UserConfiguration::AspectRatio to_rt64(ultramodern::renderer::AspectRatio
+             return RT64::UserConfiguration::AspectRatio::Original;
+         case ultramodern::renderer::AspectRatio::Expand:
+             return RT64::UserConfiguration::AspectRatio::Expand;
++        case ultramodern::renderer::AspectRatio::WideHighRes:
++            return RT64::UserConfiguration::AspectRatio::Manual;
+         case ultramodern::renderer::AspectRatio::Manual:
+             return RT64::UserConfiguration::AspectRatio::Manual;
++        case ultramodern::renderer::AspectRatio::Stretch:
++            return RT64::UserConfiguration::AspectRatio::Stretch;
+         case ultramodern::renderer::AspectRatio::OptionCount:
+             return RT64::UserConfiguration::AspectRatio::OptionCount;
+     }
+@@ -172,6 +179,15 @@ void set_application_user_config(RT64::Application* application, const ultramode
+     }
+ 
+     application->userConfig.aspectRatio = to_rt64(config.ar_option);
++    application->userConfig.rr64WideHighRes =
++        config.ar_option == ultramodern::renderer::AspectRatio::WideHighRes;
++    if (config.ar_option == ultramodern::renderer::AspectRatio::Expand ||
++        config.ar_option == ultramodern::renderer::AspectRatio::WideHighRes) {
++        // Road Rash exposes this renderer mode as a fixed, corrected 16:9
++        // presentation instead of expanding the camera beyond its tested HUD
++        // and multiplayer layout on ultrawide displays.
++        application->userConfig.aspectTarget = 16.0 / 9.0;
++    }
+     application->userConfig.antialiasing = to_rt64(config.msaa_option);
+     application->userConfig.refreshRate = to_rt64(config.rr_option);
+     application->userConfig.refreshRateTarget = config.rr_manual_value;
+@@ -219,10 +235,29 @@ ultramodern::renderer::GraphicsApi map_graphics_api(RT64::UserConfiguration::Gra
+ 
+ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::WindowHandle window_handle, ultramodern::renderer::PresentationMode presentation_mode, bool debug) {
+     static unsigned char dummy_rom_header[0x40];
+-    recompui::set_render_hooks();
++    // RR64_DIAG_V0310_FRONTEND_ENTRY
++    fprintf(stderr, "[RR64-RF-STAGE] RT64Context constructor entered. rdram=%p window=%p thread=%u\n",
++        static_cast<void*>(rdram), reinterpret_cast<void*>(window_handle.window), static_cast<unsigned>(window_handle.thread_id));
++    fflush(stderr);
++
++    const char* rr64SkipUiHook = std::getenv("RR64_RT64_SKIP_UI_HOOK");
++    if ((rr64SkipUiHook != nullptr) && (rr64SkipUiHook[0] == '1') && (rr64SkipUiHook[1] == '\0')) {
++        fprintf(stderr, "[RR64-RF-STAGE] UI render hook intentionally SKIPPED for diagnostic run.\n");
++        fflush(stderr);
++    }
++    else {
++        fprintf(stderr, "[RR64-RF-STAGE] Installing RecompFrontend RT64 render hooks...\n");
++        fflush(stderr);
++        recompui::set_render_hooks();
++        fprintf(stderr, "[RR64-RF-STAGE] RecompFrontend RT64 render hooks installed.\n");
++        fflush(stderr);
++    }
+ 
+     // Set up the RT64 application core fields.
+     RT64::Application::Core appCore{};
++    // RR64_DIAG_V0310_APPCORE
++    fprintf(stderr, "[RR64-RF-STAGE] Building RT64 Application::Core.\n");
++    fflush(stderr);
+ #if defined(_WIN32)
+     appCore.window = window_handle.window;
+ #elif defined(__linux__) || defined(__ANDROID__)
+@@ -267,17 +302,35 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+     appCore.VI_Y_SCALE_REG = &vi_regs->VI_Y_SCALE_REG;
+ 
+     // Set up the RT64 application configuration fields.
+-    RT64::ApplicationConfiguration appConfig;
++    RT64::ApplicationConfiguration appConfig{};
++    // RR64_DIAG_V0310_APPCONFIG
++    fprintf(stderr, "[RR64-RF-STAGE] RT64 ApplicationConfiguration value-initialized.\n");
++    fflush(stderr);
+     appConfig.useConfigurationFile = false;
++    // RecompFrontend owns the application/config directory. Disable RT64's
++    // separate data-path auto-detection during this bootstrap diagnostic.
++    appConfig.detectDataPath = false;
++    // RR64_DIAG_V0310_NO_DATAPATH
++    fprintf(stderr, "[RR64-RF-STAGE] RT64 config: useConfigurationFile=0 detectDataPath=0.\n");
++    fflush(stderr);
+ 
+     // Create the RT64 application.
++    // RR64_DIAG_V0310_APP_CREATE
++    fprintf(stderr, "[RR64-RF-STAGE] Constructing RT64::Application...\n");
++    fflush(stderr);
+     app = std::make_unique<RT64::Application>(appCore, appConfig);
++    fprintf(stderr, "[RR64-RF-STAGE] RT64::Application constructor returned. app=%p\n", static_cast<void*>(app.get()));
++    fflush(stderr);
+ 
+     // Set initial user config settings based on the current settings.
+     auto& cur_config = ultramodern::renderer::get_graphics_config();
++    // RR64_DIAG_V0310_USER_CONFIG
++    fprintf(stderr, "[RR64-RF-STAGE] Applying RecompFrontend graphics config to RT64...\n");
++    fflush(stderr);
+     set_application_user_config(app.get(), cur_config);
++    fprintf(stderr, "[RR64-RF-STAGE] RecompFrontend graphics config applied. api_option=%d\n", static_cast<int>(cur_config.api_option));
++    fflush(stderr);
+     app->userConfig.developerMode = debug;
+-    // Force gbi depth branches to prevent LODs from kicking in.
+     app->enhancementConfig.f3dex.forceBranch = true;
+     // Scale LODs based on the output resolution.
+     app->enhancementConfig.textureLOD.scale = true;
+@@ -305,7 +358,13 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+ #ifdef _WIN32
+     thread_id = window_handle.thread_id;
+ #endif
++    // RR64_DIAG_V0310_SETUP_CALL
++    fprintf(stderr, "[RR64-RF-STAGE] Calling RT64::Application::setup(thread=%u)...\n", static_cast<unsigned>(thread_id));
++    fflush(stderr);
+     setup_result = map_setup_result(app->setup(thread_id));
++    fprintf(stderr, "[RR64-RF-STAGE] RT64::Application::setup returned result=%d chosen_api=%d.\n",
++        static_cast<int>(setup_result), static_cast<int>(app->chosenGraphicsAPI));
++    fflush(stderr);
+     // Get the API that RT64 chose.
+     chosen_api = map_graphics_api(app->chosenGraphicsAPI);
+     if (setup_result != ultramodern::renderer::SetupResult::Success) {
+@@ -313,8 +372,13 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+         return;
+     }
+ 
+-    // Set the application's fullscreen state.
+-    app->setFullScreen(cur_config.wm_option == ultramodern::renderer::WindowMode::Fullscreen);
++    {
++        std::scoped_lock present_lock(app->presentQueue->threadMutex);
++        app->swapChain->setVsyncEnabled(cur_config.vsync_enabled);
++        // Window style and client-size changes must not race swap-chain
++        // presentation or ResizeBuffers on the presentation thread.
++        app->setFullScreen(cur_config.wm_option == ultramodern::renderer::WindowMode::Fullscreen);
++    }
+ 
+     // Check if the selected device actually supports MSAA sample positions and MSAA for for the formats that will be used
+     // and downgrade the configuration accordingly.
+@@ -371,8 +435,19 @@ bool renderer::RT64Context::update_config(const ultramodern::renderer::GraphicsC
+         return false;
+     }
+ 
+-    if (new_config.wm_option != old_config.wm_option) {
+-        app->setFullScreen(new_config.wm_option == ultramodern::renderer::WindowMode::Fullscreen);
++    const bool window_mode_changed = new_config.wm_option != old_config.wm_option;
++    const bool vsync_changed = new_config.vsync_enabled != old_config.vsync_enabled;
++    if (window_mode_changed || vsync_changed) {
++        // The present queue reads and, for Vulkan, may rebuild the swap chain
++        // from this state. Window style/size changes must use the same lock so
++        // they cannot race Present or ResizeBuffers.
++        std::scoped_lock present_lock(app->presentQueue->threadMutex);
++        if (window_mode_changed) {
++            app->setFullScreen(new_config.wm_option == ultramodern::renderer::WindowMode::Fullscreen);
++        }
++        if (vsync_changed) {
++            app->swapChain->setVsyncEnabled(new_config.vsync_enabled);
++        }
+     }
+ 
+     set_application_user_config(app.get(), new_config);
+diff --git a/recompui/src/renderer/ui_renderer.cpp b/recompui/src/renderer/ui_renderer.cpp
+index 5ca5349..c61f087 100644
+--- a/recompui/src/renderer/ui_renderer.cpp
++++ b/recompui/src/renderer/ui_renderer.cpp
+@@ -5,6 +5,9 @@
+ 
+ #include <fstream>
+ #include <filesystem>
++#include <cstdio>
++#include <exception>
++// RR64_DIAG_V0312_UI_INCLUDES
+ 
+ #include <concurrentqueue.h>
+ 
+@@ -158,66 +161,126 @@ class RmlRenderInterface_RT64_impl : public Rml::RenderInterfaceCompatibility {
+     std::unordered_map<std::string, ImageFromBytes> image_from_bytes_map;
+ public:
+     RmlRenderInterface_RT64_impl(plume::RenderInterface* interface, plume::RenderDevice* device) {
++        // RR64_DIAG_V0312_UI_CTOR_ENTRY
++        fprintf(stderr, "[RR64-RF-UI] ctor entered interface=%p device=%p\n", static_cast<void*>(interface), static_cast<void*>(device));
++        fflush(stderr);
+         interface_ = interface;
+         device_ = device;
++        // RR64_DIAG_V0312_UI_DEVICE_ASSIGNED
++        fprintf(stderr, "[RR64-RF-UI] interface/device pointers assigned.\n"); fflush(stderr);
+ 
+         // Enable 4X MSAA if supported by the device.
+         const plume::RenderSampleCounts desired_sample_count = plume::RenderSampleCount::COUNT_8;
+-        if (device_->getSampleCountsSupported(SwapChainFormat) & desired_sample_count) {
++        // RR64_DIAG_V0312_UI_SAMPLE_COUNTS
++        fprintf(stderr, "[RR64-RF-UI] querying sample counts...\n"); fflush(stderr);
++        const plume::RenderSampleCounts rr64_supported_sample_counts = device_->getSampleCountsSupported(SwapChainFormat);
++        fprintf(stderr, "[RR64-RF-UI] sample-count query returned.\n"); fflush(stderr);
++        if (rr64_supported_sample_counts & desired_sample_count) {
+             multisampling_.sampleCount = desired_sample_count;
+         }
++        fprintf(stderr, "[RR64-RF-UI] multisampling selection complete.\n"); fflush(stderr);
+ 
+         vertex_buffer_.flags_ = plume::RenderBufferFlag::VERTEX;
+         index_buffer_.flags_ = plume::RenderBufferFlag::INDEX;
+ 
+         // Create the texture upload buffer, vertex buffer and index buffer
++        fprintf(stderr, "[RR64-RF-UI] creating upload buffer...\n"); fflush(stderr);
+         resize_dynamic_buffer(upload_buffer_, initial_upload_buffer_size, false);
++        // RR64_DIAG_V0312_UI_UPLOAD_BUFFER
++        fprintf(stderr, "[RR64-RF-UI] upload buffer OK.\n"); fflush(stderr);
++        fprintf(stderr, "[RR64-RF-UI] creating vertex buffer...\n"); fflush(stderr);
+         resize_dynamic_buffer(vertex_buffer_, initial_vertex_buffer_size, false);
++        // RR64_DIAG_V0312_UI_VERTEX_BUFFER
++        fprintf(stderr, "[RR64-RF-UI] vertex buffer OK.\n"); fflush(stderr);
++        fprintf(stderr, "[RR64-RF-UI] creating index buffer...\n"); fflush(stderr);
+         resize_dynamic_buffer(index_buffer_, initial_index_buffer_size, false);
++        // RR64_DIAG_V0312_UI_INDEX_BUFFER
++        fprintf(stderr, "[RR64-RF-UI] index buffer OK.\n"); fflush(stderr);
+ 
+         // Describe the vertex format
++        fprintf(stderr, "[RR64-RF-UI] building vertex input vector...\n"); fflush(stderr);
+         std::vector<plume::RenderInputElement> vertex_elements{};
++        // RR64_DIAG_V0312_UI_VERTEX_VECTOR
++        fprintf(stderr, "[RR64-RF-UI] vertex input vector created.\n"); fflush(stderr);
++        fprintf(stderr, "[RR64-RF-UI] adding POSITION input...\n"); fflush(stderr);
+         vertex_elements.emplace_back(plume::RenderInputElement{ "POSITION", 0, 0, plume::RenderFormat::R32G32_FLOAT, 0, offsetof(Rml::Vertex, position) });
++        // RR64_DIAG_V0312_UI_POSITION
++        fprintf(stderr, "[RR64-RF-UI] POSITION input OK.\n"); fflush(stderr);
++        fprintf(stderr, "[RR64-RF-UI] adding COLOR input...\n"); fflush(stderr);
+         vertex_elements.emplace_back(plume::RenderInputElement{ "COLOR", 0, 1, plume::RenderFormat::R8G8B8A8_UNORM, 0, offsetof(Rml::Vertex, colour) });
++        // RR64_DIAG_V0312_UI_COLOR
++        fprintf(stderr, "[RR64-RF-UI] COLOR input OK.\n"); fflush(stderr);
++        fprintf(stderr, "[RR64-RF-UI] adding TEXCOORD input...\n"); fflush(stderr);
+         vertex_elements.emplace_back(plume::RenderInputElement{ "TEXCOORD", 0, 2, plume::RenderFormat::R32G32_FLOAT, 0, offsetof(Rml::Vertex, tex_coord) });
++        // RR64_DIAG_V0312_UI_TEXCOORD
++        fprintf(stderr, "[RR64-RF-UI] TEXCOORD input OK; vertex format complete.\n"); fflush(stderr);
+ 
+         // Create a nearest sampler and a linear sampler
+-        plume::RenderSamplerDesc samplerDesc;
++        // RR64_DIAG_V0312_UI_SAMPLER_DESC_ZERO
++        fprintf(stderr, "[RR64-RF-UI] value-initializing sampler descriptor...\n"); fflush(stderr);
++        plume::RenderSamplerDesc samplerDesc{};
++        fprintf(stderr, "[RR64-RF-UI] sampler descriptor initialized.\n"); fflush(stderr);
+         samplerDesc.minFilter = plume::RenderFilter::NEAREST;
+         samplerDesc.magFilter = plume::RenderFilter::NEAREST;
+         samplerDesc.addressU = plume::RenderTextureAddressMode::CLAMP;
+         samplerDesc.addressV = plume::RenderTextureAddressMode::CLAMP;
+         samplerDesc.addressW = plume::RenderTextureAddressMode::CLAMP;
++        fprintf(stderr, "[RR64-RF-UI] creating nearest sampler...\n"); fflush(stderr);
+         nearestSampler_ = device_->createSampler(samplerDesc);
++        // RR64_DIAG_V0312_UI_NEAREST_SAMPLER
++        fprintf(stderr, "[RR64-RF-UI] nearest sampler OK.\n"); fflush(stderr);
+ 
+         samplerDesc.minFilter = plume::RenderFilter::LINEAR;
+         samplerDesc.magFilter = plume::RenderFilter::LINEAR;
+         samplerDesc.mipLODBias = -0.5f;
++        fprintf(stderr, "[RR64-RF-UI] creating linear sampler...\n"); fflush(stderr);
+         linearSampler_ = device_->createSampler(samplerDesc);
++        // RR64_DIAG_V0312_UI_LINEAR_SAMPLER
++        fprintf(stderr, "[RR64-RF-UI] linear sampler OK.\n"); fflush(stderr);
+ 
+         // Create the shaders
++        // RR64_DIAG_V0312_UI_SHADER_FORMAT
++        fprintf(stderr, "[RR64-RF-UI] querying shader format...\n"); fflush(stderr);
+         plume::RenderShaderFormat shaderFormat = interface_->getCapabilities().shaderFormat;
++        fprintf(stderr, "[RR64-RF-UI] shader format query OK (enum=%d).\n", static_cast<int>(shaderFormat)); fflush(stderr);
+ 
++        fprintf(stderr, "[RR64-RF-UI] creating vertex shader...\n"); fflush(stderr);
+         vertex_shader_ = device_->createShader(GET_SHADER_BLOB(InterfaceVS, shaderFormat), GET_SHADER_SIZE(InterfaceVS, shaderFormat), "VSMain", shaderFormat);
++        // RR64_DIAG_V0312_UI_VERTEX_SHADER
++        fprintf(stderr, "[RR64-RF-UI] vertex shader OK.\n"); fflush(stderr);
++        fprintf(stderr, "[RR64-RF-UI] creating pixel shader...\n"); fflush(stderr);
+         pixel_shader_ = device_->createShader(GET_SHADER_BLOB(InterfacePS, shaderFormat), GET_SHADER_SIZE(InterfacePS, shaderFormat), "PSMain", shaderFormat);
++        // RR64_DIAG_V0312_UI_PIXEL_SHADER
++        fprintf(stderr, "[RR64-RF-UI] pixel shader OK.\n"); fflush(stderr);
+ 
+ 
+         // Create the descriptor set that contains the sampler
+         plume::RenderDescriptorSetBuilder sampler_set_builder{};
++        // RR64_DIAG_V0312_UI_SAMPLER_SET_BUILDER
++        fprintf(stderr, "[RR64-RF-UI] building sampler descriptor set...\n"); fflush(stderr);
+         sampler_set_builder.begin();
+         sampler_set_builder.addImmutableSampler(1, linearSampler_.get());
+         sampler_set_builder.addConstantBuffer(3, 1); // Workaround D3D12 crash due to an empty RT64 descriptor set
+         sampler_set_builder.end();
+         sampler_set_ = sampler_set_builder.create(device_);
++        // RR64_DIAG_V0312_UI_SAMPLER_SET_CREATE
++        fprintf(stderr, "[RR64-RF-UI] sampler descriptor set OK.\n"); fflush(stderr);
+ 
+         // Create a builder for the descriptor sets that will contain textures
++        fprintf(stderr, "[RR64-RF-UI] creating texture descriptor-set builder...\n"); fflush(stderr);
+         texture_set_builder_ = std::make_unique<plume::RenderDescriptorSetBuilder>();
++        // RR64_DIAG_V0312_UI_TEXTURE_SET_BUILDER
++        fprintf(stderr, "[RR64-RF-UI] texture descriptor-set builder OK.\n"); fflush(stderr);
+         texture_set_builder_->begin();
+         gTexture_descriptor_index = texture_set_builder_->addTexture(2);
+         texture_set_builder_->end();
++        // RR64_DIAG_V0312_UI_TEXTURE_SET_DONE
++        fprintf(stderr, "[RR64-RF-UI] texture descriptor-set layout complete.\n"); fflush(stderr);
+ 
+         // Create the pipeline layout
+         plume::RenderPipelineLayoutBuilder layout_builder{};
++        // RR64_DIAG_V0312_UI_LAYOUT_BUILDER
++        fprintf(stderr, "[RR64-RF-UI] building pipeline layout...\n"); fflush(stderr);
+         layout_builder.begin(false, true);
+         layout_builder.addPushConstant(0, 0, sizeof(RmlPushConstants), plume::RenderShaderStageFlag::VERTEX);
+         // Add the descriptor set for descriptors changed once per frame.
+@@ -225,10 +288,15 @@ public:
+         // Add the descriptor set for descriptors changed once per draw.
+         layout_builder.addDescriptorSet(*texture_set_builder_);
+         layout_builder.end();
++        fprintf(stderr, "[RR64-RF-UI] creating pipeline layout object...\n"); fflush(stderr);
+         layout_ = layout_builder.create(device_);
++        // RR64_DIAG_V0312_UI_LAYOUT_CREATE
++        fprintf(stderr, "[RR64-RF-UI] pipeline layout OK.\n"); fflush(stderr);
+ 
+         // Create the pipeline description
+         plume::RenderGraphicsPipelineDesc pipeline_desc{};
++        // RR64_DIAG_V0312_UI_PIPELINE_DESC
++        fprintf(stderr, "[RR64-RF-UI] graphics pipeline description initialized.\n"); fflush(stderr);
+         // Set up alpha blending for non-premultiplied alpha. RmlUi recommends using premultiplied alpha normally,
+         // but that would require preprocessing all input files, which would be difficult for user-provided content (such as mods).
+         // This blending setup produces similar results as premultipled alpha but for normal assets as it multiplies during blending and
+@@ -254,19 +322,31 @@ public:
+         pipeline_desc.vertexShader = vertex_shader_.get();
+         pipeline_desc.pixelShader = pixel_shader_.get();
+ 
++        fprintf(stderr, "[RR64-RF-UI] creating primary graphics pipeline...\n"); fflush(stderr);
+         pipeline_ = device_->createGraphicsPipeline(pipeline_desc);
++        // RR64_DIAG_V0312_UI_PIPELINE_CREATE
++        fprintf(stderr, "[RR64-RF-UI] primary graphics pipeline OK.\n"); fflush(stderr);
+ 
+         if (multisampling_.sampleCount > 1) {
+             pipeline_desc.multisampling = multisampling_;
++            fprintf(stderr, "[RR64-RF-UI] creating MSAA graphics pipeline...\n"); fflush(stderr);
+             pipeline_ms_ = device_->createGraphicsPipeline(pipeline_desc);
++            // RR64_DIAG_V0312_UI_MSAA_PIPELINE
++            fprintf(stderr, "[RR64-RF-UI] MSAA graphics pipeline OK.\n"); fflush(stderr);
+ 
+             // Create the descriptor set for the screen drawer.
+             plume::RenderDescriptorRange screen_descriptor_range(plume::RenderDescriptorRangeType::TEXTURE, 2, 1);
++            fprintf(stderr, "[RR64-RF-UI] creating MSAA screen descriptor set...\n"); fflush(stderr);
+             screen_descriptor_set_ = device_->createDescriptorSet(plume::RenderDescriptorSetDesc(&screen_descriptor_range, 1));
++            // RR64_DIAG_V0312_UI_SCREEN_SET
++            fprintf(stderr, "[RR64-RF-UI] MSAA screen descriptor set OK.\n"); fflush(stderr);
+ 
+             // Create vertex buffer for the screen drawer (full-screen triangle).
+             screen_vertex_buffer_size_ = sizeof(Rml::Vertex) * 3;
++            fprintf(stderr, "[RR64-RF-UI] creating MSAA screen vertex buffer...\n"); fflush(stderr);
+             screen_vertex_buffer_ = device_->createBuffer(plume::RenderBufferDesc::VertexBuffer(screen_vertex_buffer_size_, plume::RenderHeapType::UPLOAD));
++            // RR64_DIAG_V0312_UI_SCREEN_VERTEX_BUFFER
++            fprintf(stderr, "[RR64-RF-UI] MSAA screen vertex buffer OK.\n"); fflush(stderr);
+             Rml::Vertex *vertices = (Rml::Vertex *)(screen_vertex_buffer_->map());
+             const Rml::ColourbPremultiplied white(255, 255, 255, 255);
+             vertices[0] = Rml::Vertex{ Rml::Vector2f(-1.0f, 1.0f), white, Rml::Vector2f(0.0f, 0.0f) };
+@@ -275,9 +355,19 @@ public:
+             screen_vertex_buffer_->unmap();
+         }
+ 
++        fprintf(stderr, "[RR64-RF-UI] creating copy command queue...\n"); fflush(stderr);
+         copy_command_queue_ = device->createCommandQueue(plume::RenderCommandListType::COPY);
++        // RR64_DIAG_V0312_UI_COPY_QUEUE
++        fprintf(stderr, "[RR64-RF-UI] copy command queue OK.\n"); fflush(stderr);
++        fprintf(stderr, "[RR64-RF-UI] creating copy command list...\n"); fflush(stderr);
+         copy_command_list_ = copy_command_queue_->createCommandList();
++        // RR64_DIAG_V0312_UI_COPY_LIST
++        fprintf(stderr, "[RR64-RF-UI] copy command list OK.\n"); fflush(stderr);
++        fprintf(stderr, "[RR64-RF-UI] creating copy command fence...\n"); fflush(stderr);
+         copy_command_fence_ = device->createCommandFence();
++        // RR64_DIAG_V0312_UI_COPY_FENCE
++        fprintf(stderr, "[RR64-RF-UI] copy command fence OK.\n"); fflush(stderr);
++        fprintf(stderr, "[RR64-RF-UI] ctor COMPLETE.\n"); fflush(stderr);
+     }
+ 
+     void reset_dynamic_buffer(DynamicBuffer &dynamic_buffer) {
+@@ -692,7 +782,20 @@ void recompui::RmlRenderInterface_RT64::reset() {
+ }
+ 
+ void recompui::RmlRenderInterface_RT64::init(plume::RenderInterface* interface, plume::RenderDevice* device) {
+-    impl = std::make_unique<RmlRenderInterface_RT64_impl>(interface, device);
++    // RR64_DIAG_V0312_UI_INIT_WRAPPER
++    fprintf(stderr, "[RR64-RF-UI] RmlRenderInterface_RT64::init entered.\n"); fflush(stderr);
++    try {
++        impl = std::make_unique<RmlRenderInterface_RT64_impl>(interface, device);
++        fprintf(stderr, "[RR64-RF-UI] RmlRenderInterface_RT64::init COMPLETE.\n"); fflush(stderr);
++    }
++    catch (const std::exception& ex) {
++        fprintf(stderr, "[RR64-RF-UI] RmlRenderInterface_RT64::init exception: %s\n", ex.what()); fflush(stderr);
++        throw;
++    }
++    catch (...) {
++        fprintf(stderr, "[RR64-RF-UI] RmlRenderInterface_RT64::init unknown exception.\n"); fflush(stderr);
++        throw;
++    }
+ }
+ 
+ Rml::RenderInterface* recompui::RmlRenderInterface_RT64::get_rml_interface() {
