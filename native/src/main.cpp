@@ -1,4 +1,8 @@
 #include "rr64_popup_input.hpp"
+#include "rr64_view_width.hpp"
+#include "rr64_weapon_diagnostics.hpp"
+#include "rr64_local_players.hpp"
+#include "composites/ui_player_card.h"
 #include "rr64_log_batch.hpp"
 #include "rr64_presentation_options.hpp"
 #include "rr64_master_volume.hpp"
@@ -103,12 +107,11 @@
 #include "rr64_online_menu.hpp"
 #include "rr64_voice_chat.hpp"
 
-constexpr const char* kVersion = "1.0.0";
+constexpr const char* kVersion = "1.1.0";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
 constexpr const char* kExtendedHorizonHazeOption = "rr64_extended_horizon_haze";
-constexpr const char* kMaximumViewDistanceOption = "rr64_maximum_view_distance";
 constexpr const char* kAchievementsEnabledOption = "rr64_achievements_enabled";
 constexpr const char* kControllerRumbleEnabledOption = "rr64_controller_rumble_enabled";
 constexpr const char* kProximityVoiceEnabledOption = "rr64_proximity_voice_enabled";
@@ -264,6 +267,19 @@ void apply_extended_horizon_haze() {
     const bool enabled = g_maximum_view_distance_active.load(std::memory_order_relaxed) &&
         g_extended_horizon_haze_requested.load(std::memory_order_relaxed);
     RT64::setUserExtendedHorizonHazeEnabled(enabled);
+}
+
+// One user setting drives cached geometry and the original terrain tier.
+// Keep the camera/actor world policy stable; only terrain submission and the
+// safe stock tier change live. Haze follows whether extension is requested.
+void rr64_log(const char* format, ...);
+void apply_draw_distance(double requested) {
+    const int distance=std::isfinite(requested)?int(std::clamp(requested,0.0,100.0)):0;
+    rr64::presentation_options::draw_distance.store(distance);
+    rr64_set_maximum_view_distance_enabled(distance>0?1:0);
+    g_maximum_view_distance_active.store(distance>0,std::memory_order_relaxed);
+    apply_extended_horizon_haze();
+    rr64_log("[RR64-GFX] Draw distance=%d%%; stock terrain extension=%d.\n",distance,distance>0?1:0);
 }
 
 enum class ForcedGraphicsApi {
@@ -547,7 +563,8 @@ void initialize_runtime_diagnostics() {
     std::at_quick_exit(rr64_quick_exit_handler);
 #else
     g_runtime_log_path = std::filesystem::current_path() / "RoadRash64Recompiled-runtime.log";
-    g_runtime_log = std::fopen(g_runtime_log_path.string().c_str(), "w");
+    // Normal releases do not create a session log; capture is explicitly opt-in.
+    g_runtime_log = detailed_diagnostics_enabled() ? std::fopen(g_runtime_log_path.string().c_str(), "w") : nullptr;
 #endif
 
     rr64_log("[RR64-DIAG] Runtime diagnostics enabled.\n");
@@ -893,6 +910,22 @@ void update_gfx(void*) {
                 world.stock_cells, world.drawn_triangles, world.frames, world.refusals, rr64::world::far_distance);
             rr64_log("[RR64-WORLD] course-excluded-terrain-cells=%u\n",world.course_excluded_cells);
             rr64_log("[RR64-WORLD] stock-course-excluded=%u\n",world.stock_course_excluded);
+            if(world.evidence.enabled) {
+                const auto& evidence=world.evidence;
+                rr64_log("[RR64-COURSE] schema=1 generation=%u ownership=unknown stock=post-filter-union extended=last-pass grid=70x70 bit=row*70+column\n",evidence.generation);
+                std::string setup;
+                for(auto value:evidence.raw_setup){char hex[16];std::snprintf(hex,sizeof(hex),"%08x,",value);setup+=hex;}
+                rr64_log("[RR64-COURSE] raw-setup-mode-pending-engine-words=%s\n",setup.c_str());
+                for(unsigned i=0;i<evidence.views.size();++i) {
+                    const auto& v=evidence.views[i];if(!v.valid)continue;
+                    rr64_log("[RR64-COURSE] view=%u epoch=%u origin=%.3f,%.3f stock=%u extended=%u triangles=%u island-excluded=%u\n",
+                        i,v.epoch,v.x,v.y,v.stock,v.extended,v.triangles,v.excluded);
+                    const auto bitmap=[](const auto& words){std::string out;out.reserve(1309);
+                        for(auto word:words){char hex[20];std::snprintf(hex,sizeof(hex),"%016llx,",word);out+=hex;}return out;};
+                    rr64_log("[RR64-COURSE] view=%u stock-union=%s\n",i,bitmap(v.stock_union).c_str());
+                    rr64_log("[RR64-COURSE] view=%u extended-last=%s\n",i,bitmap(v.extended_last).c_str());
+                }
+            }
             static std::array<unsigned long long, 5> previous_world{};
             std::array<unsigned long long, 5> current_world{};
             for (unsigned i = 0; i < current_world.size(); ++i) current_world[i] = rr64_world_counter(i);
@@ -906,6 +939,25 @@ void update_gfx(void*) {
                 objects.cached_models, objects.cached_placements, objects.cached_bytes,
                 objects.visible_placements, objects.stock_placements, objects.drawn_triangles,
                 objects.frames, objects.refusals, objects.unmatched_stock, objects.texture_syncs);
+        }
+        std::array<unsigned long long,7> weaponCounts{};
+        for(unsigned i=0;i<weaponCounts.size();++i)weaponCounts[i]=rr64_weapon_counter(i);
+        if(weaponCounts[6])rr64_log("[RR64-WEAPON] per-view-root-refreshed=%llu\n",weaponCounts[6]);
+        const auto weaponReport=rr64::weapon::take_report();
+        if(weaponReport.examined)rr64_log("[RR64-WEAPON-POSE] examined=%u keys=%u omitted=%u\n",weaponReport.examined,weaponReport.size,weaponReport.omitted);
+        for(unsigned i=0;i<weaponReport.size;++i){const auto& s=weaponReport.samples[i];
+            rr64_log("[RR64-WEAPON-POSE] node=%08X graph=%08X root=%08X view=%u model=%08X lod=%u source=%u parent-source=%u dist2=%.3f parent=(%.3f,%.3f,%.3f) float=(%.3f,%.3f,%.3f) packed=(%.3f,%.3f,%.3f)\n",
+                s.node,s.graph,s.record,s.view,s.model,s.lod,s.source,s.parentSource,s.distanceSquared,
+                s.parent[0],s.parent[1],s.parent[2],s.translation[0],s.translation[1],s.translation[2],s.packed[0],s.packed[1],s.packed[2]);
+        }
+        if(weaponCounts[0])rr64_log("[RR64-WEAPON] calls=%llu accepted=%llu roots=%llu corrected=%llu alternate-calls=%llu source-converted=%llu\n",
+            weaponCounts[0],weaponCounts[1],weaponCounts[2],weaponCounts[3],weaponCounts[4],weaponCounts[5]);
+        const auto rootRanges=rr64::lod::take_root_range_report();
+        if(rootRanges.examined){
+            rr64_log("[RR64-ROOT-RANGE] pre-normalization examined=%llu near-limit=%llu replaced=%llu\n",
+                (unsigned long long)rootRanges.examined,(unsigned long long)rootRanges.nearLimit,(unsigned long long)rootRanges.replaced);
+            for(const auto& v:rootRanges.samples)if(v.node)rr64_log("[RR64-ROOT-RANGE] node=%08x record=%08x type=%u view=%u epoch=%u asset-source=%u xyz=%.3f,%.3f,%.3f maximum=%.3f\n",
+                v.node,v.record,v.type,v.view,v.epoch,v.source,v.x,v.y,v.z,v.maximum);
         }
         if (rr64_render_only_max_lod_enabled()) {
             static std::array<unsigned long long, 4> previous_lod_stats{};
@@ -937,6 +989,12 @@ void update_gfx(void*) {
                 " menu-players=%u compiled-renderer=%u\n", lod_activity.mode, lod_activity.pending,
                 lod_activity.view_count, lod_activity.race_players, lod_activity.setup_players,
                 lod_activity.compiled_renderer);
+            for (unsigned view = 0; view < 4; ++view) {
+                rr64_log("[RR64-LOD-VIEW] camera=%u cumulative-pairs=%llu detailed-actors=%llu fallback-actors=%llu\n",
+                    view + 1u, static_cast<unsigned long long>(lod_activity.view_published[view]),
+                    static_cast<unsigned long long>(lod_activity.view_detailed[view]),
+                    static_cast<unsigned long long>(lod_activity.view_fallback[view]));
+            }
             rr64_log("[RR64-LOD] pose-stages missing-bike-root=%llu missing-rider-root=%llu"
                 " missing-rider-animation=%llu missing-bike-animation=%llu\n",
                 delta(LodCounter::MissingBikeRoot), delta(LodCounter::MissingRiderRoot),
@@ -1739,6 +1797,22 @@ void init_recompui_config() {
 
     rr64_log("[RR64-CONFIG] Creating General tab.\n");
     auto& general_config = recompui::config::create_general_tab(general_options, "Gameplay");
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        const std::string key = "rr64_local_player_name_" + std::to_string(slot + 1);
+        general_config.add_string_option(key, "Local Player " + std::to_string(slot + 1) + " Name",
+            "Name shown in local multiplayer. Uses up to 11 letters, numbers or spaces; unsupported characters are omitted. Empty names use PLAYER 1–4. Controller bindings are configured separately in Controls.",
+            "PLAYER " + std::to_string(slot + 1), true);
+        general_config.add_option_change_callback(key,
+            [slot](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
+                rr64::local_players::set_name(slot, std::get<std::string>(value));
+            });
+    }
+    general_config.add_bool_option("rr64_local_keyboard", "Keyboard Player in Local Multiplayer",
+        "Adds the keyboard to an available local player slot. Connected controllers are detected automatically; empty slots remain disconnected.", false);
+    general_config.add_option_change_callback("rr64_local_keyboard",
+        [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
+            rr64::local_players::keyboard_enabled.store(std::get<bool>(value));
+        });
     general_config.add_bool_option(
         kControllerRumbleEnabledOption,
         "Controller Rumble",
@@ -1771,22 +1845,29 @@ void init_recompui_config() {
     rr64::achievements::register_config_tab();
     rr64_log("[RR64-CONFIG] Creating Graphics tab.\n");
     auto& graphics_config = recompui::config::create_graphics_tab();
+    graphics_config.add_option_change_callback(recompui::config::graphics::options::ar_option,
+        [](recomp::config::ConfigValueVariant value,recomp::config::ConfigValueVariant,recomp::config::OptionChangeContext){
+            const auto aspect=static_cast<ultramodern::renderer::AspectRatio>(std::get<uint32_t>(value));
+            using A=ultramodern::renderer::AspectRatio;
+            rr64::view_width.store(aspect==A::Manual?7.0/4.0:(aspect==A::Original||aspect==A::Stretch?1.0:4.0/3.0));
+        });
     graphics_config.add_bool_option("rr64_max_lod", "MAX LOD",
         "Keeps riders and bikes at maximum detail. Set before Start Game; changes during gameplay apply after restarting the application.", true);
     graphics_config.add_option_change_callback("rr64_max_lod",
         [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
             if (!ultramodern::is_game_started()) rr64::presentation_options::max_lod.store(std::get<bool>(value));
         });
-    graphics_config.add_bool_option("rr64_max_world_distance", "MAX World Distance",
-        "Extends terrain and roadside object rendering at maximum detail. Set before Start Game; changes during gameplay apply after restarting the application.", true);
-    graphics_config.add_option_change_callback("rr64_max_world_distance",
+    graphics_config.add_number_option("rr64_draw_distance", "Draw Distance",
+        "Terrain and roadside-object distance in all race modes. 0% keeps original drawing distance; 100% draws the full current map. Lower values reduce the added range and workload. Applies during play. MAX LOD controls rider and bike detail separately.",
+        0, 100, 5, 0, true, 100);
+    graphics_config.add_option_change_callback("rr64_draw_distance",
         [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
-            if (!ultramodern::is_game_started()) rr64::presentation_options::world_distance.store(std::get<bool>(value));
+            apply_draw_distance(std::get<double>(value));
         });
     graphics_config.add_bool_option(
         kRemoveDistanceFogOption,
         "Remove Distance Fog",
-        "Disables all distance fog in 3D scenes. With Maximum View Distance this gives the clearest view, but terrain loading transitions can be visible.",
+        "Disables all distance fog in 3D scenes. With increased Draw Distance this gives the clearest view, but terrain loading transitions can be visible.",
         false
     );
     graphics_config.add_option_change_callback(
@@ -1800,7 +1881,7 @@ void init_recompui_config() {
     graphics_config.add_bool_option(
         kExtendedHorizonHazeOption,
         "Extended Horizon Haze",
-        "With Maximum View Distance, reshapes the final edge of each course's original distance fog into a narrow, dense haze curtain immediately before the extended draw boundary. It obscures pop-in while keeping the foreground and mid-distance clear, and remains available when Distance Fog is removed.",
+        "Softens the original terrain transition with horizon haze when Draw Distance is above 0%. Remains available when Distance Fog is removed. This haze follows the original terrain range, not the full-map slider boundary.",
         true
     );
     graphics_config.add_option_change_callback(
@@ -1810,22 +1891,6 @@ void init_recompui_config() {
             g_extended_horizon_haze_requested.store(extended_horizon_haze, std::memory_order_relaxed);
             apply_extended_horizon_haze();
             rr64_log("[RR64-GFX] Extended horizon haze requested=%d.\n", extended_horizon_haze ? 1 : 0);
-        }
-    );
-    graphics_config.add_bool_option(
-        kMaximumViewDistanceOption,
-        "Maximum View Distance",
-        "Uses the farthest safe terrain-streaming tier while preserving the game's original cell retirement, object activation, traffic AI, collision, and gameplay visibility. Extended Horizon Haze conceals the remaining stock transition.",
-        false
-    );
-    graphics_config.add_option_change_callback(
-        kMaximumViewDistanceOption,
-        [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
-            const bool maximum_view_distance = std::get<bool>(value);
-            rr64_set_maximum_view_distance_enabled(maximum_view_distance ? 1 : 0);
-            g_maximum_view_distance_active.store(maximum_view_distance, std::memory_order_relaxed);
-            apply_extended_horizon_haze();
-            rr64_log("[RR64-GFX] Maximum view distance enabled=%d.\n", maximum_view_distance ? 1 : 0);
         }
     );
     rr64_log("[RR64-CONFIG] Creating Controls tab.\n");
@@ -1855,8 +1920,20 @@ void init_recompui_config() {
     recompui::config::create_mods_tab("Mods");
     rr64_log("[RR64-CONFIG] Finalizing RecompFrontend configuration.\n");
     recompui::config::finalize();
+    recompui::register_player_name_callbacks(
+        [](int slot) { return rr64::local_players::snapshot().at(slot); },
+        [](int slot, const std::string& name) {
+            auto& config = recompui::config::get_general_config();
+            config.set_option_value("rr64_local_player_name_" + std::to_string(slot + 1),
+                rr64::local_players::display_name(name, slot));
+            config.save_config();
+        });
     rr64::presentation_options::max_lod.store(std::get<bool>(recompui::config::get_graphics_config().get_option_value("rr64_max_lod")));
-    rr64::presentation_options::world_distance.store(std::get<bool>(recompui::config::get_graphics_config().get_option_value("rr64_max_world_distance")));
+    rr64::presentation_options::world_distance.store(1); // Draw Distance replaces the legacy world toggle.
+    {using A=ultramodern::renderer::AspectRatio;
+    const auto aspect=static_cast<A>(std::get<uint32_t>(recompui::config::get_graphics_config().get_option_value(recompui::config::graphics::options::ar_option)));
+    rr64::view_width.store(aspect==A::Manual?7.0/4.0:(aspect==A::Original||aspect==A::Stretch?1.0:4.0/3.0));}
+    apply_draw_distance(std::get<double>(recompui::config::get_graphics_config().get_option_value("rr64_draw_distance")));
     g_master_volume_gain.store(rr64::audio::volume_gain(recompui::config::sound::get_main_volume()));
     rr64::netplay::configure({});
     configure_right_stick_c_buttons();
@@ -2005,6 +2082,7 @@ void on_ui_update() {
     g_ui_thread_id.compare_exchange_strong(expected_ui_thread, GetCurrentThreadId());
 #endif
     rr64::netplay::update();
+    recompinput::players::refresh_connected_players(rr64::local_players::keyboard_enabled.load());
     rr64::online_menu::update_ui();
     rr64::music::update_ui();
     rr64::achievements::update_ui();
@@ -2421,7 +2499,7 @@ int main(int argc, char** argv) {
     rr64_log("[RR64] Expected ROM XXH3-64: 0x%016" PRIX64 "\n", kRoadRash64UsXxh3);
 
     recomp::Version project_version{};
-    // Public 1.0.0 retains the mod interfaces of the internal 1.0.6 builds.
+    // Public releases retain the mod interfaces of the internal 1.0.6 builds.
     // Keep already-installed packs working without changing their manifests.
     recomp::Version legacy_mod_compatibility{};
     recomp::Version::from_string("1.0.6", legacy_mod_compatibility);
@@ -2711,3 +2789,9 @@ int main(int argc, char** argv) {
 
 
 
+extern "C" bool rr64_draw_distance_enabled() {
+    return rr64::presentation_options::draw_distance.load(std::memory_order_relaxed)>0;
+}
+extern "C" double rr64_draw_distance_percent() {
+    return rr64::presentation_options::draw_distance.load(std::memory_order_relaxed);
+}

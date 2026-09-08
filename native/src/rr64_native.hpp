@@ -7,7 +7,7 @@ extern "C" {
 unsigned int rr64_lod_racer_view(unsigned char*, unsigned int, unsigned int);
 void rr64_trace_guest_stage(const char* stage);
 void rr64_lod_shadow_finish_hold(unsigned char* rdram, void* context);
-unsigned int rr64_music_volume_update(unsigned int original);
+unsigned int rr64_music_volume_update(unsigned int original,unsigned int sequence);
 unsigned int rr64_music_stock_volume(unsigned int original);
 
 void rr64_lod_release_node(unsigned char* rdram, unsigned int node);
@@ -83,6 +83,13 @@ int rr64_world_distance_enabled();
 void rr64_world_invalidate(unsigned char* rdram);
 void rr64_world_observe_allocation(unsigned char* rdram, unsigned node, unsigned view, unsigned bytes);
 void rr64_world_observe_roots(unsigned char* rdram, unsigned type);
+void rr64_weapon_begin(unsigned char*,unsigned,unsigned);
+void rr64_weapon_alt_begin(unsigned char*,unsigned,unsigned);
+unsigned long long rr64_weapon_counter(unsigned);
+void rr64_weapon_end();
+void rr64_weapon_source(unsigned char*,void*,unsigned);
+void rr64_weapon_matrix(unsigned char*,unsigned,unsigned);
+void rr64_weapon_packed(unsigned char*,unsigned,unsigned);
 void rr64_world_begin_draw(unsigned char* rdram);
 void rr64_world_end_draw(unsigned char* rdram);
 unsigned rr64_world_actor_hidden(unsigned char* rdram, unsigned node, unsigned hidden, const void* context);

@@ -1,3 +1,4 @@
+static bool drawDistanceEnabled=true;
 // Driver lifetime/state tests use a small immutable asset fixture. The separate
 // object-assets oracle checks all original materials, roots and ROM placements.
 #include "rr64_world_objects.hpp"
@@ -134,6 +135,29 @@ void run(){
         check(get(m,0x800AC650u)==pointer&&objects_statistics().frames==count,"stale camera/arena/scene/scale state cannot append objects");
         write_u16(m,0x800B73F0u,17u);write_float(m,0x800D69F8u,0);
     }
+    write_u32(m,rr64::lod::test::Fixture::race_player_count,4u);write_u32(m,0x8009DB88u,4u);
+    drawDistanceEnabled=false;
+    const auto priorFrames=objects_statistics().frames;
+    for(unsigned count=2;count<=4;++count)for(unsigned camera=0;camera<count;++camera){
+        setup(0,50);write_u32(m,rr64::lod::test::Fixture::race_player_count,count);
+        write_u32(m,0x8009DB88u,count);write_u32(m,globals::active_viewport,camera);
+        const auto pointer=get(m,0x800ac650u);
+        rr64_world_objects_begin(m);rr64_world_objects_draw(m);
+        check(objects_statistics().frames==priorFrames && get(m,0x800ac650u)==pointer,
+            "two to four split screens keep original distant scenery submission");
+    }
+    write_u32(m,rr64::lod::test::Fixture::race_player_count,1u);write_u32(m,0x8009DB88u,1u);write_u32(m,globals::active_viewport,0u);
+    drawDistanceEnabled=true;
+    for(unsigned camera=0;camera<4;++camera){
+        setup(0,60+camera);write_u32(m,rr64::lod::test::Fixture::race_player_count,4u);
+        write_u32(m,0x8009DB88u,4u);write_u32(m,globals::active_viewport,camera);
+        pack(m,0x800B6668u+camera*0x180u,projection);pack(m,0x800B6EE8u+camera*0x180u,identity);
+        write_u16(m,0x800B73F0u+camera*12u,17u);
+        rr64_world_objects_begin(m);rr64_world_objects_draw(m);
+        check(objects_statistics().frames==priorFrames+camera+1&&objects_statistics().visible_placements==2,
+            "global draw distance adds scenery in every split-screen viewport");
+    }
+    write_u32(m,rr64::lod::test::Fixture::race_player_count,1u);write_u32(m,0x8009DB88u,1u);write_u32(m,globals::active_viewport,0u);
     check(allocations.size()==2u&&rom==rom_before,"frames/refusals do not grow allocations or modify ROM");
     const auto old_allocations=allocations;objects_reset_session();for(const auto [p,n]:old_allocations)std::fill(memory.begin()+p,memory.begin()+p+n,0xce);
     setup(0,1);rr64_world_objects_begin(m);rr64_world_objects_draw(m);
@@ -172,3 +196,6 @@ extern "C" int rr64_world_camera_ready(unsigned char*,unsigned source,unsigned s
 int main(){run();std::printf("Object driver smoke: %s (%u failures); cached roots,stable placement IDs,full4257 capacity,stock dedup,phase sync,frame lifetime,graphics bounds,state restoration\n",failures?"FAIL":"PASS",failures);return failures?1:0;}
 
 
+
+extern "C" bool rr64_draw_distance_enabled(){return drawDistanceEnabled;}
+extern "C" double rr64_draw_distance_percent(){return 100.0;}

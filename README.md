@@ -2,7 +2,7 @@
 
 An unofficial Windows PC recompilation of **Road Rash 64**, built with N64Recomp, N64ModernRuntime, RT64, and RecompFrontend.
 
-**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** The application version and release tag are **1.0.0** and **v1.0.0**. This is the first public release designation, following internal development builds; it is not a claim that every feature is finished.
+**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** The application version and release tag are **1.1.0** and **v1.1.0**. Online multiplayer remains experimental.
 
 ## Why this exists, credits, and AI disclosure
 
@@ -14,7 +14,7 @@ I do not want to take credit for creating Road Rash 64, the recompilation techno
 
 ## Getting started
 
-1. Download **RoadRash64Recompiled-v1.0.0-Win64.zip** from this repository's Releases page. Players do not need the source-code download or a compiler.
+1. Download **RoadRash64Recompiled-v1.1.0-Win64.zip** from this repository's Releases page. Players do not need the source-code download or a compiler.
 2. Extract the entire ZIP to a writable folder. Do not run it inside the archive.
 3. Open **RoadRash64Recompiled.exe**. Choose **Select Game ROM** and select your supported `.z64`, `.n64`, or `.v64` dump.
 4. After validation, choose **Start Game**. Use **Settings** to configure your controller, graphics, and sound.
@@ -35,8 +35,8 @@ This is the same broad static-recompilation/user-ROM architecture described by [
 
 - **Improved presentation targeting smooth 60 FPS**, with fixes for pacing regressions, interpolation, and rendering flicker. Actual performance depends on hardware, settings, and scene complexity.
 - **MAX LOD** for riders and bikes, including work on distant, crashed, airborne, paused, and finish-area models. It preserves the highest detail the game supplies; it does not create new high-resolution models.
-- **MAX World Distance** and terrain/object rendering optimizations. These remain more demanding than original draw distances and are not a promise that every object is visible from every point.
-- **Widescreen and high-resolution presentation**, configurable graphics and HUD behavior, with D3D12/Vulkan rendering through RT64.
+- **Draw Distance slider** for terrain and objects across game modes, with terrain/object rendering optimizations. These remain more demanding than original draw distances and are not a promise that every object is visible from every point.
+- **16:9 and 21:9 aspect options**, a **30–240 FPS presentation slider**, and D3D12/Vulkan rendering through RT64.
 - **Keyboard and controller remapping**, including **Eject from Bike** (left-stick click by default) and **Spoke Jam Attack** (right-stick click by default). With fists selected, the latter retains the existing punch/weapon-steal behavior and original proximity/timing rules.
 - **Persistent saves** through the virtual Controller Pak implementation and saved frontend settings.
 - **Optional custom music rotation** from the `music` folder. WAV/OGG and Windows-decoded formats including FLAC, MP3, MP4/M4A, AAC, and WMA are supported subject to codec availability. No additional music is included and there is no song-title popout.
@@ -44,7 +44,7 @@ This is the same broad static-recompilation/user-ROM architecture described by [
 - **Mod/texture-pack support** through Settings. The Windows package includes an optional conversion of Crisaty’s Remastered Edition pack; see its credits and installation instructions below.
 - A compact launcher, direct-start executable, and input guards intended to stop overlay dismissal from activating a menu behind it.
 
-The separate MAX LOD and MAX World Distance settings are applied before game start. If changed while playing, restart the application to apply them. Existing mods made for the internal 1.0.6 interface remain accepted through an explicit mod-compatibility floor; the application itself reports 1.0.0.
+Draw Distance adjusts terrain and scenery range together. MAX LOD controls rider/bike detail separately. The Music Volume slider covers original and custom music. Local player controls support controller assignment and per-player names. Existing mods targeting the internal 1.0.6 interface remain compatible.
 
 ## Requirements
 

@@ -2,7 +2,5 @@
 #include "ultramodern/config.hpp"
 
 extern "C" unsigned int rr64_combined_video_callback(unsigned char* memory, unsigned int original) {
-    return rr64::video::combined_callback(memory, original,
-        ultramodern::renderer::get_graphics_config().ar_option ==
-            ultramodern::renderer::AspectRatio::WideHighRes);
+    return rr64::video::combined_callback(memory, original, true);
 }

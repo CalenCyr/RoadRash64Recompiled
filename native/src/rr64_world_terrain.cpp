@@ -1,5 +1,7 @@
 #include "rr64_world_terrain.hpp"
 #include "rr64_world_camera.hpp"
+#include "rr64_local_world_window.hpp"
+#include "rr64_world_frustum.hpp"
 #include "rr64_world_render.hpp"
 #include "rr64_world_course_regions.hpp"
 #include "rr64_actor_render_snapshot.hpp"
@@ -10,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -66,15 +69,19 @@ static_assert(cells_count*64u <= frame_bytes-command_bytes);
 struct Frame {
     unsigned char* host=nullptr;
     unsigned base=0, assets=0, commands=0, matrices=0;
-    unsigned last_epoch=0; bool issued=false;
+    std::array<unsigned,4> last_epoch{}; std::array<bool,4> issued{};
 };
 struct Cache {
     unsigned char* mapping=nullptr;
     const unsigned char* rom=nullptr;
     TerrainAssets assets;
+    std::vector<TerrainBounds> bounds;
     CourseRegions regions;
     CourseRegions::Mask allowed{};
     bool course_scoped=false;
+    std::array<CourseRegions::Mask,4> windowHistory{};
+    std::array<double,4> windowPercent{};
+    CourseRegions::Mask window{};
     std::array<Frame,2> frames{};
     bool attempted=false, ready=false, drawing=false;
     unsigned grid=0;
@@ -83,6 +90,37 @@ struct Cache {
     std::mutex mutex;
 };
 Cache& cache() { static auto c=std::make_unique<Cache>(); return *c; }
+bool course_diagnostics() {
+    static const bool enabled=[] {
+        const char* value=std::getenv("RR64_COURSE_DIAGNOSTICS");
+        return value && std::strcmp(value,"1")==0;
+    }();
+    return enabled;
+}
+TerrainViewEvidence* capture_view(Cache& c, unsigned char* m, unsigned index,
+    unsigned epoch, float x, float y) {
+    if(!course_diagnostics()) return nullptr;
+    std::array<unsigned,19> setup{};
+    if(!read_u32(m,globals::main_mode,setup[0]) ||
+       !read_u32(m,globals::pending_mode,setup[1])) return nullptr;
+    for(unsigned i=0;i<globals::multiplayer_game_setup_words.size();++i)
+        if(!read_u32(m,globals::multiplayer_game_setup_words[i],setup[i+2])) return nullptr;
+    auto& evidence=c.stats.evidence;
+    if(!evidence.enabled || evidence.raw_setup!=setup) {
+        const unsigned generation=evidence.generation+1;
+        evidence={}; evidence.enabled=true; evidence.generation=generation;
+        evidence.raw_setup=setup;
+    }
+    auto& v=evidence.views[index];
+    v.valid=true;v.epoch=epoch;v.x=x;v.y=y;v.stock=c.stats.stock_cells;
+    v.excluded=c.stats.course_excluded_cells;v.extended=0;v.triangles=0;
+    v.extended_last.fill(0);
+    // Union of stock draws AFTER the existing island filter, not unfiltered
+    // engine selection. Never infer ownership from cells missing in this set.
+    for(unsigned i=0;i<cells_count;++i)
+        if(c.stock[i])v.stock_union[i/64]|=1ull<<(i%64);
+    return &v;
+}
 void word(unsigned char* rdram,unsigned addr,unsigned value) { MEM_W(0,guest_address(addr))=value; }
 void command(unsigned char* m,unsigned& p,unsigned a,unsigned b) { word(m,p,a); word(m,p+4,b); p+=8; }
 void release(Cache& c) {
@@ -95,7 +133,7 @@ bool initialize(Cache& c,unsigned char* m) {
         // Mapping replacement destroys its heap. Only free in a still-live
         // mapping; guest race/menu streaming never owns these allocations.
         if(c.mapping==m) release(c);
-        c.mapping=m; c.rom=rom.data(); c.frames={}; c.assets={};
+        c.mapping=m; c.rom=rom.data(); c.frames={}; c.assets={};c.bounds.clear();c.windowHistory={};
         c.attempted=false; c.ready=false; c.stats={};
     }
     if(c.attempted) return c.ready;
@@ -110,31 +148,34 @@ bool initialize(Cache& c,unsigned char* m) {
         }
     }
     CourseRegions::Mask occupied{};
+    c.bounds.clear();c.bounds.reserve(c.assets.cells.size());
+    for(const auto& cell:c.assets.cells)c.bounds.emplace_back(cell.minimum,cell.maximum);
     for(const auto& cell:c.assets.cells)occupied[cell.cell_index]=true;
     c.regions.build(occupied);
     const unsigned bytes=(unsigned(c.assets.bytes.size())+63u)&~63u;
     // Per-original-graphics-buffer copies keep animated bindings and matrices
     // immutable while RT64 consumes the other buffer. Never allocate per race.
     for(auto& frame:c.frames) {
-        frame.host=static_cast<unsigned char*>(recomp::alloc(m,bytes+frame_bytes));
+        frame.host=static_cast<unsigned char*>(recomp::alloc(m,bytes+4u*frame_bytes));
         if(!frame.host) { release(c); return false; }
         const auto offset=frame.host-m;
-        if(offset<0x800000 || std::uint64_t(offset)+bytes+frame_bytes>recomp::mem_size) { release(c); return false; }
+        if(offset<0x800000 || std::uint64_t(offset)+bytes+4u*frame_bytes>recomp::mem_size) { release(c); return false; }
         frame.base=0x80000000u+unsigned(offset); frame.assets=frame.base;
         frame.commands=frame.base+bytes; frame.matrices=frame.commands+command_bytes;
         for(unsigned i=0;i<c.assets.bytes.size();++i) m[(unsigned(offset)+i)^3u]=c.assets.bytes[i];
         for(const auto& r:c.assets.relocations) word(m,frame.assets+r.word_offset,frame.assets+r.target_offset);
     }
     c.ready=true; c.stats.cached_cells=unsigned(c.assets.cells.size());
-    c.stats.cached_triangles=c.assets.triangles; c.stats.cached_bytes=2u*(bytes+frame_bytes);
+    c.stats.cached_triangles=c.assets.triangles; c.stats.cached_bytes=2u*(bytes+4u*frame_bytes);
     std::fprintf(stderr,"[RR64-WORLD] terrain cache cells=%u triangles=%u bytes=%u triangle-batches=1\n",
         c.stats.cached_cells,c.stats.cached_triangles,c.stats.cached_bytes);
     return true;
 }
 bool frame_context(unsigned char* m,unsigned& slot,unsigned& graphics_slot,unsigned& epoch,
-    unsigned& pointer,Matrix& view,Matrix& projection,float& origin_x,float& origin_y) {
+    unsigned& pointer,unsigned& camera_index,Matrix& view,Matrix& projection,float& origin_x,float& origin_y) {
     unsigned width=0, base=0, count=0, active_base=0;
-    if(!read_u32(m,globals::terrain_map_width,width)||width!=70u ||
+    if(!read_u32(m,globals::active_viewport,camera_index)||camera_index>=4u||
+        !read_u32(m,globals::terrain_map_width,width)||width!=70u ||
         !read_u32(m,0x8009dbd4u,slot)||slot>1u || !rr64_world_camera_ready(m,0u,slot) ||
         !read_u32(m,0x8009cba4u,graphics_slot)||graphics_slot>1u ||
         !read_u32(m,0x800a1830u,epoch)|| !read_u32(m,0x800ac650u,pointer)||
@@ -150,8 +191,8 @@ bool frame_context(unsigned char* m,unsigned& slot,unsigned& graphics_slot,unsig
     if(!read_float(m,0x800dde80u,origin_x)||!read_float(m,0x800dde84u,origin_y)||
         !std::isfinite(origin_x)||!std::isfinite(origin_y)) return false;
     Matrix4x4Snapshot p{},v{};
-    if(!decode_n64_matrix(m,0x800b6568u+slot*0x40u,p)||
-        !decode_n64_matrix(m,0x800b6de8u+slot*0x40u,v)) return false;
+    if(!decode_n64_matrix(m,0x800b6568u+camera_index*0x180u+slot*0x40u,p)||
+        !decode_n64_matrix(m,0x800b6de8u+camera_index*0x180u+slot*0x40u,v)) return false;
     projection=p.values; view=v.values;
     return p.values[0]!=0 && p.values[5]!=0 && p.values[11]!=0 && v.values[15]==1;
 }
@@ -161,7 +202,7 @@ void terrain_reset_session() noexcept {
     auto& c=cache(); std::lock_guard lock(c.mutex);
     // init_heap follows the on_init callback and reclaims the old allocation
     // arena. Addresses from the preceding run must never be reused or freed.
-    c.mapping=nullptr; c.rom=nullptr; c.frames={}; c.assets={}; c.stock.fill(false);
+    c.mapping=nullptr; c.rom=nullptr; c.frames={}; c.assets={};c.bounds.clear();c.windowHistory={};c.windowHistory={}; c.stock.fill(false);
     c.attempted=false; c.ready=false; c.drawing=false; c.grid=0; c.stats={};
 }
 }
@@ -169,10 +210,12 @@ extern "C" void rr64_world_terrain_begin(unsigned char* m) {
     auto& c=rr64::world::cache(); std::lock_guard lock(c.mutex);
     unsigned epoch=0;rr64::engine::read_u32(m,0x800a1830u,epoch);
     rr64::world::CourseRegions::Mask all{};all.fill(true);
+    unsigned initialViews=0;
+    if(rr64::engine::read_u32(m,0x8009DB88u,initialViews)&&initialViews>=1&&rr64_draw_distance_enabled())all.fill(false);
     rr64::world::course_frame().publish(m,epoch,all);
-    c.drawing=false;c.course_scoped=false;c.allowed.fill(true);
+    c.drawing=false;c.course_scoped=false;c.allowed.fill(true);c.window.fill(true);
     c.stock.fill(false); c.stats.stock_cells=0;c.stats.course_excluded_cells=0;c.stats.stock_course_excluded=0;
-    if(!rr64_world_distance_enabled()||!rr64::lod::supported_scene(m)) return;
+    if(!rr64_world_distance_enabled()||!(rr64_draw_distance_enabled()&&rr64::world::static_scene(m))) return;
     if(!rr64::engine::read_u32(m,rr64::engine::globals::terrain_cell_grid,c.grid)||
         !rr64::engine::valid_guest_range(c.grid,4900u*16u)) return;
     c.drawing=rr64::world::initialize(c,m);
@@ -196,6 +239,43 @@ extern "C" void rr64_world_terrain_begin(unsigned char* m) {
         for(const auto& cell:c.assets.cells)if(!c.allowed[cell.cell_index])++c.stats.course_excluded_cells;
         rr64::world::course_frame().publish(m,epoch,c.allowed);
     }
+    unsigned views=0,viewIndex=0,slot=0;
+    if(c.drawing&&read_u32(m,0x8009DB88u,views)&&views>=1&&rr64_draw_distance_enabled()){
+        const double percent=rr64_draw_distance_percent();
+        c.window.fill(false);
+        Matrix4x4Snapshot camera{};double eyeX=0,eyeY=0;
+        if(read_u32(m,globals::active_viewport,viewIndex)&&viewIndex<4&&
+           read_u32(m,globals::actor_render_buffer_slot,slot)&&slot<2&&
+           decode_n64_matrix(m,0x800b6de8u+viewIndex*0x180u+slot*64u,camera)&&
+           read_float(m,globals::terrain_camera_position,x)&&read_float(m,globals::terrain_camera_position+4,y)&&
+           rr64::world::terrain_eye(camera.values,eyeX,eyeY)){
+            eyeX+=x;eyeY+=y;
+            auto& previous=c.windowHistory[viewIndex];
+            // A slider reduction must take effect now, rather than retaining
+            // the former range inside the motion-hysteresis margin.
+            if(c.windowPercent[viewIndex]!=percent){previous.fill(false);c.windowPercent[viewIndex]=percent;}
+            double fullRadius=0;
+            for(const auto& cell:c.assets.cells){
+                if(!c.allowed[cell.cell_index])continue;
+                const double dx=std::max(std::abs(cell.authored_origin[0]+double(cell.minimum[0])-eyeX),std::abs(cell.authored_origin[0]+double(cell.maximum[0])-eyeX));
+                const double dy=std::max(std::abs(cell.authored_origin[1]+double(cell.minimum[1])-eyeY),std::abs(cell.authored_origin[1]+double(cell.maximum[1])-eyeY));
+                fullRadius=std::max(fullRadius,std::hypot(dx,dy));
+            }
+            const double radius=fullRadius*std::clamp(percent,0.0,100.0)/100.0;
+            for(const auto& cell:c.assets.cells){const auto i=cell.cell_index;
+                c.window[i]=rr64::world::window_cell(eyeX,eyeY,
+                    cell.authored_origin[0]+double(cell.minimum[0]),cell.authored_origin[1]+double(cell.minimum[1]),
+                    cell.authored_origin[0]+double(cell.maximum[0]),cell.authored_origin[1]+double(cell.maximum[1]),previous[i],radius);
+            }
+            previous=c.window;
+        }
+        // Endpoint restores the pre-window full-map extension. Frustum and
+        // course-island checks still exclude invisible or unrelated terrain.
+        if(percent>=100)c.window.fill(true);
+        auto visible=c.allowed;for(unsigned i=0;i<visible.size();++i)visible[i]=visible[i]&&c.window[i];
+        rr64::world::course_frame().publish(m,epoch,visible);
+    }
+
 }
 extern "C" unsigned rr64_world_terrain_stock_state(unsigned char* m,unsigned record,unsigned state) {
     auto& c=rr64::world::cache();std::lock_guard lock(c.mutex);
@@ -214,25 +294,31 @@ extern "C" void rr64_world_terrain_observe(unsigned char* m,unsigned record) {
 extern "C" void rr64_world_terrain_draw(unsigned char* m) {
     using namespace rr64::world;
     auto& c=cache(); std::lock_guard lock(c.mutex);
-    if(!c.drawing||c.mapping!=m||!rr64_world_distance_enabled()||!rr64::lod::supported_scene(m)) return;
+    if(!c.drawing||c.mapping!=m||!rr64_world_distance_enabled()||!(rr64_draw_distance_enabled()&&rr64::world::static_scene(m))) return;
     c.drawing=false;
-    unsigned slot=0,graphics_slot=0,epoch=0,pointer=0; float x=0,y=0; Matrix view{},projection{};
-    if(!frame_context(m,slot,graphics_slot,epoch,pointer,view,projection,x,y)) { ++c.stats.refusals; return; }
+    unsigned slot=0,graphics_slot=0,epoch=0,pointer=0,camera_index=0; float x=0,y=0; Matrix view{},projection{};
+    if(!frame_context(m,slot,graphics_slot,epoch,pointer,camera_index,view,projection,x,y)) { ++c.stats.refusals; return; }
     const auto& allowed=c.allowed;
     auto& f=c.frames[graphics_slot];
-    if(f.issued&&f.last_epoch==epoch) { ++c.stats.refusals; return; }
-    unsigned dl=f.commands;
+    if(f.issued[camera_index]&&f.last_epoch[camera_index]==epoch) { ++c.stats.refusals; return; }
+    auto* evidence=capture_view(c,m,camera_index,epoch,x,y);
+    const WorldFrustum frustum(view,projection);
+    const unsigned commands=f.commands+camera_index*frame_bytes;
+    const unsigned matrices=f.matrices+camera_index*frame_bytes;
+    unsigned dl=commands;
     command(m,dl,0x64000019u,0); command(m,dl,0x6400001bu,0); command(m,dl,0x64000029u,0);
     unsigned n=0,triangles=0;
-    for(const auto& cell:c.assets.cells) {
-        if(c.stock[cell.cell_index]||!allowed[cell.cell_index]||!cell.triangles) continue;
+    for(unsigned cellOrdinal=0;cellOrdinal<c.assets.cells.size();++cellOrdinal) {
+        const auto& cell=c.assets.cells[cellOrdinal];
+        if(c.stock[cell.cell_index]||!allowed[cell.cell_index]||!c.window[cell.cell_index]||!cell.triangles) continue;
+        if(!frustum.intersectsTerrain(c.bounds[cellOrdinal],cell.authored_origin[0]-x,cell.authored_origin[1]-y))continue;
         const auto matrix=terrain_matrix(cell,x,y);
-        if(!terrain_in_frustum(cell,matrix,view,projection)) continue;
-        const unsigned address=f.matrices+n*64u;
+        if(evidence)evidence->extended_last[cell.cell_index/64]|=1ull<<(cell.cell_index%64);
+        const unsigned address=matrices+n*64u;
         for(unsigned i=0;i<16;++i) word(m,address+i*4u,std::bit_cast<unsigned>(matrix[i]));
         // Stable across graphics slots, culling and stock/cache handoffs.
         // IDs derive from the authored cell, never its visible-list position.
-        command(m,dl,0x6400000cu,terrain_id_base+cell.cell_index);
+        command(m,dl,0x6400000cu,terrain_id_base+camera_index*0x2000u+cell.cell_index);
         command(m,dl,matching_group_flags,0u);
         // LOAD+PUSH in F3DEX2 encoding (push bit is inverted by the decoder).
         command(m,dl,0x64000030u,2u); command(m,dl,0u,address);
@@ -245,15 +331,16 @@ extern "C" void rr64_world_terrain_draw(unsigned char* m) {
     command(m,dl,0x6400001cu,0); command(m,dl,0x6400001au,0);
     command(m,dl,0x6400002cu,0); command(m,dl,0xe0525464u,0x20000000u);
     command(m,dl,0xfa000000u,0); command(m,dl,0xdf000000u,0);
+    if(evidence){evidence->extended=n;evidence->triangles=triangles;}
     if(!n) { c.stats.visible_cells=0; c.stats.drawn_triangles=0; return; }
     // Replace the just-written FA reset with a three-command bridge. Exactly
     // 16 bytes are added, inside the certified current original Gfx allocation.
     unsigned bridge=pointer-8u;
     command(m,bridge,0xe0525464u,0x10000064u);
     command(m,bridge,0x6400002cu,1u);
-    command(m,bridge,0xde000000u,f.commands);
+    command(m,bridge,0xde000000u,commands);
     word(m,0x800ac650u,bridge);
-    f.issued=true; f.last_epoch=epoch;
+    f.issued[camera_index]=true; f.last_epoch[camera_index]=epoch;
     c.stats.visible_cells=n; c.stats.drawn_triangles=triangles; ++c.stats.frames;
 }
 

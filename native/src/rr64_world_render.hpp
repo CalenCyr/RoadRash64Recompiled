@@ -22,3 +22,22 @@ void rr64_world_end_actor();
 #ifdef __cplusplus
 }
 #endif
+
+#ifdef __cplusplus
+#include "rr64_actor_render_snapshot.hpp"
+namespace rr64::world {
+// Camera support is independent of extended-world admission. Keep the
+// per-view camera layout, but use supported_scene for distant geometry:
+// split-screen returns to stock terrain/scenery to bound rendering cost.
+inline bool static_scene(unsigned char* memory) noexcept {
+    std::uint32_t view = 0, views = 0;
+    return lod::supported_scene(memory) && engine::read_u32(memory, 0x8009DB88u, views) &&
+        engine::read_u32(memory, engine::globals::active_viewport, view) && view < views;
+}
+inline bool supported_scene(unsigned char* memory) noexcept {
+    std::uint32_t views = 0;
+    return lod::supported_scene(memory) &&
+        engine::read_u32(memory, 0x8009DB88u, views) && views == 1u;
+}
+}
+#endif

@@ -13,6 +13,11 @@ def main():
             if target.exists() and any(target.iterdir()):raise RuntimeError(f'Nonempty dependency folder: {target}')
             target.parent.mkdir(parents=True,exist_ok=True)
             run('git','clone','--no-checkout',entry['url'],str(target))
+            # A pinned PR commit can remain fetchable on GitHub after a squash
+            # merge without being included in a normal clone's branch history.
+            present=run('git','cat-file','-e',entry['commit']+'^{commit}',cwd=target,check=False)
+            if present.returncode!=0:
+                run('git','fetch','origin',entry['commit'],cwd=target)
             run('git','checkout','--detach',entry['commit'],cwd=target)
         head=run('git','rev-parse','HEAD',cwd=target).stdout.decode().strip()
         if head!=entry['commit']:raise RuntimeError(f'Wrong dependency revision: {target}; preserve your changes and use a fresh source folder')
@@ -25,7 +30,7 @@ def main():
         for extra in entry['extraFiles']:
             source=ROOT/'dependency-overrides'/entry['path']/extra['path']
             dest=target/extra['path']
-            if hashlib.sha256(source.read_bytes()).hexdigest()!=extra['sha256']:raise RuntimeError('Override checksum mismatch')
+            if hashlib.sha256(source.read_bytes()).hexdigest()!=extra['sha256']:raise RuntimeError(f'Override checksum mismatch: {source}')
             if dest.exists() and dest.read_bytes()!=source.read_bytes():raise RuntimeError(f'Preserving conflicting local file: {dest}')
             dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,dest)
         print(entry['path']+' ready at '+head[:12])

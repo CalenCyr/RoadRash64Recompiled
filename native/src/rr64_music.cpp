@@ -104,8 +104,8 @@ void configure(recomp::config::Config& config,const std::filesystem::path& direc
     for(unsigned i=0;i<files.size();++i)options.emplace_back(i+2,files[i].filename().string(),files[i].stem().string());
     config.add_enum_option("custom_music_track","Music Track","Add WAV, OGG, FLAC, MP3, MP4, M4A, AAC or WMA files to the music folder, then restart. Custom playlist rotates each race; MP4 uses audio only.",options,0u);
     config.add_option_change_callback("custom_music_track",[](auto value,auto,auto){selection.store(static_cast<unsigned>(std::get<std::uint32_t>(value)));});
-    config.add_percent_number_option("custom_music_volume","Custom Music Volume","Volume of the custom soundtrack; game effects keep their own volume.",65.0);
-    config.add_option_change_callback("custom_music_volume",[](auto value,auto,auto){volume.store(float(std::get<double>(value)/100.0));});
+    config.add_percent_number_option("custom_music_volume","Music Volume","Volume of both the original soundtrack and custom music. Sound effects keep their own volume.",65.0);
+    config.add_option_change_callback("custom_music_volume",[](auto value,auto,auto){const auto percent=std::get<double>(value);volume.store(std::isfinite(percent)?float(std::clamp(percent,0.0,100.0)/100.0):1.0f);});
 }
 void update_ui(){
     const bool race=rr64_is_race_mode_active()!=0;
@@ -140,7 +140,16 @@ void mix(std::span<std::int16_t> output,std::uint32_t rate){
     }
 }
 }
-extern "C" unsigned int rr64_music_volume_update(unsigned int original){
-    static bool muted=false;const bool now=rr64::music::playing.load();const bool changed=now!=muted;muted=now;return (now||changed)?1u:original;
+extern "C" unsigned int rr64_music_volume_update(unsigned int original,unsigned int sequence){
+    // Track each sequence separately so crossfading tracks both receive a
+    // slider change. Bounded state, no allocation or repeatedly queued updates.
+    struct State{unsigned key=0;float gain=0;bool muted=false,valid=false;};
+    static thread_local std::array<State,32> states{};
+    static thread_local unsigned next=0;
+    State* state=nullptr;for(auto& candidate:states)if(candidate.valid&&candidate.key==sequence){state=&candidate;break;}
+    if(!state)state=&states[next++%states.size()];
+    const bool now=rr64::music::playing.load();const float gain=rr64::music::volume.load();
+    const bool changed=!state->valid||state->key!=sequence||state->muted!=now||state->gain!=gain;
+    *state={sequence,gain,now,true};return (now||changed)?1u:original;
 }
-extern "C" unsigned int rr64_music_stock_volume(unsigned int original){return rr64::music::playing.load()?0u:original;}
+extern "C" unsigned int rr64_music_stock_volume(unsigned int original){return rr64::music::playing.load()?0u:unsigned(double(original)*rr64::music::volume.load());}

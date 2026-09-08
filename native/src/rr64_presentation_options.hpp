@@ -9,6 +9,8 @@ namespace rr64::presentation_options
     // changes for restart so an actor/terrain traversal cannot change policy midway.
     inline std::atomic_int max_lod{-1};
     inline std::atomic_int world_distance{-1};
+    // This radius is sampled by each terrain pass, so it can be tuned live.
+    inline std::atomic_int draw_distance{100};
     inline bool environment_enabled(const char *name)
     {
 #ifdef _WIN32

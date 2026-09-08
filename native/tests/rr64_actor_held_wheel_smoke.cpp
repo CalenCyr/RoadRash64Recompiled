@@ -135,6 +135,7 @@ void check_write_scope(const std::vector<unsigned char>& before,
         }
     }
 }
+extern unsigned test_view;
 void test_exact_hold(float speed, const std::array<float, 2>& phases,
     const std::array<float, 2>& suspension, bool four_children = false, float airborne = 0.0f, unsigned crash_state = 0u, bool detached = true) {
     Fixture fixture;
@@ -149,6 +150,9 @@ void test_exact_hold(float speed, const std::array<float, 2>& phases,
         write_u16(fixture.live.data(),Fixture::rider_entity+rider::ejected,detached?1u:0u);
     }
     const unsigned part_count = four_children ? 4u : 3u;
+    write_u32(fixture.live.data(), Fixture::race_player_count, 4u);
+    write_u32(fixture.live.data(), 0x8009DB88u, 4u);
+    write_u32(fixture.live.data(), globals::active_viewport, test_view);
     auto before = fixture.live;
     auto skipped = before;
     recomp_context skipped_context{};
@@ -304,7 +308,8 @@ UNREACHED_WHEEL_HELPER(func_80012B9C)
 UNREACHED_WHEEL_HELPER(func_80012CE0)
 UNREACHED_WHEEL_HELPER(func_80015534)
 UNREACHED_WHEEL_HELPER(func_8005B7DC)
-int main() {
+namespace { unsigned test_view = 0; }
+int run_cases() {
     for(float speed:{0.0f,2.0f,23.72f})for(bool four:{false,true})
         test_exact_hold(speed,{0.7f,-1.1f},{0.02f,-0.04f},four,0.817f,2u,false);
     for(unsigned state:{2u,8u})for(float speed:{2.0f,23.72f,45.08f})
@@ -323,3 +328,5 @@ int main() {
         passed ? "PASS" : "FAIL");
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }
+
+int main() { for (test_view = 0; test_view < 4; ++test_view) { if (run_cases()) return EXIT_FAILURE; } return EXIT_SUCCESS; }

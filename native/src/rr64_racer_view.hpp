@@ -8,7 +8,7 @@ inline bool racer_view_contains(ViewPoint p, ViewPoint a, ViewPoint b, ViewPoint
     // the lateral span, retaining the original near apex and far distance.
     for (float v : {p[0],p[1],a[0],a[1],b[0],b[1],c[0],c[1],side_scale})
         if (!std::isfinite(v)) return false;
-    if (side_scale < 1.0f || side_scale > 1.5f) return false;
+    if (side_scale < 1.0f || side_scale > 2.0f) return false;
     for (unsigned axis=0;axis<2;++axis) {
         const float middle=(b[axis]+c[axis])*0.5f;
         b[axis]=middle+(b[axis]-middle)*side_scale;

@@ -1,5 +1,7 @@
 #include "rr64_world_objects.hpp"
 #include "rr64_world_camera.hpp"
+#include "rr64_local_world_window.hpp"
+#include "rr64_world_frustum.hpp"
 #include "rr64_world_render.hpp"
 #include "rr64_world_course_regions.hpp"
 #include "rr64_actor_render_snapshot.hpp"
@@ -20,7 +22,7 @@ constexpr unsigned maximum_placements=4257u,command_bytes=256u*1024u,frame_bytes
 // policies; only replace AUTO identity/order with explicit identity/LINEAR order.
 constexpr unsigned object_id_base=0x52520000u,object_group_flags=0x02011555u;
 static_assert(maximum_placements*56u+200u<=command_bytes);
-struct Frame { unsigned char* host=nullptr;unsigned base=0,commands=0,matrices=0,epoch=0;bool issued=false; };
+struct Frame { unsigned char* host=nullptr;unsigned base=0,commands=0,matrices=0;std::array<unsigned,4> epoch{};std::array<bool,4> issued{}; };
 struct Animation { float elapsed=0;unsigned frame=0,synced_epoch=0;bool synced=false; };
 struct Cache {
     unsigned char* mapping=nullptr;const unsigned char* rom=nullptr;
@@ -57,23 +59,24 @@ bool initialize(Cache& c,unsigned char* m){
     }
     const unsigned bytes=(unsigned(c.assets.bytes.size())+63u)&~63u;
     for(auto& f:c.frames){
-        f.host=static_cast<unsigned char*>(recomp::alloc(m,bytes+frame_bytes));if(!f.host){release(c);return false;}
+        f.host=static_cast<unsigned char*>(recomp::alloc(m,bytes+4u*frame_bytes));if(!f.host){release(c);return false;}
         const auto offset=f.host-m;
-        if(offset<0x800000||std::uint64_t(offset)+bytes+frame_bytes>recomp::mem_size){release(c);return false;}
+        if(offset<0x800000||std::uint64_t(offset)+bytes+4u*frame_bytes>recomp::mem_size){release(c);return false;}
         f.base=0x80000000u+unsigned(offset);f.commands=f.base+bytes;f.matrices=f.commands+command_bytes;
         for(unsigned i=0;i<c.assets.bytes.size();++i)m[(unsigned(offset)+i)^3u]=c.assets.bytes[i];
         for(const auto& r:c.assets.relocations)word(m,f.base+r.word_offset,f.base+r.target_offset);
     }
     c.animation.resize(c.assets.textures.size());c.ready=true;
     c.stats.cached_models=unsigned(c.assets.models.size());c.stats.cached_placements=unsigned(c.assets.placements.size());
-    c.stats.cached_bytes=2u*(bytes+frame_bytes);
+    c.stats.cached_bytes=2u*(bytes+4u*frame_bytes);
     std::fprintf(stderr,"[RR64-WORLD] object cache models=%u placements=%u bytes=%u triangle-batches=1\n",c.stats.cached_models,c.stats.cached_placements,c.stats.cached_bytes);
     return true;
 }
-bool context(unsigned char* m,unsigned& slot,unsigned& gfx,unsigned& epoch,unsigned& pointer,
+bool context(unsigned char* m,unsigned& slot,unsigned& gfx,unsigned& epoch,unsigned& pointer,unsigned& camera_index,
     ObjectMatrix& view,ObjectMatrix& projection,std::array<float,3>& camera,std::array<float,3>& sector,std::array<float,2>& eye){
     unsigned width=0,base=0,active_base=0,count=0;
-    if(!read_u32(m,globals::terrain_map_width,width)||width!=70u||
+    if(!read_u32(m,globals::active_viewport,camera_index)||camera_index>=4u||
+        !read_u32(m,globals::terrain_map_width,width)||width!=70u||
         !read_u32(m,globals::actor_render_buffer_slot,slot)||slot>1u||!rr64_world_camera_ready(m,2u,slot)||
         !read_u32(m,0x8009CBA4u,gfx)||gfx>1u||!read_u32(m,0x800A1830u,epoch)||
         !read_u32(m,0x800AC650u,pointer)||!read_u32(m,0x800AC658u+gfx*4u,base)||
@@ -86,9 +89,9 @@ bool context(unsigned char* m,unsigned& slot,unsigned& gfx,unsigned& epoch,unsig
     for(unsigned i=0;i<2;++i)if(!read_float(m,0x800D6A28u+i*4u,eye[i])||!std::isfinite(eye[i]))return false;
     unsigned scale=0;std::uint16_t norm=0;
     if(!read_u32(m,0x8009DBB4u,scale)||scale!=std::bit_cast<unsigned>(10.0f)||
-        !read_u16(m,0x800B73F0u+slot*2u,norm)||!norm)return false;
+        !read_u16(m,0x800B73F0u+camera_index*12u+slot*2u,norm)||!norm)return false;
     Matrix4x4Snapshot p{},v{};
-    if(!decode_n64_matrix(m,0x800B6668u+slot*64u,p)||!decode_n64_matrix(m,0x800B6EE8u+slot*64u,v))return false;
+    if(!decode_n64_matrix(m,0x800B6668u+camera_index*0x180u+slot*64u,p)||!decode_n64_matrix(m,0x800B6EE8u+camera_index*0x180u+slot*64u,v))return false;
     projection=p.values;view=v.values;
     return p.values[0]!=0&&p.values[5]!=0&&p.values[11]!=0&&v.values[15]==1;
 }
@@ -103,6 +106,7 @@ void animate(Cache& c,unsigned char* m,unsigned epoch,Frame& f){
         }
         c.clock_epoch=epoch;c.clock_valid=true;
     }
+    for(unsigned view=0;view<4;++view)if(f.issued[view]&&f.epoch[view]==epoch)return;
     for(const auto& r:c.assets.relocations)if(r.texture_index<c.animation.size()){
         const auto& t=c.assets.textures[r.texture_index];const auto& a=c.animation[r.texture_index];
         const std::uint64_t offset=std::uint64_t(r.target_offset)+std::uint64_t(a.frame)*t.frame_stride;
@@ -119,7 +123,7 @@ void objects_reset_session() noexcept{
 extern "C" void rr64_world_objects_begin(unsigned char* m){
     auto& c=rr64::world::cache();std::lock_guard lock(c.mutex);c.drawing=false;c.stock.fill(false);
     c.stats.stock_placements=c.stats.visible_placements=c.stats.drawn_triangles=0;
-    if(!rr64_world_distance_enabled()||!rr64::lod::supported_scene(m))return;
+    if(!rr64_world_distance_enabled()||!(rr64_draw_distance_enabled()&&rr64::world::static_scene(m)))return;
     c.drawing=rr64::world::initialize(c,m);
 }
 extern "C" void rr64_world_objects_observe(unsigned char* m,unsigned placement){
@@ -172,23 +176,26 @@ extern "C" void rr64_world_objects_sample(unsigned char* m,unsigned placement,un
 }
 extern "C" void rr64_world_objects_draw(unsigned char* m){
     using namespace rr64::world;using namespace rr64::engine;auto& c=cache();std::lock_guard lock(c.mutex);
-    if(!c.drawing||c.mapping!=m||!rr64_world_distance_enabled()||!rr64::lod::supported_scene(m))return;c.drawing=false;
-    unsigned slot=0,gfx=0,epoch=0,pointer=0;ObjectMatrix view{},projection{};std::array<float,3> camera{},sector{};std::array<float,2> eye{};
-    if(!context(m,slot,gfx,epoch,pointer,view,projection,camera,sector,eye)){++c.stats.refusals;return;}
+    if(!c.drawing||c.mapping!=m||!rr64_world_distance_enabled()||!(rr64_draw_distance_enabled()&&rr64::world::static_scene(m)))return;c.drawing=false;
+    unsigned slot=0,gfx=0,epoch=0,pointer=0,camera_index=0;ObjectMatrix view{},projection{};std::array<float,3> camera{},sector{};std::array<float,2> eye{};
+    if(!context(m,slot,gfx,epoch,pointer,camera_index,view,projection,camera,sector,eye)){++c.stats.refusals;return;}
     const auto course=course_frame().read(m,epoch);
-    auto& f=c.frames[gfx];if(f.issued&&f.epoch==epoch){++c.stats.refusals;return;}
-    unsigned dl=f.commands,n=0,triangles=0;
+    auto& f=c.frames[gfx];if(f.issued[camera_index]&&f.epoch[camera_index]==epoch){++c.stats.refusals;return;}
+    const WorldFrustum frustum(view,projection);
+    const unsigned commands=f.commands+camera_index*frame_bytes;
+    const unsigned matrices=f.matrices+camera_index*frame_bytes;
+    unsigned dl=commands,n=0,triangles=0;
     for(unsigned op:{0x19u,0x1bu,0x29u,0x1du,0x1fu,0x21u,0x23u,0x25u,0x27u})command(m,dl,0x64000000u|op,0);
-    std::uint16_t norm=0;read_u16(m,0x800B73F0u+slot*2u,norm);command(m,dl,0xdb0e0000u,norm);
-    command(m,dl,0xda380007u,0x800B6668u+slot*64u);command(m,dl,0xda380005u,0x800B6EE8u+slot*64u);
+    std::uint16_t norm=0;read_u16(m,0x800B73F0u+camera_index*12u+slot*2u,norm);command(m,dl,0xdb0e0000u,norm);
+    command(m,dl,0xda380007u,0x800B6668u+camera_index*0x180u+slot*64u);command(m,dl,0xda380005u,0x800B6EE8u+camera_index*0x180u+slot*64u);
     for(unsigned i=0;i<c.assets.placements.size();++i){
         if(c.stock[i])continue;const auto& p=c.assets.placements[i];const auto& model=c.assets.models[p.model_index];
-        if(p.cell_index<course.size()&&!course[p.cell_index])continue;
+        if((p.cell_index>=course.size()&&rr64_draw_distance_percent()<100)||(p.cell_index<course.size()&&!course[p.cell_index]))continue;
         if(!model.vertices||!model.triangles)continue;
-        ObjectMatrix root{};if(!object_matrix(p,camera,sector,eye,root)||!object_in_frustum(model,root,view,projection))continue;
-        if(dl-f.commands+160u>command_bytes||std::uint64_t(n+1u)*64u>frame_bytes-command_bytes){++c.stats.refusals;return;}
-        const unsigned address=f.matrices+n*64u;for(unsigned k=0;k<16;++k)word(m,address+k*4u,std::bit_cast<unsigned>(root[k]));
-        command(m,dl,0x6400000cu,object_id_base+i);command(m,dl,object_group_flags,0u);
+        ObjectMatrix root{};if(!object_matrix(p,camera,sector,eye,root)||!frustum.intersects(model.minimum,model.maximum,root))continue;
+        if(dl-commands+160u>command_bytes||std::uint64_t(n+1u)*64u>frame_bytes-command_bytes){++c.stats.refusals;return;}
+        const unsigned address=matrices+n*64u;for(unsigned k=0;k<16;++k)word(m,address+k*4u,std::bit_cast<unsigned>(root[k]));
+        command(m,dl,0x6400000cu,object_id_base+camera_index*0x2000u+i);command(m,dl,object_group_flags,0u);
         command(m,dl,0x64000030u,2u);command(m,dl,0,address);
         command(m,dl,0xde000000u,f.base+model.display_list_offset);command(m,dl,0xd8380002u,64u);
         command(m,dl,0x6400000du,1u);
@@ -199,11 +206,11 @@ extern "C" void rr64_world_objects_draw(unsigned char* m){
     command(m,dl,0x6400002cu,0);command(m,dl,0xe0525464u,0x20000000u);command(m,dl,0xdf000000u,0);
     animate(c,m,epoch,f);
     unsigned bridge=pointer;command(m,bridge,0xe7000000u,0);command(m,bridge,0xe0525464u,0x10000064u);
-    command(m,bridge,0x6400002cu,1);command(m,bridge,0xde000000u,f.commands);command(m,bridge,0xe7000000u,0);
+    command(m,bridge,0x6400002cu,1);command(m,bridge,0xde000000u,commands);command(m,bridge,0xe7000000u,0);
     word(m,0x800AC650u,bridge);
     // Texture tiles have no RT64 stack. Force the next stock material/root to
     // emit its complete state after this independent presentation list.
     write_u32(m,0x8009DB2Cu,0u);write_u32(m,0x800B1A20u,0xffffffffu);write_u32(m,0x8009DBECu,0xffffffffu);
-    f.issued=true;f.epoch=epoch;++c.stats.frames;
+    f.issued[camera_index]=true;f.epoch[camera_index]=epoch;++c.stats.frames;
 }
 

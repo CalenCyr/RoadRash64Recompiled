@@ -1,5 +1,8 @@
 #include "rr64_popup_input.hpp"
 #include "rr64_online_menu.hpp"
+#include "rr64_local_players.hpp"
+#include "recompinput/players.h"
+#include "recompinput/input_state.h"
 
 #include <array>
 #include <algorithm>
@@ -68,6 +71,7 @@ struct UiState {
 UiState g_ui{};
 unsigned g_player_limit=netplay::kMaximumPlayers;
 std::atomic_bool g_show_requested = false;
+std::atomic_bool g_reset_local_requested = false;
 std::atomic_bool g_force_multiplayer_transition = false;
 std::atomic_bool g_allow_original_multiplayer = false;
 std::atomic_bool g_reset_session_requested = false;
@@ -311,12 +315,19 @@ void initialize_ui() {
     g_ui.local_button->add_pressed_callback([]() {
         reset_guest_setup_progress();
         netplay::configure({});
+        recompinput::suspend_all_rumble();
+        recompinput::players::set_single_player_mode(false);
+        local_players::active.store(true, std::memory_order_release);
         queue_original_multiplayer();
         recompui::hide_context(g_ui.context);
     });
     auto* online = g_ui.context.create_element<recompui::Button>(
         g_ui.choice_page, "ONLINE", recompui::ButtonStyle::Success, recompui::ButtonSize::Large);
-    online->add_pressed_callback([]() { request_page(Page::Connect); });
+    online->add_pressed_callback([]() {
+        local_players::active.store(false, std::memory_order_release);
+        recompinput::players::set_single_player_mode(true);
+        request_page(Page::Connect);
+    });
     auto* cancel = g_ui.context.create_element<recompui::Button>(
         g_ui.choice_page, "BACK", recompui::ButtonStyle::Secondary, recompui::ButtonSize::Medium);
     cancel->add_pressed_callback([]() {
@@ -431,6 +442,11 @@ void update_ui() {
     // function. Applying their page request on the following frame guarantees
     // that no controller event sees a half-hidden navigation tree.
     apply_pending_page();
+    if (g_reset_local_requested.exchange(false, std::memory_order_acq_rel)) {
+        local_players::active.store(false, std::memory_order_release);
+        recompinput::suspend_all_rumble();
+        recompinput::players::set_single_player_mode(true);
+    }
 
     // The stock multiplayer screens can return directly to the main menu,
     // outside this overlay's button callbacks. Finish that teardown here on
@@ -550,6 +566,9 @@ bool host_controls_game_setup() {
 extern "C" unsigned int rr64_online_menu_route_mode(unsigned int requested_mode) {
     constexpr unsigned int kMainMenuMode = 0x20;
     constexpr unsigned int kLocalMultiplayerMode = 0x23;
+    if (requested_mode == kMainMenuMode && rr64::local_players::active.load(std::memory_order_acquire)) {
+        rr64::online_menu::g_reset_local_requested.store(true, std::memory_order_release);
+    }
     if (requested_mode != kLocalMultiplayerMode) {
         return requested_mode;
     }

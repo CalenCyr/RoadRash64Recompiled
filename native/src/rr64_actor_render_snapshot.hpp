@@ -179,8 +179,9 @@ private:
         std::uint32_t rider_style = 0;
         std::array<std::uint16_t, maximum_poses> animation_links{};
     };
-    std::uint64_t pose_epoch_ = 0;
-    std::array<PoseHistory, maximum_pairs> pose_history_{};
+    // Each camera advances separately; another viewport must not age or replace its history.
+    std::array<std::uint64_t, 4> pose_epochs_{};
+    std::array<PoseHistory, maximum_pairs * 4> pose_history_{};
 };
 
 // Installation is deliberately separate from publication: only the original
