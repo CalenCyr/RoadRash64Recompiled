@@ -136,11 +136,11 @@
       },
       {
         "path": "src/common/rt64_rr64_texture_hash_cache.h",
-        "sha256": "2a3bf4c4bcbef360c0b8a22ca300973760cbaad85f9b9934af1dce63a7315c47"
+        "sha256": "5677668ae096564f8de2dff919c1a5aac931ca5f4b5b0c8ab7bef6d75ab91162"
       },
       {
         "path": "src/common/rt64_rr64_texture_load_cache.h",
-        "sha256": "877b7b202fc53ae59b76e8762d0f46495e74250fe0f5401cbf758ab9b8d4758c"
+        "sha256": "56289f80cdbdfe5b84b270ea2f1146b44a93033ac1b70171c90591919ee0b9fe"
       },
       {
         "path": "src/common/rt64_rr64_video_aspect.h",
@@ -340,7 +340,7 @@
   {
     "path": "native/lib/RecompFrontend",
     "url": "https://github.com/N64Recomp/RecompFrontend.git",
-    "commit": "d0d90ba49f46f4896aaeda362056c21b1e342561",
+    "commit": "b1a1477c6556aeb7ed45defbfb5924f721efebc1",
     "patch": "dependency-patches/native_lib_RecompFrontend.patch",
     "extraFiles": []
   },

@@ -1,15 +1,28 @@
 cmake_minimum_required(VERSION 3.20)
 project(RoadRash64Recompiled LANGUAGES C CXX)
 
+if(UNIX)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_GNU_SOURCE")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GNU_SOURCE")
+endif()
+
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(NOT WIN32)
-    message(FATAL_ERROR "The v0.3.0 native probe currently targets Windows x64 only.")
+if(NOT MSVC)
+    add_compile_options(
+        "$<$<COMPILE_LANGUAGE:C>:-include;stdint.h>"
+        "$<$<COMPILE_LANGUAGE:CXX>:-include;cstdint>"
+        -Wno-deprecated-literal-operator
+    )
 endif()
+
+#if(NOT WIN32)
+#    message(FATAL_ERROR "The v0.3.0 native probe currently targets Windows x64 only.")
+#endif()
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "Road Rash 64 Recompiled requires a 64-bit build.")
@@ -84,6 +97,7 @@ if(MSVC)
     )
 else()
     target_compile_options(RecompiledFuncs PRIVATE
+        -march=nehalem
         -fno-strict-aliasing
         -Wno-unused-variable
         -Wno-implicit-function-declaration
@@ -91,12 +105,20 @@ else()
 endif()
 
 include(FetchContent)
-set(SDL2_VERSION "2.30.3" CACHE STRING "SDL2 development package version")
-FetchContent_Declare(
-    sdl2
-    URL "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-VC.zip"
-)
-FetchContent_MakeAvailable(sdl2)
+if(WIN32)
+    set(SDL2_VERSION "2.30.3" CACHE STRING "SDL2 development package version")
+    FetchContent_Declare(sdl2
+        URL "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-VC.zip")
+    FetchContent_MakeAvailable(sdl2)
+    set(RR64_SDL2_INCLUDE_DIRS "${sdl2_SOURCE_DIR}/include")
+    set(RR64_SDL2_LIB_DIRS "${sdl2_SOURCE_DIR}/lib/x64")
+    set(RR64_SDL2_TARGET SDL2)
+else()
+    find_package(SDL2 REQUIRED)
+    set(RR64_SDL2_INCLUDE_DIRS "${SDL2_INCLUDE_DIRS}")
+    set(RR64_SDL2_LIB_DIRS "")
+    set(RR64_SDL2_TARGET SDL2::SDL2)
+endif()
 
 # Voice chat uses Opus' low-latency speech mode. Build it statically with the
 # port so release packages do not require another runtime DLL.
@@ -125,12 +147,28 @@ if(MSVC)
         "-fspv-extension=SPV_KHR_ray_tracing"
         "-fspv-extension=SPV_EXT_descriptor_indexing")
     set(DXC "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxc.exe")
+else()
+    set(DXC_COMMON_OPTS "-I${CMAKE_CURRENT_SOURCE_DIR}/src")
+    set(DXC_SPV_OPTS "-spirv" "-fspv-target-env=vulkan1.0" "-fvk-use-dx-layout")
+    set(DXC_PS_OPTS "${DXC_COMMON_OPTS}" "-E" "PSMain" "-T" "ps_6_0" "-D" "DYNAMIC_RENDER_PARAMS")
+    set(DXC_VS_OPTS "${DXC_COMMON_OPTS}" "-E" "VSMain" "-T" "vs_6_0" "-D" "DYNAMIC_RENDER_PARAMS" "-fvk-invert-y")
+    set(DXC_CS_OPTS "${DXC_COMMON_OPTS}" "-E" "CSMain" "-T" "cs_6_0")
+    set(DXC_GS_OPTS "${DXC_COMMON_OPTS}" "-E" "GSMain" "-T" "gs_6_0")
+    set(DXC_RT_OPTS "${DXC_COMMON_OPTS}" "-D" "RT_SHADER" "-T" "lib_6_3"
+        "-fspv-target-env=vulkan1.1spirv1.4"
+        "-fspv-extension=SPV_KHR_ray_tracing"
+        "-fspv-extension=SPV_EXT_descriptor_indexing")
+    set(DXC "LD_LIBRARY_PATH=${RT64_ROOT}/src/contrib/dxc/lib/x64" "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxc-linux")
 endif()
 
 set(RECOMP_FRONTEND_N64MODERNRUNTIME_PATH "${N64MODERN_RUNTIME_ROOT}")
 set(RECOMP_FRONTEND_RT64_PATH "${RT64_ROOT}")
 add_subdirectory("${RECOMP_FRONTEND_ROOT}" "${CMAKE_BINARY_DIR}/RecompFrontend")
 target_include_directories(recompui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+if(RT64_SDL_WINDOW_VULKAN)
+    target_compile_definitions(recompui PUBLIC PLUME_SDL_VULKAN_ENABLED)
+endif()
 
 add_executable(RoadRash64Recompiled
     src/main.cpp
@@ -210,18 +248,24 @@ target_link_libraries(RoadRash64Recompiled PRIVATE
     nfd
     SDL2
     opus
-    Winmm.lib
-    Ws2_32.lib
 )
+if(WIN32)
+    target_link_libraries(RoadRash64Recompiled PRIVATE Winmm.lib Ws2_32.lib)
+endif()
+
+if(WIN32)
+    add_custom_command(TARGET RoadRash64Recompiled POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${sdl2_SOURCE_DIR}/lib/x64/SDL2.dll"
+            "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxil.dll"
+            "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxcompiler.dll"
+            "$<TARGET_FILE_DIR:RoadRash64Recompiled>"
+    )
+endif()
 
 add_custom_command(TARGET RoadRash64Recompiled POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:RoadRash64Recompiled>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${sdl2_SOURCE_DIR}/lib/x64/SDL2.dll"
-        "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxil.dll"
-        "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxcompiler.dll"
-        "$<TARGET_FILE_DIR:RoadRash64Recompiled>"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/assets"
         "$<TARGET_FILE_DIR:RoadRash64Recompiled>/assets"
@@ -249,7 +293,9 @@ target_include_directories(RR64NetplaySmoke PRIVATE
     "${N64MODERN_RUNTIME_ROOT}/librecomp/include"
     "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon"
 )
-target_link_libraries(RR64NetplaySmoke PRIVATE Ws2_32.lib)
+if(WIN32)
+    target_link_libraries(RR64NetplaySmoke PRIVATE Ws2_32.lib)
+endif()
 
 # ROM-free host-audio queue policy and telemetry validation.
 add_executable(RR64AudioQueueSmoke EXCLUDE_FROM_ALL
@@ -683,7 +729,9 @@ target_include_directories(RR64NetplayCapacity PRIVATE
     "${N64MODERN_RUNTIME_ROOT}/librecomp/include"
     "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon"
 )
-target_link_libraries(RR64NetplayCapacity PRIVATE Ws2_32.lib)
+if(WIN32)
+    target_link_libraries(RR64NetplayCapacity PRIVATE Ws2_32.lib)
+endif()
 
 # ROM-free validation for the proximity attenuation curve. Codec, microphone,
 # and network transport are exercised by the normal build and netplay smoke.
@@ -708,7 +756,9 @@ target_compile_features(RR64OnlineViewportSmoke PRIVATE cxx_std_20)
 add_executable(RR64MusicSmoke EXCLUDE_FROM_ALL tests/rr64_music_smoke.cpp)
 add_executable(RR64ConnectionSmoke EXCLUDE_FROM_ALL tests/rr64_connection_smoke.cpp)
 target_compile_features(RR64ConnectionSmoke PRIVATE cxx_std_20)
-target_link_libraries(RR64ConnectionSmoke PRIVATE Ws2_32.lib)
+if(WIN32)
+    target_link_libraries(RR64ConnectionSmoke PRIVATE Ws2_32.lib)
+endif()
 target_include_directories(RR64MusicSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(RR64MusicSmoke PRIVATE SDL2)
 target_include_directories(RR64MusicSmoke PRIVATE "${sdl2_SOURCE_DIR}/include")
@@ -721,7 +771,9 @@ if(WIN32)
 endif()
 add_executable(RR64NetplayLimitSmoke EXCLUDE_FROM_ALL tests/rr64_netplay_limit_smoke.cpp src/rr64_netplay.cpp)
 target_include_directories(RR64NetplayLimitSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(RR64NetplayLimitSmoke PRIVATE Ws2_32.lib)
+if(WIN32)
+    target_link_libraries(RR64NetplayLimitSmoke PRIVATE Ws2_32.lib)
+endif()
 
 if(WIN32)
     enable_language(RC)

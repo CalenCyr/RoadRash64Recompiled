@@ -8,6 +8,7 @@
 #include <cassert>
 #include <chrono>
 #include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cinttypes>
 #include <cstdint>
@@ -37,7 +38,30 @@
 #define SDL_MAIN_HANDLED
 #include "SDL.h"
 #include "SDL_syswm.h"
-
+#ifdef None
+#undef None
+#endif
+#ifdef Always
+#undef Always
+#endif
+#ifdef Bool
+#undef Bool
+#endif
+#ifdef Status
+#undef Status
+#endif
+#ifdef Success
+#undef Success
+#endif
+#ifdef LockMask
+#undef LockMask
+#endif
+#ifdef True
+#undef True
+#endif
+#ifdef False
+#undef False
+#endif
 #include "recompui/recompui.h"
 #include "recompui/program_config.h"
 #include "recompui/renderer.h"
@@ -60,10 +84,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <psapi.h>
-#include <share.h>
 #include <timeapi.h>
 #endif
 
+#include "rr64_msvc_crt_compat.hpp"
 #include "rr64_native.hpp"
 #include "rr64_actor_render_diagnostics.hpp"
 #include "rr64_world_terrain.hpp"
@@ -264,7 +288,12 @@ FILE* audio_trace_file() {
         return nullptr;
     }
 
+#ifdef _WIN32
     const errno_t result = fopen_s(&g_audio_trace_file, path, "w");
+#else
+    g_audio_trace_file = std::fopen(path, "w");
+    const errno_t result = (g_audio_trace_file != nullptr) ? 0 : errno;
+#endif
     std::free(path);
     if (result != 0 || g_audio_trace_file == nullptr) {
         std::fprintf(stderr, "[RR64-AUDIO] Could not open RR64_AUDIO_TRACE.\n");
@@ -302,7 +331,11 @@ void write_runtime_log(std::string_view text) {
     if (!g_runtime_log && !g_runtime_log_path.empty() &&
         (text.find("[RR64-CRASH]") != std::string_view::npos ||
          text.find("[RR64-EXIT]") != std::string_view::npos)) {
+#ifdef _WIN32
         g_runtime_log = _wfsopen(g_runtime_log_path.c_str(), L"w", _SH_DENYNO);
+#else
+        g_runtime_log = _fsopen(g_runtime_log_path.c_str(), "w", _SH_DENYNO);
+#endif
     }
     std::fwrite(text.data(),1,text.size(),stderr);
     std::fflush(stderr);
@@ -332,7 +365,18 @@ std::filesystem::path executable_directory() {
     buffer.resize(length);
     return std::filesystem::path(buffer).parent_path();
 }
+#else
+std::filesystem::path executable_directory() {
+    std::error_code ec;
+    const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) {
+        return std::filesystem::current_path();
+    }
+    return self.parent_path();
+}
+#endif
 
+#ifdef _WIN32
 LONG WINAPI rr64_unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
     DWORD code = 0;
     void* address = nullptr;
@@ -588,7 +632,8 @@ ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::
     rr64_log("[RR64-STAGE] HWND acquired: %p thread=%lu\n", static_cast<void*>(wm_info.info.win.window), static_cast<unsigned long>(GetCurrentThreadId()));
     return ultramodern::renderer::WindowHandle{ wm_info.info.win.window, GetCurrentThreadId() };
 #else
-#error "The v0.3.0 Road Rash native probe is currently Windows-only."
+    rr64_log("[RR64-STAGE] SDL window handle acquired: %p\n", static_cast<void*>(window));
+    return window;
 #endif
 }
 
@@ -2641,7 +2686,18 @@ int main(int argc, char** argv) {
         std::fclose(g_runtime_log);
         g_runtime_log = nullptr;
     }
-    return EXIT_SUCCESS;
+    // recomp::start() only joins its bootstrap thread; the emulated N64 OS
+    // threads it spawns (game/audio/etc.) are left running, permanently
+    // blocked in ultramodern::wait_for_external_message() on a static
+    // condition_variable (mesgqueue.cpp). A normal return here would run
+    // that condition_variable's destructor via libc's exit() while those
+    // threads are still waiting on it; glibc's pthread_cond_destroy blocks
+    // in that situation, deadlocking the process. quick_exit() skips static
+    // destructors entirely and terminates immediately, matching how a plain
+    // process exit behaves on Windows (where condition_variable's destructor
+    // over CONDITION_VARIABLE is a no-op, so the same abandoned threads are
+    // harmless there).
+    std::quick_exit(EXIT_SUCCESS);
 }
 
 

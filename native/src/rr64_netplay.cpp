@@ -11,9 +11,38 @@
 #include <mutex>
 #include <random>
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <WinSock2.h>
 #include <WS2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <cerrno>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+using SOCKET = int;
+using socklen_type = socklen_t;
+constexpr SOCKET INVALID_SOCKET = -1;
+constexpr int SOCKET_ERROR = -1;
+constexpr int WSAEWOULDBLOCK = EWOULDBLOCK;
+
+inline int closesocket(SOCKET socket_handle) { return ::close(socket_handle); }
+
+inline int ioctlsocket(SOCKET socket_handle, long command, u_long* argument) {
+    return ::ioctl(socket_handle, static_cast<unsigned long>(command), argument);
+}
+
+inline int WSAGetLastError() { return errno; }
+#endif
+
+#ifdef _WIN32
+using socklen_type = int;
+#endif
 
 namespace rr64::netplay {
 namespace {
@@ -392,10 +421,12 @@ bool start_winsock_locked() {
     if (g_winsock_started) {
         return true;
     }
+#ifdef _WIN32
     WSADATA data{};
     if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
         return false;
     }
+#endif
     g_winsock_started = true;
     return true;
 }
@@ -423,6 +454,7 @@ bool create_socket_locked(bool bind_host, std::uint16_t port) {
     local.sin_family = AF_INET;
     local.sin_addr.s_addr = htonl(INADDR_ANY);
     local.sin_port = htons(bind_host ? port : 0);
+#ifdef _WIN32
     if(bind_host){
         BOOL exclusive=TRUE;
         if(setsockopt(g_session.socket,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,reinterpret_cast<const char*>(&exclusive),sizeof(exclusive))==SOCKET_ERROR){
@@ -430,13 +462,14 @@ bool create_socket_locked(bool bind_host, std::uint16_t port) {
             g_session.message="Could not reserve the hosting port.";return false;
         }
     }
+#endif
     if (bind(g_session.socket, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) == SOCKET_ERROR) {
         record_socket_error_locked("bind",WSAGetLastError());
         close_socket_locked();
         g_session.message = "Could not bind UDP port " + std::to_string(port);
         return false;
     }
-    int length=sizeof(local);getsockname(g_session.socket,reinterpret_cast<sockaddr*>(&local),&length);
+    socklen_type length=sizeof(local);getsockname(g_session.socket,reinterpret_cast<sockaddr*>(&local),&length);
     std::fprintf(stderr,"[RR64-NET] socket role=%s local-udp-port=%u protocol=%u\n",bind_host?"host":"join",ntohs(local.sin_port),kProtocolVersion);std::fflush(stderr);
     return true;
 }
@@ -933,7 +966,7 @@ void pump_receive_locked(const Clock::time_point now) {
     std::array<std::uint8_t, 2048> buffer{};
     for(unsigned packets=0;packets<256;++packets) {
         sockaddr_in endpoint{};
-        int endpoint_size = sizeof(endpoint);
+        socklen_type endpoint_size = sizeof(endpoint);
         const int received = recvfrom(
             g_session.socket,
             reinterpret_cast<char*>(buffer.data()),

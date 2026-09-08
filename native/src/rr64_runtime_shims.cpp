@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include <share.h>
+#include "rr64_msvc_crt_compat.hpp"
 
 #include "recomp.h"
 #include "librecomp/addresses.hpp"

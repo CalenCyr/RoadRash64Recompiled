@@ -9,7 +9,7 @@
 #include <limits>
 #include <mutex>
 
-#include <share.h>
+#include "rr64_msvc_crt_compat.hpp"
 
 #include "rr64_actor_pose.hpp"
 #include "rr64_engine_layout.hpp"

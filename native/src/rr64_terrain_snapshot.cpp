@@ -10,7 +10,7 @@
 #include <limits>
 #include <mutex>
 
-#include <share.h>
+#include "rr64_msvc_crt_compat.hpp"
 
 namespace rr64::engine {
 namespace {
