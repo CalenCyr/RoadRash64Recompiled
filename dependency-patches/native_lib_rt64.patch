@@ -33,7 +33,7 @@ index d387090..b651649 100644
  #define G_EX_ORIGIN_NONE            0x800
  #define G_EX_ORIGIN_LEFT            0x0
 diff --git a/src/common/rt64_replacement_database.cpp b/src/common/rt64_replacement_database.cpp
-index 9f331c9..b02c482 100644
+index 9f331c9..373456f 100644
 --- a/src/common/rt64_replacement_database.cpp
 +++ b/src/common/rt64_replacement_database.cpp
 @@ -58,6 +58,15 @@ namespace RT64 {
@@ -170,15 +170,8 @@ index 9f331c9..b02c482 100644
      }
  
      void to_json(json &j, const ReplacementTexture &texture) {
-@@ -407,4 +462,4 @@ namespace RT64 {
-         // Update configuration version to the latest one after parsing is over.
-         db.config.configurationVersion = defaultConfig.configurationVersion;
-     }
--};
-\ No newline at end of file
-+};
 diff --git a/src/common/rt64_replacement_database.h b/src/common/rt64_replacement_database.h
-index 3f74ea2..269923b 100644
+index 3f74ea2..e5083cf 100644
 --- a/src/common/rt64_replacement_database.h
 +++ b/src/common/rt64_replacement_database.h
 @@ -66,6 +66,11 @@ namespace RT64 {
@@ -221,13 +214,6 @@ index 3f74ea2..269923b 100644
          void resolveOperations(std::unordered_map<uint64_t, ReplacementResolvedPath> &resolvedPathMap);
          void resolveShifts(std::unordered_map<uint64_t, ReplacementResolvedPath> &resolvedPathMap);
          static uint64_t stringToHash(const std::string &str);
-@@ -150,4 +157,4 @@ namespace RT64 {
-     extern void from_json(const json &j, ReplacementShiftFilter &shiftFilter);
-     extern void to_json(json &j, const ReplacementDatabase &db);
-     extern void from_json(const json &j, ReplacementDatabase &db);
--};
-\ No newline at end of file
-+};
 diff --git a/src/common/rt64_timer.cpp b/src/common/rt64_timer.cpp
 index fb0ef88..f7ea18a 100644
 --- a/src/common/rt64_timer.cpp
@@ -382,7 +368,7 @@ index fb0ef88..f7ea18a 100644
      }
  };
 diff --git a/src/common/rt64_tmem_hasher.h b/src/common/rt64_tmem_hasher.h
-index 8c6af2b..6afcd90 100644
+index 8c6af2b..8744b64 100644
 --- a/src/common/rt64_tmem_hasher.h
 +++ b/src/common/rt64_tmem_hasher.h
 @@ -4,6 +4,8 @@
@@ -427,15 +413,8 @@ index 8c6af2b..6afcd90 100644
                      }
                      else {
                          for (uint32_t i = 0; i < byteCount; i++) {
-@@ -206,4 +227,4 @@ namespace RT64 {
-             return (bytesToHash > tmemSize);
-         }
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/common/rt64_user_configuration.h b/src/common/rt64_user_configuration.h
-index 4857f22..3a80da7 100644
+index 4857f22..156c248 100644
 --- a/src/common/rt64_user_configuration.h
 +++ b/src/common/rt64_user_configuration.h
 @@ -52,6 +52,7 @@ namespace RT64 {
@@ -467,32 +446,6 @@ index 4857f22..3a80da7 100644
      });
  
      NLOHMANN_JSON_SERIALIZE_ENUM(UserConfiguration::Antialiasing, {
-@@ -174,4 +180,4 @@ namespace RT64 {
-         static bool read(UserConfiguration &cfg, std::istream &stream);
-         static bool write(const UserConfiguration &cfg, std::ostream &stream);
-     };
--};
-\ No newline at end of file
-+};
-diff --git a/src/gbi/rt64_gbi.cpp b/src/gbi/rt64_gbi.cpp
-index 7006549..f6cea27 100644
---- a/src/gbi/rt64_gbi.cpp
-+++ b/src/gbi/rt64_gbi.cpp
-@@ -6,6 +6,7 @@
- 
- #include <cassert>
- #include <cinttypes>
-+#include <cstdio>
- 
- #include "rt64_gbi_extended.h"
- #include "rt64_gbi_f3d.h"
-@@ -558,4 +559,4 @@ namespace RT64 {
-     GBIFunction GBIManager::getExtendedFunction() const {
-         return &GBI_EXTENDED::extendedOp;
-     }
--};
-\ No newline at end of file
-+};
 diff --git a/src/gbi/rt64_gbi_extended.cpp b/src/gbi/rt64_gbi_extended.cpp
 index 20c0d4d..c8e42e9 100644
 --- a/src/gbi/rt64_gbi_extended.cpp
@@ -541,215 +494,11 @@ index 20c0d4d..c8e42e9 100644
              MapInitialized = true;
          }
      }
-diff --git a/src/gbi/rt64_gbi_s2dex.cpp b/src/gbi/rt64_gbi_s2dex.cpp
-index 4b41bfa..26c0c17 100644
---- a/src/gbi/rt64_gbi_s2dex.cpp
-+++ b/src/gbi/rt64_gbi_s2dex.cpp
-@@ -412,6 +412,7 @@ namespace RT64 {
-             // TODO load this into the S2D struct buffer for a more accurate implementation in case there's ever command state bleed.
-             const uObjBg *bgObject = reinterpret_cast<const uObjBg *>(state->fromRDRAM(rdramAddress));
-             const uObjBg_t &bg = bgObject->bg;
-+
-             assert(bg.imageLoad == S2DEX_G_BGLT_LOADTILE); // TODO: Only the load tile version is implemented.
-             
-             const uint16_t TMEMAddress = 0;
-@@ -661,4 +662,4 @@ namespace RT64 {
-             gbi->resetFromTask = &reset;
-         }
-     }
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
-index 785de27..a72ee16 100644
+index 785de27..cf5d869 100644
 --- a/src/hle/rt64_application.cpp
 +++ b/src/hle/rt64_application.cpp
-@@ -3,6 +3,8 @@
- //
- 
- #include "rt64_application.h"
-+#include <cstdio>
-+// RR64_DIAG_V0310_RT64_INCLUDES
- #include "rhi/rt64_render_hooks.h"
- 
- #include <cinttypes>
-@@ -64,8 +66,18 @@ namespace RT64 {
-     // Application
- 
-     Application::Application(const Core &core, const ApplicationConfiguration &appConfig) {
--        Timer::initialize();
--        FileDialog::initialize();
-+    // RR64_DIAG_V0310_RT64_CTOR
-+    fprintf(stderr, "[RR64-RT64-STAGE] Application ctor begin. detectDataPath=%d useConfig=%d\n",
-+        appConfig.detectDataPath ? 1 : 0, appConfig.useConfigurationFile ? 1 : 0);
-+    fflush(stderr);
-+        fprintf(stderr, "[RR64-RT64-STAGE] Timer::initialize...\n"); fflush(stderr);
-+    Timer::initialize();
-+    // RR64_DIAG_V0310_TIMER
-+    fprintf(stderr, "[RR64-RT64-STAGE] Timer initialized.\n"); fflush(stderr);
-+        fprintf(stderr, "[RR64-RT64-STAGE] FileDialog::initialize...\n"); fflush(stderr);
-+    FileDialog::initialize();
-+    // RR64_DIAG_V0310_FILE_DIALOG
-+    fprintf(stderr, "[RR64-RT64-STAGE] FileDialog initialized.\n"); fflush(stderr);
- 
-         this->core = core;
-         this->appConfig = appConfig;
-@@ -78,7 +90,10 @@ namespace RT64 {
-             this->appConfig.dataPath = userPaths.detectDataPath(appConfig.appId);
-         }
- 
--        userPaths.setupPaths(this->appConfig.dataPath);
-+        fprintf(stderr, "[RR64-RT64-STAGE] userPaths.setupPaths...\n"); fflush(stderr);
-+    userPaths.setupPaths(this->appConfig.dataPath);
-+    // RR64_DIAG_V0310_PATHS
-+    fprintf(stderr, "[RR64-RT64-STAGE] userPaths.setupPaths returned.\n"); fflush(stderr);
- 
-         // Open the log if we're able to access the directory.
-         if (!userPaths.isEmpty() && checkDirectoryCreated(userPaths.dataPath)) {
-@@ -87,6 +102,9 @@ namespace RT64 {
-     }
- 
-     Application::SetupResult Application::setup(uint32_t threadId) {
-+    // RR64_DIAG_V0310_SETUP_BEGIN
-+    fprintf(stderr, "[RR64-RT64-STAGE] Application::setup begin thread=%u.\n", static_cast<unsigned>(threadId));
-+    fflush(stderr);
- #   ifdef _WIN64
-         if (!DynamicLibraries::load()) {
-             fprintf(stderr, "Failed to load dynamic libraries. Make sure the dependencies are next to the Plugin's DLL.\n");
-@@ -100,7 +118,9 @@ namespace RT64 {
-         }
- 
-         // Create the interpreter and its associated state.
--        interpreter = std::make_unique<Interpreter>();
-+        // RR64_DIAG_V0310_INTERPRETER
-+    fprintf(stderr, "[RR64-RT64-STAGE] Creating interpreter/state...\n"); fflush(stderr);
-+    interpreter = std::make_unique<Interpreter>();
-         state = std::make_unique<State>(core.RDRAM, core.MI_INTR_REG, core.checkInterrupts);
-         interpreter->setup(state.get());
- 
-@@ -118,7 +138,9 @@ namespace RT64 {
- 
-         // Create the application window.
-         const char *windowTitle = "RT64";
--        appWindow = std::make_unique<ApplicationWindow>();
-+        // RR64_DIAG_V0310_WINDOW
-+    fprintf(stderr, "[RR64-RT64-STAGE] Creating/wrapping ApplicationWindow...\n"); fflush(stderr);
-+    appWindow = std::make_unique<ApplicationWindow>();
-         if (core.window != RenderWindow{}) {
-             appWindow->setup(core.window, this, threadId);
-         }
-@@ -128,9 +150,14 @@ namespace RT64 {
- 
-         // Detect refresh rate from the display the window is located at.
-         appWindow->detectRefreshRate();
-+    // RR64_DIAG_V0310_REFRESH
-+    fprintf(stderr, "[RR64-RT64-STAGE] Window setup complete; refresh rate detected.\n"); fflush(stderr);
- 
-         // Resolve the graphics API option in case it's automatic.
-         chosenGraphicsAPI = UserConfiguration::resolveGraphicsAPI(userConfig.graphicsAPI);
-+    // RR64_DIAG_V0310_CHOSEN_API
-+    fprintf(stderr, "[RR64-RT64-STAGE] Graphics API resolved to enum=%d (requested=%d).\n",
-+        static_cast<int>(chosenGraphicsAPI), static_cast<int>(userConfig.graphicsAPI)); fflush(stderr);
- 
- #   ifdef _WIN64
-         // Windows can try falling back to the other API option in case of failure.
-@@ -159,7 +186,10 @@ namespace RT64 {
-             switch (chosenGraphicsAPI) {
-             case UserConfiguration::GraphicsAPI::D3D12:
- #       ifdef _WIN64
--                renderInterface = CreateD3D12Interface();
-+                fprintf(stderr, "[RR64-RT64-STAGE] CreateD3D12Interface...\n"); fflush(stderr);
-+            renderInterface = CreateD3D12Interface();
-+            // RR64_DIAG_V0310_D3D12_INTERFACE
-+            fprintf(stderr, "[RR64-RT64-STAGE] CreateD3D12Interface returned %p.\n", static_cast<void*>(renderInterface.get())); fflush(stderr);
-                 break;
- #       else
-                 fprintf(stderr, "D3D12 is not supported on this platform. Please select a different Graphics API.\n");
-@@ -174,7 +204,10 @@ namespace RT64 {
-                 return SetupResult::InvalidGraphicsAPI;
- #       endif
-             case UserConfiguration::GraphicsAPI::Vulkan:
--                renderInterface = CreateVulkanInterfaceWrapper(appWindow->windowHandle);
-+                fprintf(stderr, "[RR64-RT64-STAGE] CreateVulkanInterfaceWrapper...\n"); fflush(stderr);
-+            renderInterface = CreateVulkanInterfaceWrapper(appWindow->windowHandle);
-+            // RR64_DIAG_V0310_VK_INTERFACE
-+            fprintf(stderr, "[RR64-RT64-STAGE] CreateVulkanInterfaceWrapper returned %p.\n", static_cast<void*>(renderInterface.get())); fflush(stderr);
-                 break;
-             default:
-                 fprintf(stderr, "Unknown Graphics API specified in configuration.\n");
-@@ -183,7 +216,10 @@ namespace RT64 {
- 
-             if (renderInterface != nullptr) {
-                 // Create the render device.
--                device = renderInterface->createDevice();
-+                fprintf(stderr, "[RR64-RT64-STAGE] RenderInterface::createDevice...\n"); fflush(stderr);
-+            device = renderInterface->createDevice();
-+            // RR64_DIAG_V0310_DEVICE
-+            fprintf(stderr, "[RR64-RT64-STAGE] createDevice returned %p.\n", static_cast<void*>(device.get())); fflush(stderr);
-             }
-         }
- 
-@@ -198,7 +234,11 @@ namespace RT64 {
-         }
- 
-         // Print device information to console.
--        RenderDeviceDescription deviceDescription = device->getDescription();
-+        // RR64_DIAG_V0310_DESCRIPTION
-+    fprintf(stderr, "[RR64-RT64-STAGE] Reading device description...\n"); fflush(stderr);
-+    RenderDeviceDescription deviceDescription = device->getDescription();
-+    fprintf(stderr, "[RR64-RT64-STAGE] Device description read (name_len=%zu vendor=0x%X).\n",
-+        deviceDescription.name.size(), static_cast<unsigned>(deviceDescription.vendor)); fflush(stderr);
-         fprintf(stdout, "Device Name: %s\n", deviceDescription.name.c_str());
-         fprintf(stdout, "Device Vendor: 0x%X\n", deviceDescription.vendor);
-         fprintf(stdout, "Driver Version: 0x%" PRIx64 "\n", deviceDescription.driverVersion);
-@@ -262,7 +302,10 @@ namespace RT64 {
- 
-             device.reset();
-             renderInterface.reset();
-+            fprintf(stderr, "[RR64-RT64-STAGE] CreateVulkanInterfaceWrapper...\n"); fflush(stderr);
-             renderInterface = CreateVulkanInterfaceWrapper(appWindow->windowHandle);
-+            // RR64_DIAG_V0310_VK_INTERFACE
-+            fprintf(stderr, "[RR64-RT64-STAGE] CreateVulkanInterfaceWrapper returned %p.\n", static_cast<void*>(renderInterface.get())); fflush(stderr);
-             if (renderInterface == nullptr) {
-                 fprintf(stderr, "Unable to initialize graphics API.\n");
-                 return SetupResult::GraphicsAPINotFound;
-@@ -270,7 +313,10 @@ namespace RT64 {
- 
-             chosenGraphicsAPI = UserConfiguration::GraphicsAPI::Vulkan;
- 
-+            fprintf(stderr, "[RR64-RT64-STAGE] RenderInterface::createDevice...\n"); fflush(stderr);
-             device = renderInterface->createDevice();
-+            // RR64_DIAG_V0310_DEVICE
-+            fprintf(stderr, "[RR64-RT64-STAGE] createDevice returned %p.\n", static_cast<void*>(device.get())); fflush(stderr);
-             if (device == nullptr) {
-                 fprintf(stderr, "Unable to find compatible graphics device.\n");
-                 return SetupResult::GraphicsDeviceNotFound;
-@@ -295,13 +341,21 @@ namespace RT64 {
-         }
- 
-         // Call the init hook if one was attached.
--        RenderHookInit *initHook = GetRenderHookInit();
-+        // RR64_DIAG_V0310_HOOK
-+    fprintf(stderr, "[RR64-RT64-STAGE] About to query/call RenderHookInit.\n"); fflush(stderr);
-+    RenderHookInit *initHook = GetRenderHookInit();
-+    fprintf(stderr, "[RR64-RT64-STAGE] RenderHookInit present=%d.\n", initHook != nullptr ? 1 : 0); fflush(stderr);
-         if (initHook != nullptr) {
--            initHook(renderInterface.get(), device.get());
-+            fprintf(stderr, "[RR64-RT64-STAGE] Calling RecompFrontend RenderHookInit...\n"); fflush(stderr);
-+        initHook(renderInterface.get(), device.get());
-+        // RR64_DIAG_V0310_HOOK_RETURN
-+        fprintf(stderr, "[RR64-RT64-STAGE] RenderHookInit returned.\n"); fflush(stderr);
-         }
- 
-         // Create all the render workers.
--        drawDataUploader = std::make_unique<BufferUploader>(device.get());
-+        // RR64_DIAG_V0310_WORKERS
-+    fprintf(stderr, "[RR64-RT64-STAGE] Creating render workers/uploaders...\n"); fflush(stderr);
-+    drawDataUploader = std::make_unique<BufferUploader>(device.get());
-         transformsUploader = std::make_unique<BufferUploader>(device.get());
-         tilesUploader = std::make_unique<BufferUploader>(device.get());
-         workloadExtrasUploader = std::make_unique<BufferUploader>(device.get());
-@@ -327,11 +381,17 @@ namespace RT64 {
+@@ -327,7 +327,10 @@ namespace RT64 {
          // where the wait() will take far more time than expected and cause stuttering. While this seems to work fine everywhere else,
          // we stick to the pre-plume approach to be safe.
          if (device->getCapabilities().presentWait) {
@@ -761,40 +510,8 @@ index 785de27..a72ee16 100644
              swapChainDesc.enablePresentWait = true;
          }
  
--        swapChain = presentGraphicsWorker->commandQueue->createSwapChain(swapChainDesc);
-+        fprintf(stderr, "[RR64-RT64-STAGE] Creating swap chain...\n"); fflush(stderr);
-+    swapChain = presentGraphicsWorker->commandQueue->createSwapChain(swapChainDesc);
-+    // RR64_DIAG_V0310_SWAPCHAIN
-+    fprintf(stderr, "[RR64-RT64-STAGE] Swap chain returned %p.\n", static_cast<void*>(swapChain.get())); fflush(stderr);
- 
-         // Before configuring multisampling, make sure the device actually supports it for the formats we'll use. If it doesn't, turn off antialiasing in the configuration.
-         const RenderSampleCounts colorSampleCounts = device->getSampleCountsSupported(RenderTarget::colorBufferFormat(usesHDR));
-@@ -343,9 +403,13 @@ namespace RT64 {
- 
-         // Create the shader library.
-         const RenderMultisampling multisampling = RasterShader::generateMultisamplingPattern(userConfig.msaaSampleCount(), device->getCapabilities().sampleLocations);
--        shaderLibrary = std::make_unique<ShaderLibrary>(usesHDR, usesHardwareResolve);
-+        // RR64_DIAG_V0310_SHADERS
-+    fprintf(stderr, "[RR64-RT64-STAGE] Creating shader library (HDR=%d HWResolve=%d)...\n", usesHDR ? 1 : 0, usesHardwareResolve ? 1 : 0); fflush(stderr);
-+    shaderLibrary = std::make_unique<ShaderLibrary>(usesHDR, usesHardwareResolve);
-         shaderLibrary->setupCommonShaders(renderInterface.get(), device.get());
-         shaderLibrary->setupMultisamplingShaders(renderInterface.get(), device.get(), multisampling);
-+    // RR64_DIAG_V0310_SHADERS_DONE
-+    fprintf(stderr, "[RR64-RT64-STAGE] Common/multisampling shaders initialized.\n"); fflush(stderr);
- 
-         // Create the shader caches.
-         // Estimate the amount of shader compiler threads by trying to use about half of the system's available threads.
-@@ -538,6 +602,8 @@ namespace RT64 {
-         // Recreate the multisampling shaders on the shader library.
-         const RenderMultisampling multisampling = RasterShader::generateMultisamplingPattern(userConfig.msaaSampleCount(), device->getCapabilities().sampleLocations);
-         shaderLibrary->setupMultisamplingShaders(renderInterface.get(), device.get(), multisampling);
-+    // RR64_DIAG_V0310_SHADERS_DONE
-+    fprintf(stderr, "[RR64-RT64-STAGE] Common/multisampling shaders initialized.\n"); fflush(stderr);
- 
-         // Set up shader cache again with new ubershaders.
-         rasterShaderCache->setup(device.get(), renderInterface->getCapabilities().shaderFormat, shaderLibrary.get(), multisampling);
 diff --git a/src/hle/rt64_game_frame.cpp b/src/hle/rt64_game_frame.cpp
-index 87392d0..f0aad29 100644
+index 87392d0..536281d 100644
 --- a/src/hle/rt64_game_frame.cpp
 +++ b/src/hle/rt64_game_frame.cpp
 @@ -6,10 +6,347 @@
@@ -1439,15 +1156,8 @@ index 87392d0..f0aad29 100644
          }
  
          if (!modifiedBuffers.empty()) {
-@@ -1039,4 +1533,4 @@ namespace RT64 {
-         }
-     }
-     */
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_game_frame.h b/src/hle/rt64_game_frame.h
-index 00a72f6..13f7f2f 100644
+index 00a72f6..1f70749 100644
 --- a/src/hle/rt64_game_frame.h
 +++ b/src/hle/rt64_game_frame.h
 @@ -13,6 +13,7 @@
@@ -1458,7 +1168,7 @@ index 00a72f6..13f7f2f 100644
  
      struct GameIndices {
          struct FramebufferPair {
-@@ -121,16 +122,22 @@ namespace RT64 {
+@@ -121,12 +122,18 @@ namespace RT64 {
          std::vector<GameScene> orthographicScenes;
          std::vector<uint32_t> workloads;
          bool matched = false;
@@ -1478,12 +1188,6 @@ index 00a72f6..13f7f2f 100644
          void matchTransform(Workload &curWorkload, const Workload &prevWorkload, GameFrameMap::WorkloadMap &curWorkloadMap, const GameFrameMap::WorkloadMap *prevWorkloadMap, uint32_t curTransformIndex, uint32_t prevTransformIndex, ModifiedBuffers &modifiedBuffers);
          void buildCallHashMap(uint32_t sceneProjIndex, const Workload &workload, const Projection &proj, std::multimap<uint64_t, GameCallMap> &hashMap) const;
          void buildTransformIdMap(const Workload &workload, std::multimap<uint32_t, uint32_t> &idMap, std::vector<uint32_t> &ignoredIdVector) const;
-         uint64_t hashFromCall(const GameCall &call, uint32_t matrixIdHash) const;
-         bool isDebuggerCameraEnabled(const WorkloadQueue &workloadQueue);
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_interpreter.cpp b/src/hle/rt64_interpreter.cpp
 index dccaa87..219302e 100644
 --- a/src/hle/rt64_interpreter.cpp
@@ -1508,7 +1212,7 @@ index dccaa87..219302e 100644
  
          state->dlCpuProfiler.start();
 diff --git a/src/hle/rt64_present.h b/src/hle/rt64_present.h
-index e1889e5..ba77293 100644
+index e1889e5..092debd 100644
 --- a/src/hle/rt64_present.h
 +++ b/src/hle/rt64_present.h
 @@ -8,6 +8,8 @@
@@ -1528,14 +1232,13 @@ index e1889e5..ba77293 100644
 +        RR64FramePacing::SceneSnapshot presentationScene;
 +        RR64FramePacing::AuthoredTargetStamp authoredTarget;
      };
--};
+ };
 \ No newline at end of file
-+};
 diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
-index 3227ab1..05b4a7e 100644
+index 3227ab1..631f109 100644
 --- a/src/hle/rt64_present_queue.cpp
 +++ b/src/hle/rt64_present_queue.cpp
-@@ -4,11 +4,51 @@
+@@ -4,11 +4,50 @@
  
  #include "rt64_present_queue.h"
  
@@ -1545,7 +1248,6 @@ index 3227ab1..05b4a7e 100644
  #include "common/rt64_thread.h"
  #include "rhi/rt64_render_hooks.h"
  
-+#include "rt64_rsp.h"
 +#include "rt64_rr64_frame_pacing.h"
 +#include "rt64_rr64_pipeline_diagnostics.h"
  #include "rt64_workload_queue.h"
@@ -1587,7 +1289,7 @@ index 3227ab1..05b4a7e 100644
  namespace RT64 {
      // PresentQueue
  
-@@ -33,21 +73,22 @@ namespace RT64 {
+@@ -33,21 +72,22 @@ namespace RT64 {
          writeCursor = 0;
          barrierCursor = 0;
          presentId = 0;
@@ -1618,7 +1320,7 @@ index 3227ab1..05b4a7e 100644
              writeCursor = nextWriteCursor;
          }
  
-@@ -93,6 +134,8 @@ namespace RT64 {
+@@ -93,6 +133,8 @@ namespace RT64 {
      }
  
      void PresentQueue::threadPresent(const Present &present, bool &swapChainValid) {
@@ -1627,7 +1329,7 @@ index 3227ab1..05b4a7e 100644
          FramebufferManager &fbManager = ext.sharedResources->framebufferManager;
          RenderTargetManager &targetManager = ext.sharedResources->renderTargetManager;
          const bool usingMSAA = (targetManager.multisampling.sampleCount > 1);
-@@ -101,6 +144,7 @@ namespace RT64 {
+@@ -101,6 +143,7 @@ namespace RT64 {
          bool removeBlackBorders;
          UserConfiguration::RefreshRate refreshRate;
          UserConfiguration::Filtering filtering;
@@ -1635,7 +1337,7 @@ index 3227ab1..05b4a7e 100644
          uint32_t viOriginalRate;
          uint32_t targetRate;
          {
-@@ -108,14 +152,23 @@ namespace RT64 {
+@@ -108,14 +151,22 @@ namespace RT64 {
              resolutionScale = ext.sharedResources->resolutionScale;
              presentationMode = ext.sharedResources->enhancementConfig.presentation.mode;
              removeBlackBorders = ext.sharedResources->enhancementConfig.presentation.removeBlackBorders;
@@ -1652,7 +1354,6 @@ index 3227ab1..05b4a7e 100644
          }
  
          RenderTarget *colorTarget = nullptr;
-+        RenderTarget *horizonDepthSource = nullptr;
          int32_t framesToPresent = 1;
 +        bool useInterpolatedFrames = false;
 +        const bool retainedRacePath = stablePresentation && present.presentationScene.raceActive;
@@ -1660,7 +1361,7 @@ index 3227ab1..05b4a7e 100644
          bool lockedWorkloadMutex = false;
          InterpolatedFrameCounters &frameCounters = ext.sharedResources->interpolatedFrames[ext.sharedResources->interpolatedFramesIndex];
  
-@@ -186,17 +239,114 @@ namespace RT64 {
+@@ -186,17 +237,100 @@ namespace RT64 {
                      }
                  }
  
@@ -1754,20 +1455,6 @@ index 3227ab1..05b4a7e 100644
 +
                  RenderTargetKey colorTargetKey(presentFb->addressStart, presentFb->width, presentFb->siz, Framebuffer::Type::Color);
                  colorTarget = &targetManager.get(colorTargetKey, true);
-+                {
-+                    std::scoped_lock<std::mutex> depthLock(
-+                        ext.sharedResources->presentDepthTargetMutex);
-+                    const auto depthIt = ext.sharedResources->presentDepthTargetKeys.find(
-+                        colorTargetKey.hash());
-+                    if (depthIt != ext.sharedResources->presentDepthTargetKeys.end()) {
-+                        RenderTarget &candidateDepth = targetManager.get(depthIt->second, true);
-+                        if (!candidateDepth.isEmpty() &&
-+                            candidateDepth.type == Framebuffer::Type::Depth)
-+                        {
-+                            horizonDepthSource = &candidateDepth;
-+                        }
-+                    }
-+                }
                  if (!colorTarget->isEmpty()) {
 +                    if (stablePresentation && present.presentationScene.raceActive &&
 +                        !present.debuggerFramebuffer.view) {
@@ -1778,7 +1465,7 @@ index 3227ab1..05b4a7e 100644
                      // If a depth framebuffer is about to be shown, convert it to color.
                      if (presentFb->isLastWriteDifferent(Framebuffer::Type::Color)) {
                          RenderTargetKey otherColorTargetKey(presentFb->addressStart, presentFb->width, presentFb->siz, presentFb->lastWriteType);
-@@ -256,6 +406,16 @@ namespace RT64 {
+@@ -256,6 +390,16 @@ namespace RT64 {
              }
          }
  
@@ -1795,7 +1482,7 @@ index 3227ab1..05b4a7e 100644
          // Create the framebuffers if necessary.
          if (swapChainFramebuffers.empty()) {
              uint32_t textureCount = ext.swapChain->getTextureCount();
-@@ -266,9 +426,15 @@ namespace RT64 {
+@@ -266,9 +410,15 @@ namespace RT64 {
              }
          }
          
@@ -1812,7 +1499,7 @@ index 3227ab1..05b4a7e 100644
                  // Stall until the interpolated color target is available.
                  const uint32_t targetIndex = usingMSAA ? i : (i - 1);
                  std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
-@@ -276,24 +442,35 @@ namespace RT64 {
+@@ -276,24 +426,35 @@ namespace RT64 {
                      return (frameCounters.available > targetIndex) || ((frameCounters.available == targetIndex) && frameCounters.skipped);
                  });
  
@@ -1858,7 +1545,7 @@ index 3227ab1..05b4a7e 100644
                  frameCountersNextPresented = frameCounters.count;
              }
  
-@@ -310,6 +487,38 @@ namespace RT64 {
+@@ -310,6 +471,38 @@ namespace RT64 {
                  RenderCommandList *commandList = ext.presentGraphicsWorker->commandList.get();
                  commandList->begin();
                  commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(swapChainTexture, RenderTextureLayout::COLOR_WRITE));
@@ -1897,69 +1584,24 @@ index 3227ab1..05b4a7e 100644
                  
                  VIRenderer::RenderParams renderParams;
                  if (colorTarget != nullptr) {
-@@ -323,6 +532,13 @@ namespace RT64 {
+@@ -323,7 +516,7 @@ namespace RT64 {
                      renderParams.filtering = filtering;
                      renderParams.vi = &present.screenVI;
                      renderParams.removeBlackBorders = removeBlackBorders;
+-
 +                    renderParams.stretchToWindow = stretchToWindow;
-+                    // The replacement effect runs through Road Rash's original
-+                    // per-vertex fog path. Disable the experimental screen blur,
-+                    // which could affect foreground and HUD pixels.
-+                    renderParams.horizonHazeEnabled = false;
-+                    renderParams.horizonFogMul = 0.0f;
-+                    renderParams.horizonFogOffset = 0.0f;
- 
                      const bool useDownsampling = (colorTarget->downsampleMultiplier > 1);
                      if (useDownsampling) {
-@@ -338,6 +554,33 @@ namespace RT64 {
+                         colorTarget->downsampleTarget(ext.presentGraphicsWorker, ext.shaderLibrary);
+@@ -338,6 +531,7 @@ namespace RT64 {
                          renderParams.textureWidth = colorTarget->width;
                          renderParams.textureHeight = colorTarget->height;
                      }
 +
-+                    if (renderParams.horizonHazeEnabled) {
-+                        if (horizonDepthColorTarget == nullptr ||
-+                            horizonDepthColorTarget->usesHDR != targetManager.usesHDR)
-+                        {
-+                            horizonDepthColorTarget = std::make_unique<RenderTarget>(
-+                                0,
-+                                Framebuffer::Type::Color,
-+                                RenderMultisampling(),
-+                                targetManager.usesHDR);
-+                        }
-+
-+                        horizonDepthColorTarget->resize(
-+                            ext.presentGraphicsWorker,
-+                            horizonDepthSource->width,
-+                            horizonDepthSource->height);
-+                        horizonDepthColorTarget->copyFromTarget(
-+                            ext.presentGraphicsWorker,
-+                            horizonDepthSource,
-+                            0,
-+                            0,
-+                            horizonDepthSource->width,
-+                            horizonDepthSource->height,
-+                            ext.shaderLibrary);
-+                        renderParams.depthMaskTexture =
-+                            horizonDepthColorTarget->getResolvedTexture();
-+                    }
                  }
                  
                  commandList->setFramebuffer(swapChainFramebuffer);
-@@ -345,6 +588,13 @@ namespace RT64 {
- 
-                 if (renderParams.texture != nullptr) {
-                     commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(renderParams.texture, RenderTextureLayout::SHADER_READ));
-+                    if (renderParams.depthMaskTexture != nullptr) {
-+                        commandList->barriers(
-+                            RenderBarrierStage::GRAPHICS,
-+                            RenderTextureBarrier(
-+                                renderParams.depthMaskTexture,
-+                                RenderTextureLayout::SHADER_READ));
-+                    }
-                     viRenderer->render(renderParams);
-                 }
- 
-@@ -389,18 +639,99 @@ namespace RT64 {
+@@ -389,18 +583,99 @@ namespace RT64 {
              }
  
              if (presentFrame && swapChainValid) {
@@ -2062,7 +1704,7 @@ index 3227ab1..05b4a7e 100644
                  presentProfiler.logAndRestart();
              }
          }
-@@ -426,12 +757,19 @@ namespace RT64 {
+@@ -426,12 +701,19 @@ namespace RT64 {
      }
      
      void PresentQueue::threadAdvanceBarrier() {
@@ -2084,7 +1726,7 @@ index 3227ab1..05b4a7e 100644
  
          // Create the semaphore the acquire method will use.
          acquiredSemaphore = ext.device->createCommandSemaphore();
-@@ -467,6 +805,7 @@ namespace RT64 {
+@@ -467,6 +749,7 @@ namespace RT64 {
                  std::unique_lock<std::mutex> threadLock(threadMutex);
                  const bool needsResize = ext.swapChain->needsResize() || !swapChainValid;
                  if (needsResize) {
@@ -2092,7 +1734,7 @@ index 3227ab1..05b4a7e 100644
                      ext.presentGraphicsWorker->commandList->begin();
                      ext.presentGraphicsWorker->commandList->end();
                      ext.presentGraphicsWorker->execute();
-@@ -504,13 +843,22 @@ namespace RT64 {
+@@ -504,13 +787,22 @@ namespace RT64 {
                  skipPresent = skipPresent || ext.swapChain->isEmpty();
  
                  Present &present = presents[processCursor];
@@ -2116,7 +1758,7 @@ index 3227ab1..05b4a7e 100644
                      notifyPresentId(present);
                  }
 diff --git a/src/hle/rt64_present_queue.h b/src/hle/rt64_present_queue.h
-index e08b02c..1746ba8 100644
+index e08b02c..55af402 100644
 --- a/src/hle/rt64_present_queue.h
 +++ b/src/hle/rt64_present_queue.h
 @@ -10,6 +10,7 @@
@@ -2127,11 +1769,10 @@ index e08b02c..1746ba8 100644
  #include "rt64_shared_queue_resources.h"
  
  #define PRESENT_QUEUE_SIZE 4
-@@ -52,9 +53,13 @@ namespace RT64 {
+@@ -52,9 +53,12 @@ namespace RT64 {
          std::unique_ptr<RenderCommandSemaphore> acquiredSemaphore;
          std::vector<std::unique_ptr<RenderCommandSemaphore>> drawSemaphores;
          std::unique_ptr<VIRenderer> viRenderer;
-+        std::unique_ptr<RenderTarget> horizonDepthColorTarget;
 +        std::unique_ptr<RenderTarget> repeatedColorTarget;
          std::unique_ptr<Inspector> inspector;
          ProfilingTimer presentProfiler = ProfilingTimer(120);
@@ -2141,13 +1782,6 @@ index e08b02c..1746ba8 100644
          VIHistory viHistory;
          bool presentWaitEnabled = false;
  
-@@ -73,4 +78,4 @@ namespace RT64 {
-         void threadAdvanceBarrier();
-         void threadLoop();
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_rdp.cpp b/src/hle/rt64_rdp.cpp
 index a10c11a..316ce46 100644
 --- a/src/hle/rt64_rdp.cpp
@@ -2279,7 +1913,7 @@ index a10c11a..316ce46 100644
          state->updateDrawStatusAttribute(DrawAttribute::PrimDepth);
      }
 diff --git a/src/hle/rt64_rdp_tmem.cpp b/src/hle/rt64_rdp_tmem.cpp
-index 6051f4e..555c010 100644
+index 6051f4e..b63ffb4 100644
 --- a/src/hle/rt64_rdp_tmem.cpp
 +++ b/src/hle/rt64_rdp_tmem.cpp
 @@ -51,7 +51,9 @@ namespace RT64 {
@@ -2293,15 +1927,8 @@ index 6051f4e..555c010 100644
          if (hashSet.find(hash) == hashSet.end()) {
              hashSet.insert(hash);
              textureCache->queueGPUUploadTMEM(hash, creationFrame, TMEM, RDP_TMEM_BYTES, width, height, tlut, loadTile, true);
-@@ -194,4 +196,4 @@ namespace RT64 {
-             hashSet.erase(hash);
-         }
-     }
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_rdp_tmem.h b/src/hle/rt64_rdp_tmem.h
-index 3708220..a067cf7 100644
+index 3708220..381d3bd 100644
 --- a/src/hle/rt64_rdp_tmem.h
 +++ b/src/hle/rt64_rdp_tmem.h
 @@ -8,11 +8,15 @@
@@ -2320,20 +1947,15 @@ index 3708220..a067cf7 100644
          std::set<uint64_t> hashSet;
          std::set<uint64_t> dumpedSet;
  
-@@ -22,4 +26,4 @@ namespace RT64 {
-         void dumpTexture(uint64_t hash, State *state, const LoadTile &loadTile, uint16_t width, uint16_t height, uint32_t tlut);
-         void removeHashes(const std::vector<uint64_t> &hashes);
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_rsp.cpp b/src/hle/rt64_rsp.cpp
-index ee2030b..8bb4cf2 100644
+index ee2030b..b797714 100644
 --- a/src/hle/rt64_rsp.cpp
 +++ b/src/hle/rt64_rsp.cpp
-@@ -4,7 +4,9 @@
+@@ -3,8 +3,11 @@
+ //
  
  #include "rt64_rsp.h"
++#include "rt64_rr64_pipeline_diagnostics.h"
  
 +#include <atomic>
  #include <cassert>
@@ -2341,7 +1963,7 @@ index ee2030b..8bb4cf2 100644
  
  #include "../include/rt64_extended_gbi.h"
  #include "common/rt64_common.h"
-@@ -18,6 +20,27 @@
+@@ -18,6 +21,27 @@
  //#define LOG_SPECIAL_MATRIX_OPERATIONS
  
  namespace RT64 {
@@ -2369,7 +1991,15 @@ index ee2030b..8bb4cf2 100644
      // RSP
  
      constexpr float DepthRange = 1024.0f;
-@@ -622,7 +645,12 @@ namespace RT64 {
+@@ -503,6 +527,7 @@ namespace RT64 {
+ 
+     template<bool addEmptyVelocity, uint32_t vertexSize>
+     void RSP::setVertexCommon(uint32_t rdramAddress, uint32_t dstIndex, uint32_t dstMax) {
++        RR64PipelineDiagnostics::Scope diagnosticScope(RR64PipelineDiagnostics::Stage::RspVertices);
+         const int workloadCursor = state->ext.workloadQueue->writeCursor;
+         Workload &workload = state->ext.workloadQueue->workloads[workloadCursor];
+ 
+@@ -622,7 +647,12 @@ namespace RT64 {
              curLightCount = 0;
          }
  
@@ -2383,7 +2013,7 @@ index ee2030b..8bb4cf2 100644
          if (usesFog) {
              if (fogChanged) {
                  auto &rspFogVector = workload.drawData.rspFog;
-@@ -676,42 +704,71 @@ namespace RT64 {
+@@ -676,42 +706,71 @@ namespace RT64 {
          auto &posScreen = workload.drawData.posScreen;
          const auto &mvp = modelViewProjMatrix;
          const uint32_t globalIndex = workload.drawData.vertexCount();
@@ -2481,7 +2111,7 @@ index ee2030b..8bb4cf2 100644
              floatIndex += 3;
          }
  
-@@ -719,8 +776,8 @@ namespace RT64 {
+@@ -719,8 +778,8 @@ namespace RT64 {
              const float TextureSc = static_cast<float>(textureState.sc);
              const float TextureTc = static_cast<float>(textureState.tc);
              for (uint32_t i = dstIndex; i < dstMax; i++) {
@@ -2492,7 +2122,7 @@ index ee2030b..8bb4cf2 100644
              }
          }
          else {
-@@ -728,8 +785,8 @@ namespace RT64 {
+@@ -728,8 +787,8 @@ namespace RT64 {
              const int32_t TextureTc = (int32_t)(textureState.tc);
              const double Divisor = 65536.0f * 32.0f;
              for (uint32_t i = dstIndex; i < dstMax; i++) {
@@ -2503,7 +2133,7 @@ index ee2030b..8bb4cf2 100644
              }
          }
      }
-@@ -988,8 +1045,24 @@ namespace RT64 {
+@@ -988,8 +1047,24 @@ namespace RT64 {
      }
  
      void RSP::setFog(int16_t mul, int16_t offset) {
@@ -2530,11 +2160,20 @@ index ee2030b..8bb4cf2 100644
          fogChanged = true;
      }
      
-@@ -1166,6 +1239,121 @@ namespace RT64 {
+@@ -1050,6 +1125,7 @@ namespace RT64 {
+     }
+ 
+     void RSP::drawIndexedTri(uint32_t a, uint32_t b, uint32_t c, bool rawGlobalIndices) {
++        RR64PipelineDiagnostics::Scope diagnosticScope(RR64PipelineDiagnostics::Stage::RspTriangles);
+         // Copy mode is not supported when drawing regular tris and crashes the hardware.
+         const uint32_t cycleType = state->rdp->otherMode.cycleType();
+         assert(cycleType != G_CYC_COPY);
+@@ -1166,6 +1242,123 @@ namespace RT64 {
          drawIndexedTri(a, b, c, false);
      }
  
 +    void RSP::drawIndexedTriBatch(const uint32_t *triangleWords, uint32_t triangleCount) {
++        RR64PipelineDiagnostics::Scope diagnosticScope(RR64PipelineDiagnostics::Stage::RspTriangleBatch);
 +        if (triangleCount == 0) { return; }
 +        const auto vertex = [](uint32_t word, unsigned shift) { return (word >> shift) & 0x7fu; };
 +        const uint32_t first = triangleWords[0];
@@ -2553,8 +2192,9 @@ index ee2030b..8bb4cf2 100644
 +        const bool usesCulling = geometryMode & cullBothMask;
 +        const bool writesDepth = otherModeStack[otherModeStackSize - 1].zUpd();
 +        const FixedRect &scissor = state->rdp->scissorRectStack[state->rdp->scissorStackSize - 1];
-+        std::bitset<128> visited, screenReady;
-+        for (unsigned shift : {17u, 9u, 1u}) { visited.set(vertex(first, shift)); }
++        // Byte flags avoid variable-width bit shifts on every triangle corner.
++        std::array<bool,128> visited{}, screenReady{};
++        for (unsigned shift : {17u, 9u, 1u}) { visited[vertex(first, shift)] = true; }
 +        struct ScreenBounds { int32_t left, top, right, bottom; };
 +        std::array<ScreenBounds, 128> screenBounds;
 +        // No command can observe intermediate extrema within this packet.
@@ -2582,7 +2222,7 @@ index ee2030b..8bb4cf2 100644
 +                // Repeated visits cannot change integer UV extrema or matrix
 +                // bounds. Track first visits in the same order as scalar draws.
 +                if (!visited[l]) {
-+                    visited.set(l);
++                    visited[l] = true;
 +                    if (drawCall.tileCount) {
 +                        const float u = data.tcFloats[g * 2], v = data.tcFloats[g * 2 + 1];
 +                        texcoordBounds.left = std::min(texcoordBounds.left, int(u));
@@ -2610,7 +2250,7 @@ index ee2030b..8bb4cf2 100644
 +                        const hlslpp::float3 &p = data.posScreen[global[i]];
 +                        screenBounds[l] = {int32_t(p[0] * 4.0f), int32_t(p[1] * 4.0f),
 +                            int32_t(hlslpp::ceil(p.x).x * 4.0f), int32_t(hlslpp::ceil(p.y).x * 4.0f)};
-+                        screenReady.set(l);
++                        screenReady[l] = true;
 +                    }
 +                    const auto &b = screenBounds[l];
 +                    rect.left = std::min(rect.left, b.left); rect.top = std::min(rect.top, b.top);
@@ -2652,13 +2292,13 @@ index ee2030b..8bb4cf2 100644
      void RSP::setViewportAlign(uint16_t ori, int16_t offx, int16_t offy) {
          extended.global.viewportOrigin = ori;
          extended.global.viewportOffsetX = offx;
-@@ -1310,3 +1498,4 @@ namespace RT64 {
+@@ -1310,3 +1503,4 @@ namespace RT64 {
          }
      }
  };
 +
 diff --git a/src/hle/rt64_rsp.h b/src/hle/rt64_rsp.h
-index 61bb3b1..4d67586 100644
+index 61bb3b1..a240a1f 100644
 --- a/src/hle/rt64_rsp.h
 +++ b/src/hle/rt64_rsp.h
 @@ -32,6 +32,17 @@ namespace RT64 {
@@ -2687,27 +2327,19 @@ index 61bb3b1..4d67586 100644
          void setViewportAlign(uint16_t ori, int16_t offx, int16_t offy);
          void vertexTestZ(uint8_t vtxIndex);
          void endVertexTestZ();
-@@ -304,4 +316,4 @@ namespace RT64 {
-         void setGBI(GBI *gbi);
-         void setNoN(bool NoN);
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_shared_queue_resources.h b/src/hle/rt64_shared_queue_resources.h
-index 8858dac..f5cb51d 100644
+index 8858dac..902bc58 100644
 --- a/src/hle/rt64_shared_queue_resources.h
 +++ b/src/hle/rt64_shared_queue_resources.h
-@@ -5,6 +5,8 @@
+@@ -5,6 +5,7 @@
  #pragma once
  
  #include <mutex>
 +#include <atomic>
-+#include <unordered_map>
  
  #include "common/rt64_common.h"
  #include "common/rt64_emulator_configuration.h"
-@@ -12,6 +14,9 @@
+@@ -12,6 +13,9 @@
  #include "render/rt64_render_target_manager.h"
  
  #include "rt64_framebuffer_manager.h"
@@ -2717,7 +2349,7 @@ index 8858dac..f5cb51d 100644
  
  #if RT_ENABLED
  #   include "render/rt64_raytracing_resources.h"
-@@ -19,6 +24,7 @@
+@@ -19,6 +23,7 @@
  
  namespace RT64 {
      struct InterpolatedFrameCounters {
@@ -2725,20 +2357,7 @@ index 8858dac..f5cb51d 100644
          uint32_t presented = 0;
          uint32_t available = 0;
          uint32_t count = 0;
-@@ -47,6 +53,12 @@ namespace RT64 {
-         RenderTargetManager renderTargetManager;
-         std::mutex managerMutex;
- 
-+        // Associates each presented color framebuffer with the real depth
-+        // target used by its latest 3D pass. The final VI pass uses this only
-+        // for presentation effects; it never changes the game's depth state.
-+        std::unordered_map<uint64_t, RenderTargetKey> presentDepthTargetKeys;
-+        std::mutex presentDepthTargetMutex;
-+
-         // Workload to present state.
-         uint32_t viOriginalRate = 0;
-         std::vector<uint32_t> colorImageAddressVector;
-@@ -57,6 +69,50 @@ namespace RT64 {
+@@ -57,6 +62,50 @@ namespace RT64 {
          std::mutex interpolatedMutex;
          std::condition_variable interpolatedCondition;
          std::mutex workloadMutex;
@@ -2789,7 +2408,7 @@ index 8858dac..f5cb51d 100644
  
          void setSwapChainSize(uint32_t width, uint32_t height) {
              std::scoped_lock<std::mutex> configurationLock(configurationMutex);
-@@ -91,10 +147,17 @@ namespace RT64 {
+@@ -91,10 +140,13 @@ namespace RT64 {
          }
  
          void updateMultisampling(const RenderMultisampling &multisampling) {
@@ -2798,24 +2417,13 @@ index 8858dac..f5cb51d 100644
              interpolatedFrames[0].skipped = true;
              interpolatedFrames[1].skipped = true;
              renderTargetManager.destroyAll();
-+            {
-+                std::scoped_lock<std::mutex> depthLock(presentDepthTargetMutex);
-+                presentDepthTargetKeys.clear();
-+            }
              renderTargetManager.setMultisampling(multisampling);
 +            clearPresentedColorTargetHistory();
          }
  
  #   if RT_ENABLED
-@@ -107,4 +170,4 @@ namespace RT64 {
-         }
- #   endif
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
-index 2970e71..b8efc1a 100644
+index 2970e71..e1ae9d8 100644
 --- a/src/hle/rt64_state.cpp
 +++ b/src/hle/rt64_state.cpp
 @@ -3,9 +3,13 @@
@@ -2861,45 +2469,7 @@ index 2970e71..b8efc1a 100644
          displayListAddress = 0;
          displayListCounter = 0;
          rdramCheckPending = true;
-@@ -576,6 +595,37 @@ namespace RT64 {
-                 }
-             }
- 
-+            const bool hasPerspectiveProjection = std::any_of(
-+                fbPair.projections.begin(),
-+                fbPair.projections.end(),
-+                [](const Projection &projection) {
-+                    return projection.type == Projection::Type::Perspective;
-+                });
-+
-+            // Keep the presentation-depth association anchored to the main
-+            // 3D scene. Late HUD and overlay pairs can reuse the presented
-+            // color framebuffer with an empty or unrelated depth image; if
-+            // those pairs overwrite this association, a far-distance effect
-+            // sees a fragmented mask or no useful depth at all.
-+            if (depthFb != nullptr && fbPair.depthWrite &&
-+                hasPerspectiveProjection && ext.sharedQueueResources != nullptr)
-+            {
-+                const RenderTargetKey colorTargetKey(
-+                    colorFb->addressStart,
-+                    colorFb->width,
-+                    colorFb->siz,
-+                    Framebuffer::Type::Color);
-+                const RenderTargetKey depthTargetKey(
-+                    depthFb->addressStart,
-+                    depthFb->width,
-+                    depthFb->siz,
-+                    Framebuffer::Type::Depth);
-+                std::scoped_lock<std::mutex> depthLock(
-+                    ext.sharedQueueResources->presentDepthTargetMutex);
-+                ext.sharedQueueResources->presentDepthTargetKeys[
-+                    colorTargetKey.hash()] = depthTargetKey;
-+            }
-+
-             // Synchronization will be required unless direct reinterpretation is possible (which is not implemented yet).
-             if (colorImg.formatChanged || depthImg.formatChanged) {
-                 fbPair.syncRequired = true;
-@@ -642,23 +692,15 @@ namespace RT64 {
+@@ -642,23 +661,15 @@ namespace RT64 {
      }
  
      void State::fullSyncFramebufferPairTiles(Workload &workload, FramebufferPair &fbPair, uint32_t &loadOpCursor, uint32_t &rdpTileCursor) {
@@ -2926,7 +2496,7 @@ index 2970e71..b8efc1a 100644
          };
  
          auto uploadTile = [&](uint32_t rdpTileIndex, FramebufferPair &fbPair, const DrawCall &drawCall) {
-@@ -790,6 +832,12 @@ namespace RT64 {
+@@ -790,6 +801,12 @@ namespace RT64 {
      }
  
      void State::fullSync() {
@@ -2939,7 +2509,7 @@ index 2970e71..b8efc1a 100644
          flush();
          submitFramebufferPair(FramebufferPair::FlushReason::ProcessDisplayListsEnd);
  
-@@ -940,6 +988,7 @@ namespace RT64 {
+@@ -940,6 +957,7 @@ namespace RT64 {
          }
  
          // Fill out all the rendering data for the framebuffer pairs that will be uploaded.
@@ -2947,7 +2517,7 @@ index 2970e71..b8efc1a 100644
          const UserConfiguration::Upscale2D upscale2D = ext.userConfig->upscale2D;
          const bool scaleLOD = ext.enhancementConfig->textureLOD.scale;
          const bool usesHDR = ext.shaderLibrary->usesHDR;
-@@ -1121,6 +1170,8 @@ namespace RT64 {
+@@ -1121,6 +1139,8 @@ namespace RT64 {
          }
  
          // Ensure there's as many GPU tiles as call tiles available in the vector.
@@ -2956,7 +2526,7 @@ index 2970e71..b8efc1a 100644
          workload.drawData.gpuTiles.resize(workload.drawData.callTiles.size());
  
          // Start uploading the entire draw data for all the framebuffer pairs that were processed.
-@@ -1133,6 +1184,7 @@ namespace RT64 {
+@@ -1133,6 +1153,7 @@ namespace RT64 {
              { workload.drawData.viewProjTransforms.data(), workload.drawRanges.viewProjTransforms, sizeof(interop::float4x4), RenderBufferFlag::STORAGE, { }, &workload.drawBuffers.viewProjTransformsBuffer},
              { workload.drawData.worldTransforms.data(), workload.drawRanges.worldTransforms, sizeof(interop::float4x4), RenderBufferFlag::STORAGE, { }, &workload.drawBuffers.worldTransformsBuffer},
          });
@@ -2964,7 +2534,7 @@ index 2970e71..b8efc1a 100644
  
          if (renderToRDRAM) {
              // Run RSP processor.
-@@ -1469,9 +1521,13 @@ namespace RT64 {
+@@ -1469,9 +1490,13 @@ namespace RT64 {
                  }
  
                  ext.framebufferGraphicsWorker->commandList->end();
@@ -2978,7 +2548,7 @@ index 2970e71..b8efc1a 100644
  
                  pairCursor = framebufferPairCursor;
                  while (pairCursor < maxFramebufferPair) {
-@@ -1578,10 +1634,15 @@ namespace RT64 {
+@@ -1578,10 +1603,15 @@ namespace RT64 {
              ext.drawDataUploader->commandListAfterBarriers(ext.framebufferGraphicsWorker);
              ext.transformsUploader->commandListAfterBarriers(ext.framebufferGraphicsWorker);
              ext.framebufferGraphicsWorker->commandList->end();
@@ -2994,7 +2564,7 @@ index 2970e71..b8efc1a 100644
              ext.textureCache->waitForGPUUploads();
          }
  
-@@ -1611,13 +1672,55 @@ namespace RT64 {
+@@ -1611,13 +1641,56 @@ namespace RT64 {
          }
  #   endif
  
@@ -3026,7 +2596,8 @@ index 2970e71..b8efc1a 100644
 +                viHistory.strictLogicalRateFromFactors();
 +        }
 +
-+        if (coordinatedRace) {
++        // Observation hashes are optional; authored cadence above is not.
++        if (coordinatedRace && RR64PipelineDiagnostics::enabled()) {
 +            const auto &data = workload.drawData;
 +            const uint64_t viewHash = XXH3_64bits(data.viewTransforms.data(),
 +                data.viewTransforms.size() * sizeof(interop::float4x4));
@@ -3053,7 +2624,7 @@ index 2970e71..b8efc1a 100644
  
          if (viHistory.top().vi.visible()) {
              workload.viFbSize = viHistory.top().vi.fbSize();
-@@ -1775,8 +1878,10 @@ namespace RT64 {
+@@ -1775,8 +1848,10 @@ namespace RT64 {
          }
          
          // Advance the workload queue at the end of a full synchronization.
@@ -3064,7 +2635,7 @@ index 2970e71..b8efc1a 100644
  
          // Make sure the profiler starts after the workload is advanced to ignore any waiting time.
          dlCpuProfiler.reset();
-@@ -2065,11 +2170,12 @@ namespace RT64 {
+@@ -2065,11 +2140,12 @@ namespace RT64 {
              ext.sharedQueueResources->configurationMutex.lock();
              const hlslpp::float2 resolutionScale = ext.sharedQueueResources->resolutionScale;
              bool removeBlackBorders = ext.sharedQueueResources->enhancementConfig.presentation.removeBlackBorders;
@@ -3078,7 +2649,7 @@ index 2970e71..b8efc1a 100644
  
              // Convert the mouse coordinates to native coordinates.
              hlslpp::float2 screenCursorPos;
-@@ -2140,13 +2246,13 @@ namespace RT64 {
+@@ -2140,13 +2216,13 @@ namespace RT64 {
  
                      genConfigChanged = ImGui::Combo("Filtering", reinterpret_cast<int *>(&userConfig.filtering), "Nearest\0Linear\0Pixel Scaling\0") || genConfigChanged;
  
@@ -3094,7 +2665,7 @@ index 2970e71..b8efc1a 100644
                      const bool manualExtAspectRatio = (userConfig.extAspectRatio == UserConfiguration::AspectRatio::Manual);
                      if (manualExtAspectRatio) {
                          genConfigChanged = ImGui::InputDouble("Extended GBI Aspect Ratio", &userConfig.extAspectTarget) || genConfigChanged;
-@@ -2654,8 +2760,74 @@ namespace RT64 {
+@@ -2654,8 +2730,74 @@ namespace RT64 {
          }
      }
  
@@ -3169,7 +2740,7 @@ index 2970e71..b8efc1a 100644
          workload.presentId = presentId;
          workload.debuggerCamera = debuggerInspector.camera;
          workload.debuggerRenderer = debuggerInspector.renderer;
-@@ -2665,6 +2837,30 @@ namespace RT64 {
+@@ -2665,6 +2807,30 @@ namespace RT64 {
      void State::advancePresent(Present &present, bool paused) {
          present.presentId = ++presentId;
          present.workloadId = workloadId;
@@ -3200,16 +2771,15 @@ index 2970e71..b8efc1a 100644
          present.paused = paused;
          present.debuggerFramebuffer.address = debuggerInspector.renderer.framebufferAddress;
          present.debuggerFramebuffer.view = (debuggerInspector.renderer.framebufferIndex >= 0);
-@@ -2801,4 +2997,5 @@ namespace RT64 {
+@@ -2801,4 +2967,4 @@ namespace RT64 {
              break;
          }
      }
 -};
 \ No newline at end of file
 +};
-+
 diff --git a/src/hle/rt64_state.h b/src/hle/rt64_state.h
-index 7a8c13b..e414863 100644
+index 7a8c13b..2979b49 100644
 --- a/src/hle/rt64_state.h
 +++ b/src/hle/rt64_state.h
 @@ -118,6 +118,10 @@ namespace RT64 {
@@ -3231,18 +2801,11 @@ index 7a8c13b..e414863 100644
          void advancePresent(Present &present, bool paused);
          void dpInterrupt();
          void spInterrupt();
-@@ -174,4 +179,4 @@ namespace RT64 {
-         void clearExtended();
-         void updateRenderFlagSampleCount();
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_vi.cpp b/src/hle/rt64_vi.cpp
-index a870166..235b9e1 100644
+index a870166..e94fdb6 100644
 --- a/src/hle/rt64_vi.cpp
 +++ b/src/hle/rt64_vi.cpp
-@@ -161,17 +161,24 @@ namespace RT64 {
+@@ -161,14 +161,21 @@ namespace RT64 {
          factors[factorCursor] = factor;
      }
  
@@ -3271,13 +2834,8 @@ index a870166..235b9e1 100644
      }
  
      const VIHistory::Present &VIHistory::top() const {
-         return history[historyCursor];
-     }
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_vi.h b/src/hle/rt64_vi.h
-index 5b70e01..a095f37 100644
+index 5b70e01..3b188ec 100644
 --- a/src/hle/rt64_vi.h
 +++ b/src/hle/rt64_vi.h
 @@ -10,6 +10,8 @@
@@ -3298,11 +2856,10 @@ index 5b70e01..a095f37 100644
 +        uint32_t sourceFactor() const;
          const Present &top() const;
      };
--};
+ };
 \ No newline at end of file
-+};
 diff --git a/src/hle/rt64_workload.cpp b/src/hle/rt64_workload.cpp
-index b4c85f5..a7031a6 100644
+index b4c85f5..4ee7eba 100644
 --- a/src/hle/rt64_workload.cpp
 +++ b/src/hle/rt64_workload.cpp
 @@ -19,6 +19,11 @@ namespace RT64 {
@@ -3317,15 +2874,8 @@ index b4c85f5..a7031a6 100644
          workloadId = 0;
          extended.testZIndexCount = 0;
          extended.ditherNoiseStrength = 1.0f;
-@@ -323,4 +328,4 @@ namespace RT64 {
-             return 0;
-         }
-     }
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_workload.h b/src/hle/rt64_workload.h
-index 8ea27d5..2db5294 100644
+index 8ea27d5..8c5a7e0 100644
 --- a/src/hle/rt64_workload.h
 +++ b/src/hle/rt64_workload.h
 @@ -21,6 +21,7 @@
@@ -3348,15 +2898,8 @@ index 8ea27d5..2db5294 100644
          hlslpp::uint2 viFbSize = {};
          DebuggerRenderer debuggerRenderer;
          DebuggerCamera debuggerCamera;
-@@ -254,4 +260,4 @@ namespace RT64 {
-         bool addFramebufferPair(uint32_t colorAddress, uint8_t colorFmt, uint8_t colorSiz, uint16_t colorWidth, uint32_t depthAddress);
-         int currentFramebufferPairIndex() const;
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
-index 5a331aa..1f78a0f 100644
+index 5a331aa..31155fc 100644
 --- a/src/hle/rt64_workload_queue.cpp
 +++ b/src/hle/rt64_workload_queue.cpp
 @@ -5,8 +5,25 @@
@@ -3614,7 +3157,7 @@ index 5a331aa..1f78a0f 100644
 +        // Sample on the owning renderer thread while its existing lock is held.
 +        // The texture cache has a separate existing lock. No resource is retained.
 +        static thread_local uint32_t resourceSample = 0;
-+        if ((++resourceSample % 60u) == 0u) {
++        if (RR64PipelineDiagnostics::enabled() && (++resourceSample % 60u) == 0u) {
 +            uint64_t targetBytes = 0;
 +            for (const auto& entry : targetManager.targetMap) {
 +                const auto& target = entry.second;
@@ -4132,10 +3675,10 @@ index 5a331aa..1f78a0f 100644
 \ No newline at end of file
 +};
 diff --git a/src/hle/rt64_workload_queue.h b/src/hle/rt64_workload_queue.h
-index bde2f03..6b86ae6 100644
+index bde2f03..e2d23ac 100644
 --- a/src/hle/rt64_workload_queue.h
 +++ b/src/hle/rt64_workload_queue.h
-@@ -113,14 +113,15 @@ namespace RT64 {
+@@ -113,10 +113,11 @@ namespace RT64 {
          void updateMultisampling();
          void threadConfigurationUpdate(hlslpp::uint2 viFbSize, WorkloadConfiguration &workloadConfig);
          void threadConfigurationValidate();
@@ -4149,32 +3692,8 @@ index bde2f03..6b86ae6 100644
  
          void threadAdvanceBarrier();
          void threadAdvanceWorkloadId(uint64_t newWorkloadId);
-         void renderThreadLoop();
-         void idleThreadLoop();
-     };
--};
-\ No newline at end of file
-+};
-diff --git a/src/render/rt64_descriptor_sets.h b/src/render/rt64_descriptor_sets.h
-index 69a82ac..3b041ca 100644
---- a/src/render/rt64_descriptor_sets.h
-+++ b/src/render/rt64_descriptor_sets.h
-@@ -662,11 +662,13 @@ namespace RT64 {
-     struct VideoInterfaceDescriptorSet : RenderDescriptorSetBase {
-         uint32_t gInput;
-         uint32_t gSampler;
-+        uint32_t gDepthMask;
- 
-         VideoInterfaceDescriptorSet(const RenderSampler *sampler, RenderDevice *device = nullptr) {
-             builder.begin();
-             gInput = builder.addTexture(1);
-             gSampler = builder.addImmutableSampler(2, &sampler);
-+            gDepthMask = builder.addTexture(3);
-             builder.end();
- 
-             if (device != nullptr) {
 diff --git a/src/render/rt64_framebuffer_renderer.cpp b/src/render/rt64_framebuffer_renderer.cpp
-index 9fae0d4..0273e9c 100644
+index 9fae0d4..2135b1f 100644
 --- a/src/render/rt64_framebuffer_renderer.cpp
 +++ b/src/render/rt64_framebuffer_renderer.cpp
 @@ -4,6 +4,8 @@
@@ -4745,15 +4264,8 @@ index 9fae0d4..0273e9c 100644
      void FramebufferRenderer::endFramebuffers(RenderWorker *worker, const DrawBuffers *drawBuffers, const OutputBuffers *outputBuffers, bool rtEnabled) {
          bool shaderViewRtEnabled = false;
          std::vector<BufferUploader::Upload> shaderUploads = {
-@@ -1917,4 +2368,4 @@ namespace RT64 {
-         unsigned int im3dVertexCount;
-     };
- };
--*/
-\ No newline at end of file
-+*/
 diff --git a/src/render/rt64_framebuffer_renderer.h b/src/render/rt64_framebuffer_renderer.h
-index 3add9c3..2e16346 100644
+index 3add9c3..03e4fcc 100644
 --- a/src/render/rt64_framebuffer_renderer.h
 +++ b/src/render/rt64_framebuffer_renderer.h
 @@ -123,6 +123,8 @@ namespace RT64 {
@@ -4776,15 +4288,8 @@ index 3add9c3..2e16346 100644
          void endFramebuffers(RenderWorker *worker, const DrawBuffers *drawBuffers, const OutputBuffers *outputBuffers, bool rtEnabled);
          void recordSetup(RenderWorker *worker, std::vector<BufferUploader *> bufferUploaders, RSPProcessor *rspProcessor, VertexProcessor *vertexProcessor, const OutputBuffers *outputBuffers, bool rtEnabled);
          void recordFramebuffer(RenderWorker *worker, uint32_t framebufferIndex);
-@@ -179,4 +185,4 @@ namespace RT64 {
-         void setRaytracingConfig(const RaytracingConfiguration &rtConfig, bool resolutionChanged);
- #   endif
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/render/rt64_projection_processor.cpp b/src/render/rt64_projection_processor.cpp
-index e842dcc..b8f89d6 100644
+index e842dcc..cc2a440 100644
 --- a/src/render/rt64_projection_processor.cpp
 +++ b/src/render/rt64_projection_processor.cpp
 @@ -14,7 +14,7 @@ namespace RT64 {
@@ -4818,24 +4323,6 @@ index e842dcc..b8f89d6 100644
                      projMatrix = lerpMatrix(adjustedPrevProj, curProjTransform, p.curFrameWeight);
                      prevProjTransform = lerpMatrix(adjustedPrevProj, curProjTransform, p.prevFrameWeight);
                  }
-@@ -160,4 +173,4 @@ namespace RT64 {
- 
-         bufferUploader->submit(p.worker, uploads);
-     }
--};
-\ No newline at end of file
-+};
-diff --git a/src/render/rt64_projection_processor.h b/src/render/rt64_projection_processor.h
-index 5bc3a2a..6c4d83a 100644
---- a/src/render/rt64_projection_processor.h
-+++ b/src/render/rt64_projection_processor.h
-@@ -30,4 +30,4 @@ namespace RT64 {
-         void processScene(const ProcessParams &p, const GameScene &scene, size_t sceneIndex);
-         void upload(const ProcessParams &p);
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/render/rt64_texture_cache.cpp b/src/render/rt64_texture_cache.cpp
 index 0848f3e..0d4d198 100644
 --- a/src/render/rt64_texture_cache.cpp
@@ -4930,7 +4417,7 @@ index 0848f3e..0d4d198 100644
          textureMap.replacementMap.fileSystemStreamSets = std::move(fileSystemStreamSets);
          textureMap.replacementMap.fileSystemStreamResolvedPaths.resize(fileSystemCount);
 diff --git a/src/render/rt64_texture_cache.h b/src/render/rt64_texture_cache.h
-index 9131697..e127445 100644
+index 9131697..e153112 100644
 --- a/src/render/rt64_texture_cache.h
 +++ b/src/render/rt64_texture_cache.h
 @@ -83,6 +83,7 @@ namespace RT64 {
@@ -4941,15 +4428,8 @@ index 9131697..e127445 100644
          std::vector<uint32_t> fileSystemHashVersions;
          std::vector<std::unordered_set<std::string>> fileSystemStreamSets;
          std::vector<std::unordered_multimap<std::string, ReplacementResolvedPath>> fileSystemStreamResolvedPaths;
-@@ -265,4 +266,4 @@ namespace RT64 {
-         static bool setLowMipCache(RenderDevice *device, RenderCommandList *commandList, const uint8_t *bytes, size_t byteCount, std::unique_ptr<RenderBuffer> &dstUploadResource, std::unordered_map<std::string, LowMipCacheTexture> &dstTextureMap, uint64_t &totalMemory);
-         static Texture *loadTextureFromBytes(RenderDevice *device, RenderCommandList *commandList, const std::vector<uint8_t> &fileBytes, std::unique_ptr<RenderBuffer> &dstUploadResource, RenderPool *resourcePool = nullptr, std::mutex *uploadResourcePoolMutex = nullptr);
-     };
--};
-\ No newline at end of file
-+};
 diff --git a/src/render/rt64_transform_processor.cpp b/src/render/rt64_transform_processor.cpp
-index cd8004d..adb7415 100644
+index cd8004d..5c9ad2d 100644
 --- a/src/render/rt64_transform_processor.cpp
 +++ b/src/render/rt64_transform_processor.cpp
 @@ -24,6 +24,8 @@ namespace RT64 {
@@ -4977,28 +4457,11 @@ index cd8004d..adb7415 100644
                          invMatrix = hlslpp::inverse(curMatrix);
                          invTMatrix = hlslpp::transpose(invMatrix);
                          lerpWorldTransforms.emplace_back(curMatrix);
-@@ -89,4 +96,4 @@ namespace RT64 {
- 
-         bufferUploader->submit(p.worker, uploads);
-     }
--};
-\ No newline at end of file
-+};
 diff --git a/src/render/rt64_vi_renderer.cpp b/src/render/rt64_vi_renderer.cpp
-index b4ff4e9..d377264 100644
+index b4ff4e9..6921665 100644
 --- a/src/render/rt64_vi_renderer.cpp
 +++ b/src/render/rt64_vi_renderer.cpp
-@@ -8,6 +8,9 @@
- #include "shared/rt64_video_interface.h"
- 
- namespace RT64 {
-+    static_assert(sizeof(interop::VideoInterfaceCB) == 48,
-+        "Video-interface push constants must match the HLSL layout.");
-+
-     // VIRenderer
- 
-     VIRenderer::VIRenderer() { }
-@@ -23,7 +26,14 @@ namespace RT64 {
+@@ -23,7 +23,14 @@ namespace RT64 {
          return coordinate * relativeScale;
      }
  
@@ -5014,15 +4477,11 @@ index b4ff4e9..d377264 100644
          const hlslpp::float2 hdCenter = hdSize / 2;
          const hlslpp::float2 windowCenter = windowSize / 2;
          const hlslpp::float2 relativeCoordinate = { coordinate.x - hdCenter.x, coordinate.y - hdCenter.y };
-@@ -66,10 +76,14 @@ namespace RT64 {
+@@ -66,10 +73,9 @@ namespace RT64 {
          }
  
          descriptorSet->setTexture(descriptorSet->gInput, p.texture, RenderTextureLayout::SHADER_READ);
-+        descriptorSet->setTexture(
-+            descriptorSet->gDepthMask,
-+            (p.depthMaskTexture != nullptr) ? p.depthMaskTexture : p.texture,
-+            RenderTextureLayout::SHADER_READ);
- 
+-
          RenderViewport viewport;
          RenderRect scissor;
 -        getViewportAndScissor(p.swapChain, *p.vi, p.resolutionScale, p.downsamplingScale, p.removeBlackBorders, viewport, scissor);
@@ -5030,21 +4489,15 @@ index b4ff4e9..d377264 100644
          p.commandList->setViewports(viewport);
          p.commandList->setScissors(scissor);
  
-@@ -77,6 +91,13 @@ namespace RT64 {
+@@ -77,7 +83,6 @@ namespace RT64 {
          pushConstants.videoResolution = computeHDSize(hlslpp::float2(p.vi->fbSize()), p.resolutionScale, p.downsamplingScale);
          pushConstants.textureResolution = { float(p.textureWidth), float(p.textureHeight) };
          pushConstants.gamma = p.vi->gamma();
-+        pushConstants.horizonHazeEnabled = p.horizonHazeEnabled ? 1u : 0u;
-+        pushConstants.animationFrame = animationFrame++;
-+        pushConstants.horizonFogMul = p.horizonFogMul;
-+        pushConstants.horizonFogOffset = p.horizonFogOffset;
-+        pushConstants.padding0 = 0.0f;
-+        pushConstants.padding1 = 0.0f;
-+        pushConstants.padding2 = 0.0f;
- 
+-
          p.commandList->setPipeline(shader->pipeline.get());
          p.commandList->setGraphicsPipelineLayout(shader->pipelineLayout.get());
-@@ -86,7 +107,7 @@ namespace RT64 {
+         p.commandList->setGraphicsDescriptorSet(descriptorSet->get(), 0);
+@@ -86,7 +91,7 @@ namespace RT64 {
          p.commandList->drawInstanced(3, 1, 0, 0);
      }
  
@@ -5053,7 +4506,7 @@ index b4ff4e9..d377264 100644
          // We define three different coordinate spaces to work with to translate the VI parameters into the Window.
          //
          // VideoSD: This corresponds to the SD TV Scanline space, which is what the VI natively works on.
-@@ -111,15 +132,15 @@ namespace RT64 {
+@@ -111,13 +116,13 @@ namespace RT64 {
          // Scale all the rectangles to the space of the Window.
          hlslpp::float2 topLeftViewport = fromSDtoHD({ float(viViewRect.x), float(viViewRect.y) }, sdSize, hdSize);
          hlslpp::float2 bottomRightViewport = fromSDtoHD({ float(viViewRect.x + viViewRect.z), float(viViewRect.y + viViewRect.w) }, sdSize, hdSize);
@@ -5071,36 +4524,15 @@ index b4ff4e9..d377264 100644
  
          viewport = RenderViewport(topLeftViewport.x, topLeftViewport.y, bottomRightViewport.x - topLeftViewport.x, bottomRightViewport.y - topLeftViewport.y);
          scissor = RenderRect(lround(topLeftScissor.x), lround(topLeftScissor.y), lround(bottomRightScissor.x), lround(bottomRightScissor.y));
-     }
--};
-\ No newline at end of file
-+};
 diff --git a/src/render/rt64_vi_renderer.h b/src/render/rt64_vi_renderer.h
-index 8a3782a..0b3fabc 100644
+index 8a3782a..28d800a 100644
 --- a/src/render/rt64_vi_renderer.h
 +++ b/src/render/rt64_vi_renderer.h
-@@ -14,11 +14,13 @@ namespace RT64 {
-     struct VIRenderer {
-         std::unique_ptr<VideoInterfaceDescriptorSet> descriptorSet;
-         const RenderSampler *descriptorSetSampler = nullptr;
-+        uint32_t animationFrame = 0;
- 
-         struct RenderParams {
-             RenderDevice *device = nullptr;
-             RenderCommandList *commandList = nullptr;
-             RenderTexture *texture = nullptr;
-+            RenderTexture *depthMaskTexture = nullptr;
-             const RenderSwapChain *swapChain = nullptr;
-             const ShaderLibrary *shaderLibrary = nullptr;
-             RenderFormat textureFormat = RenderFormat::UNKNOWN;
-@@ -29,11 +31,15 @@ namespace RT64 {
+@@ -29,11 +29,12 @@ namespace RT64 {
              UserConfiguration::Filtering filtering = UserConfiguration::Filtering::Linear;
              const VI *vi = nullptr;
              bool removeBlackBorders = false;
 +            bool stretchToWindow = false;
-+            bool horizonHazeEnabled = false;
-+            float horizonFogMul = 0.0f;
-+            float horizonFogOffset = 0.0f;
          };
  
          VIRenderer();
@@ -5109,205 +4541,8 @@ index 8a3782a..0b3fabc 100644
 -        static void getViewportAndScissor(const RenderSwapChain *swapChain, const VI &vi, hlslpp::float2 resolutionScale, uint32_t downsamplingScale, bool removeBlackBorders, RenderViewport &viewport, RenderRect &scissor);
 +        static void getViewportAndScissor(const RenderSwapChain *swapChain, const VI &vi, hlslpp::float2 resolutionScale, uint32_t downsamplingScale, bool removeBlackBorders, bool stretchToWindow, RenderViewport &viewport, RenderRect &scissor);
      };
--};
-\ No newline at end of file
-+};
-diff --git a/src/shaders/RasterPS.hlsl b/src/shaders/RasterPS.hlsl
-index e7895c3..7db2fad 100644
---- a/src/shaders/RasterPS.hlsl
-+++ b/src/shaders/RasterPS.hlsl
-@@ -310,4 +310,4 @@ void PSMain(
-     pixelColor = resultColor;
-     pixelAlpha = resultAlpha;
- }
--#endif
-\ No newline at end of file
-+#endif
-diff --git a/src/shaders/VideoInterfacePS.hlsl b/src/shaders/VideoInterfacePS.hlsl
-index 3f33475..b9cfd9e 100644
---- a/src/shaders/VideoInterfacePS.hlsl
-+++ b/src/shaders/VideoInterfacePS.hlsl
-@@ -4,9 +4,12 @@
- 
- #include "shared/rt64_video_interface.h"
- 
-+#include "Depth.hlsli"
-+
- [[vk::push_constant]] ConstantBuffer<VideoInterfaceCB> gConstants : register(b0);
- Texture2D<float4> gInput : register(t1);
- SamplerState gSampler : register(s2);
-+Texture2D<float4> gDepthMask : register(t3);
- 
- // Limit texture sampling to the area the VI can sample of the texture.
- 
-@@ -32,10 +35,132 @@ float4 PixelAntialiasing(float2 uv) {
-     return SampleInput(uvTexspace / gConstants.textureResolution);
- }
- 
--float4 PSMain(in float4 pos : SV_Position, in float2 uv : TEXCOORD0) : SV_TARGET {
-+float4 SampleVideo(float2 uv) {
- #ifdef PIXEL_ANTIALIASING
-     return PixelAntialiasing(uv);
- #else
-     return SampleInput((uv / gConstants.textureResolution) * gConstants.videoResolution);
- #endif
--}
-\ No newline at end of file
-+}
-+
-+float2 VideoToInputUV(float2 uv) {
-+    return (uv / gConstants.textureResolution) * gConstants.videoResolution;
-+}
-+
-+float SceneDepth(float2 uv) {
-+    uint depthWidth = 0;
-+    uint depthHeight = 0;
-+    gDepthMask.GetDimensions(depthWidth, depthHeight);
-+    const float2 depthSize = float2(max(depthWidth, 1U), max(depthHeight, 1U));
-+    const float2 inputUV = saturate(VideoToInputUV(uv));
-+    const uint2 depthPixel = min(
-+        uint2(inputUV * depthSize),
-+        uint2(max(depthWidth, 1U) - 1U, max(depthHeight, 1U) - 1U));
-+    const float4 packedDepth = gDepthMask.Load(uint3(depthPixel, 0));
-+
-+    // RtCopyDepthToColorPS preserves the N64 compressed 16-bit depth in an
-+    // RGBA5551 color. Reconstruct it here and recover normalized scene depth.
-+    const uint red = (uint)round(saturate(packedDepth.r) * 31.0f);
-+    const uint green = (uint)round(saturate(packedDepth.g) * 31.0f);
-+    const uint blue = (uint)round(saturate(packedDepth.b) * 31.0f);
-+    const uint alpha = packedDepth.a >= 0.5f ? 1U : 0U;
-+    const uint depth16 = (red << 11U) | (green << 6U) | (blue << 1U) | alpha;
-+    return Depth16ToFloat(depth16);
-+}
-+
-+float FarDistanceWeight(float2 uv) {
-+    const float sceneDepth = SceneDepth(uv);
-+
-+    // Drive the lens mask with the exact fog equation used by the game's N64
-+    // vertex path. Working in authored fog space is important here: compressed
-+    // N64 depth is non-linear, so a generic 0.90-0.99 depth interval can collapse
-+    // to only a few visible pixels on a course even though its original fog
-+    // covered a broad, stable distance band.
-+    const bool hasAuthoredFogCurve = gConstants.horizonFogMul > 1.0f;
-+    const float fogMul = max(gConstants.horizonFogMul, 1.0f);
-+    if (hasAuthoredFogCurve) {
-+        const float authoredFog = saturate(
-+            (sceneDepth * fogMul + gConstants.horizonFogOffset) / 255.0f);
-+        // Begin after the stock fog has entered its distance transition, then
-+        // reach full defocus before the draw-distance boundary. This preserves
-+        // a sharp foreground while making the final distance wall unmistakable.
-+        return smoothstep(0.22f, 0.82f, authoredFog);
-+    }
-+
-+    // Some courses do not submit a positive fog multiplier after fog is turned
-+    // off. Keep a conservative depth fallback so the option remains functional.
-+    return smoothstep(0.78f, 0.955f, sceneDepth);
-+}
-+
-+float FarDistanceWall(float2 uv) {
-+    // Filter the depth decision, not just the finished color. This turns the
-+    // quantized N64 depth edge into one coherent distant wall and prevents
-+    // isolated far-depth pixels from looking like texture corruption.
-+    const float2 maskStep = float2(
-+        5.0f / max(gConstants.videoResolution.x, 1.0f),
-+        5.0f / max(gConstants.videoResolution.y, 1.0f));
-+    float amount = FarDistanceWeight(uv) * 4.0f;
-+    amount += FarDistanceWeight(uv + float2(-maskStep.x, 0.0f));
-+    amount += FarDistanceWeight(uv + float2( maskStep.x, 0.0f));
-+    amount += FarDistanceWeight(uv + float2(0.0f, -maskStep.y));
-+    amount += FarDistanceWeight(uv + float2(0.0f,  maskStep.y));
-+    amount *= 0.125f;
-+    return smoothstep(0.18f, 0.70f, amount);
-+}
-+
-+float RaceHUDProtection(float2 uv) {
-+    const float topLeft =
-+        (1.0f - smoothstep(0.25f, 0.34f, uv.x)) *
-+        (1.0f - smoothstep(0.16f, 0.24f, uv.y));
-+    const float bottomLeft =
-+        (1.0f - smoothstep(0.42f, 0.50f, uv.x)) *
-+        smoothstep(0.76f, 0.84f, uv.y);
-+    const float bottomRight =
-+        smoothstep(0.68f, 0.76f, uv.x) *
-+        smoothstep(0.58f, 0.68f, uv.y);
-+    return saturate(max(topLeft, max(bottomLeft, bottomRight)));
-+}
-+
-+float4 HorizonHeatHaze(float2 uv) {
-+    // Use actual scene depth instead of screen height. This keeps the near road
-+    // sharp on hills and during camera pitch changes, and forms a soft wall at
-+    // only the farthest portion of the extended render distance.
-+    const float farDepthAmount = FarDistanceWall(uv);
-+    const float bandAmount = farDepthAmount * (1.0f - RaceHUDProtection(uv));
-+    if (bandAmount <= 0.001f) {
-+        return SampleVideo(uv);
-+    }
-+
-+    // Use a stable lens-defocus pass. Moving individual far-depth texels with
-+    // a shimmer waveform can resemble corrupt texture coordinates on N64
-+    // geometry, especially where the compressed depth buffer is quantized.
-+    const float2 shiftedUV = uv;
-+    const float2 blurStep = float2(24.0f / max(gConstants.videoResolution.x, 1.0f),
-+        18.0f / max(gConstants.videoResolution.y, 1.0f));
-+
-+    const float4 center = SampleVideo(shiftedUV);
-+    // Separable binomial weights expanded into one normalized 5x5 Gaussian
-+    // pass. Sparse taps expand the lens radius to 48 horizontal and 36
-+    // vertical source pixels at full strength. The result intentionally looks
-+    // like a strongly defocused lens at the draw-distance wall, while the broad
-+    // depth feather prevents a visible hard seam where the effect begins.
-+    const float gaussianWeights[5] = { 1.0f, 4.0f, 6.0f, 4.0f, 1.0f };
-+    float4 blurred = float4(0.0f, 0.0f, 0.0f, 0.0f);
-+    [unroll]
-+    for (int sampleY = -2; sampleY <= 2; sampleY++) {
-+        [unroll]
-+        for (int sampleX = -2; sampleX <= 2; sampleX++) {
-+            const float weight = gaussianWeights[sampleX + 2] * gaussianWeights[sampleY + 2];
-+            blurred += SampleVideo(shiftedUV + float2(sampleX, sampleY) * blurStep) * weight;
-+        }
-+    }
-+    blurred /= 256.0f;
-+    return lerp(center, blurred, saturate(bandAmount));
-+}
-+
-+float4 PSMain(in float4 pos : SV_Position, in float2 uv : TEXCOORD0) : SV_TARGET {
-+    if (gConstants.horizonHazeEnabled != 0U) {
-+        return HorizonHeatHaze(uv);
-+    }
-+    return SampleVideo(uv);
-+}
-diff --git a/src/shared/rt64_framebuffer_params.h b/src/shared/rt64_framebuffer_params.h
-index f5ef627..c39fa77 100644
---- a/src/shared/rt64_framebuffer_params.h
-+++ b/src/shared/rt64_framebuffer_params.h
-@@ -16,4 +16,4 @@ namespace interop {
-     };
- #ifdef HLSL_CPU
  };
--#endif
 \ No newline at end of file
-+#endif
-diff --git a/src/shared/rt64_video_interface.h b/src/shared/rt64_video_interface.h
-index b51cf09..87d1c72 100644
---- a/src/shared/rt64_video_interface.h
-+++ b/src/shared/rt64_video_interface.h
-@@ -13,7 +13,14 @@ namespace interop {
-         float2 videoResolution;
-         float2 textureResolution;
-         float gamma;
-+        uint horizonHazeEnabled;
-+        uint animationFrame;
-+        float horizonFogMul;
-+        float horizonFogOffset;
-+        float padding0;
-+        float padding1;
-+        float padding2;
-     };
- #ifdef HLSL_CPU
- };
--#endif
-\ No newline at end of file
-+#endif
 diff --git a/src/tools/texture_packer/texture_packer.cpp b/src/tools/texture_packer/texture_packer.cpp
 index 1f5ccaf..abcb963 100644
 --- a/src/tools/texture_packer/texture_packer.cpp

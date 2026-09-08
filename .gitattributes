@@ -1,0 +1,3 @@
+# Locked override bytes must be identical on every platform.
+dependency-overrides/** -text
+dependency-patches/** -text

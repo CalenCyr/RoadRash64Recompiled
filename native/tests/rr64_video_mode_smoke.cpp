@@ -1,4 +1,5 @@
 #include "rr64_video_mode.hpp"
+#include "rr64_world_frustum.hpp"
 #include "rr64_actor_render_fixture.hpp"
 #include "recomp.h"
 #include <cstdio>
@@ -51,5 +52,15 @@ int main() {
         check(std::abs((320.0f*scale/240.0f)-target)<0.00001f,"VI television viewport presents at 16:9");
     }
     check(RT64::RR64Video::sourceAspect(false,512u,240u)==512.0f/240.0f,"legacy renderer aspect is unchanged");
+    const std::array<float,16> identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    auto model=identity;model[12]=1.6f;
+    const std::array<float,3> low{-.01f,-.01f,-.01f},high{.01f,.01f,.01f};
+    rr64::view_width.store(4.0/3.0);
+    check(!rr64::world::WorldFrustum(identity,identity).intersects(low,high,model),"outside 16:9 side boundary");
+    rr64::view_width.store(7.0/4.0);
+    check(rr64::world::WorldFrustum(identity,identity).intersects(low,high,model),"21:9 admits additional side geometry");
+    model[12]=1.9f;
+    check(!rr64::world::WorldFrustum(identity,identity).intersects(low,high,model),"21:9 still rejects beyond its side boundary");
+    rr64::view_width.store(4.0/3.0);
     std::puts(passed?"[RR64-VIDEO] PASS":"[RR64-VIDEO] FAIL");return passed?0:1;
 }

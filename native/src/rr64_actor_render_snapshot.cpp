@@ -1,4 +1,5 @@
 #include "rr64_racer_view.hpp"
+#include "rr64_view_width.hpp"
 #include "rr64_actor_render_snapshot.hpp"
 
 #include <algorithm>
@@ -201,8 +202,8 @@ bool supported_scene(unsigned char* rdram) noexcept {
     return read_u32(rdram, globals::main_mode, mode) &&
         read_u32(rdram, globals::pending_mode, pending) &&
         retained_actor_scene(mode, pending) &&
-        read_u32(rdram, viewport_count, views) && views == 1u &&
-        read_u32(rdram, race_player_count, local) && local == 1u &&
+        read_u32(rdram, viewport_count, views) && views >= 1u && views <= 4u &&
+        read_u32(rdram, race_player_count, local) && local == views &&
         read_u16(rdram, compiled_renderer, compiled) && compiled != 0u;
 }
 
@@ -234,7 +235,8 @@ bool rider_in_stock_view(unsigned char* rdram, std::uint32_t entity) noexcept {
 }
 bool racer_in_extended_view(unsigned char* rdram, std::uint32_t entity, unsigned type) noexcept {
     if (type != 1u && type != 2u) return false;
-    return actor_in_view(rdram, entity + (type == 1u ? 0x16cu : 0x8cu), 1.5f);
+    return actor_in_view(rdram, entity + (type == 1u ? 0x16cu : 0x8cu),
+        float(std::max(1.5,rr64::view_width.load(std::memory_order_relaxed)+1.0/6.0)));
 }
 bool visual_pair(unsigned char* rdram, std::uint32_t bike_node,
     std::uint32_t rider_node) noexcept
@@ -274,7 +276,7 @@ bool mounted_pair(unsigned char* rdram, std::uint32_t bike_node,
 void SnapshotStore::reset(unsigned char* rdram) noexcept {
     rdram_ = rdram;
     allocations_ = {};
-    pose_epoch_ = 0;
+    pose_epochs_ = {};
     pose_history_ = {};
     invalidate();
 }
@@ -287,10 +289,16 @@ void SnapshotStore::invalidate() noexcept {
 
 void SnapshotStore::begin_pose_epoch(unsigned char* rdram) noexcept {
     if (rdram != rdram_) { reset(rdram); }
-    ++pose_epoch_;
-    if (pose_epoch_ == 0u || !supported_scene(rdram)) {
+    std::uint32_t view = 0;
+    if (!supported_scene(rdram) || !read_u32(rdram, globals::active_viewport, view) || view >= 4u) {
         pose_history_ = {};
-        pose_epoch_ = 1u;
+        pose_epochs_ = {};
+        return;
+    }
+    if (++pose_epochs_[view] == 0u) {
+        pose_history_ = {};
+        pose_epochs_ = {};
+        pose_epochs_[view] = 1u;
     }
 }
 
@@ -574,7 +582,8 @@ bool SnapshotStore::isolated_pose_ranges(const PairSnapshot& pair) const noexcep
 bool SnapshotStore::can_prepare(unsigned char* rdram, std::uint32_t bike_node,
     std::uint32_t rider_node, std::uint32_t viewport, std::uint32_t slot) const noexcept
 {
-    if (!supported_scene(rdram) || viewport != 0u ||
+    std::uint32_t views = 0;
+    if (!supported_scene(rdram) || !read_u32(rdram, viewport_count, views) || viewport >= views ||
         !visual_pair(rdram, bike_node, rider_node)) { return false; }
     PairSnapshot pair{};
     return capture_actor(rdram, rdram, bike_node, viewport, slot, false, pair.actors[0]) &&
@@ -619,11 +628,14 @@ bool SnapshotStore::publish(unsigned char* live, unsigned char* prepared,
     if (conflict || !destination) { return false; }
     candidate.valid = true;
     *destination = candidate;
-    if (pose_epoch_ != 0u) {
-        for (auto& history : pose_history_) {
-            if (history.epoch != pose_epoch_ || history.pair.actors[1].node == rider_node) {
+    if (pose_epochs_[viewport] != 0u) {
+        // Preparation/draw is serial per camera. Retain only that camera's previous
+        // partial animation while the immutable draw certificates remain pass-local.
+        for (std::size_t index = viewport * maximum_pairs; index < (viewport + 1u) * maximum_pairs; ++index) {
+            auto& history = pose_history_[index];
+            if (history.epoch != pose_epochs_[viewport] || history.pair.actors[1].node == rider_node) {
                 history.pair = candidate;
-                history.epoch = pose_epoch_;
+                history.epoch = pose_epochs_[viewport];
                 read_u32(live, globals::main_mode, history.mode);
                 read_u32(live, globals::pending_mode, history.pending);
                 if (!read_u32(live, candidate.actors[1].entity + 0xcu, history.rider_style)) {
@@ -646,7 +658,7 @@ bool SnapshotStore::seed_previous_rider_children(unsigned char* live, unsigned c
 {
     if(missing_history)*missing_history=false;
     if (!live || live == prepared || live != rdram_ || !prepared ||
-        !supported_scene(live)) { return false; }
+        !supported_scene(live) || viewport >= 4u) { return false; }
     std::uint32_t mode = 0, pending = 0;
     std::uint16_t pause = 0, pause_menu = 0;
     if (!read_u32(live, globals::main_mode, mode) ||
@@ -662,7 +674,7 @@ bool SnapshotStore::seed_previous_rider_children(unsigned char* live, unsigned c
             const auto in_family = [result](unsigned value) { return value >= result-2u && value <= result; };
             same_scene |= in_family(mode) && in_family(pending) && in_family(history.mode) && in_family(history.pending);
         }
-        if (history.epoch + 1u != pose_epoch_ || !prior.valid ||
+        if (history.epoch + 1u != pose_epochs_[viewport] || !prior.valid ||
             prior.actors[1].node != rider_node || prior.viewport != viewport ||
             !same_scene) { continue; }
         if (!mounted_pair(live, prior.actors[0].node, rider_node) ||

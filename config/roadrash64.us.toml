@@ -20,6 +20,12 @@ recomp_include = """#include "recomp.h"
 
 [patches]
 stubs = [
+    # Multiplayer forced catch-up only. The sole caller at 8006B128 gates
+    # this on >=2 players and human racers. It moves a trailing racer near
+    # the leader and charges a penalty. Keep ordinary recovery (8003FE48)
+    # and the shared relocation helper (80068E20) intact.
+    "func_8003FD60",
+
     # Early boot cache sweeps. Native host memory is coherent; these N64 CACHE
     # instructions have no host-side work to perform.
     "func_800097EC",
@@ -42,6 +48,15 @@ renamed = []
 # by the native helper, allowing a black-screen run to identify the exact guest
 # initialization call that did not return.
 hook = [
+    # Catch-up warning predicates for all stock split-screen HUD layouts.
+    # Compare the threshold with itself to skip only this notification, keeping
+    # crash/status messages and their backing rectangles on the original path.
+    { func = "func_80030220", before_vram = 0x8003332C, text = "ctx->f0.u32l = ctx->f4.u32l;" },
+    { func = "func_80030220", before_vram = 0x800334F8, text = "ctx->f0.u32l = ctx->f4.u32l;" },
+    { func = "func_80030220", before_vram = 0x80033620, text = "ctx->f0.u32l = ctx->f4.u32l;" },
+    { func = "func_80030220", before_vram = 0x80033774, text = "ctx->f0.u32l = ctx->f4.u32l;" },
+    { func = "func_80030220", before_vram = 0x800338CC, text = "ctx->f0.u32l = ctx->f4.u32l;" },
+    { func = "func_80030220", before_vram = 0x80033A9C, text = "ctx->f0.u32l = ctx->f4.u32l;" },
     { func = "game_thread_entry_8005AC00", text = "rr64_trace_guest_stage(\"game-thread-entry\");" },
     { func = "game_thread_entry_8005AC00", before_vram = 0x8005AC48, text = "rr64_trace_guest_stage(\"before-80088EC0\");" },
     { func = "game_thread_entry_8005AC00", before_vram = 0x8005AC50, text = "rr64_trace_guest_stage(\"before-8001BCF0\");" },
@@ -154,6 +169,16 @@ hook = [
     { func = "func_80011CC0", before_vram = 0x800120C8, text = "rr64_lod_end_actor(); rr64_world_end_actor();" },
     { func = "func_80011CC0", before_vram = 0x800120D4, text = "rr64_lod_end_actor(); rr64_world_end_actor();" },
 
+    # Weapon roots use a separate renderer after the rider pose transaction.
+    { func = "func_80011CC0", before_vram = 0x800120A0, text = "rr64_weapon_begin(rdram, ctx->r19, ctx->r4);" },
+    { func = "func_80011CC0", before_vram = 0x800120A8, text = "rr64_weapon_end();" },
+    { func = "func_8000F9E8", before_vram = 0x8000FA94, text = "rr64_weapon_source(rdram, ctx, ctx->r17);" },
+    { func = "func_8000F9E8", before_vram = 0x8000FAA4, text = "rr64_weapon_matrix(rdram, ctx->r17, ctx->r29 + 0x10);" },
+    { func = "func_8000F9E8", before_vram = 0x8000FAF0, text = "rr64_weapon_packed(rdram, ctx->r17, ctx->r20);" },
+
+    { func = "func_80010120", before_vram = 0x8001039C, text = "rr64_weapon_alt_begin(rdram, ctx->r16, ctx->r4);" },
+    { func = "func_80010120", before_vram = 0x800103A4, text = "rr64_weapon_end();" },
+
     # R18 optional world presentation; all producers retain their stock work.
     { func = "func_8005ED6C", before_vram = 0x8005EF48, text = "rr64_world_observe_roots(rdram, 3);" },
     { func = "func_8005EF74", before_vram = 0x8005F050, text = "rr64_world_observe_roots(rdram, 4);" },
@@ -258,7 +283,7 @@ hook = [
     # The surrounding hooks also detect the stock setup stage boundary: the
     # host owns game/race settings through stages 0-1, then every peer regains
     # its assigned input when the stock character/bike stage (2) begins.
-    { func = "func_80058DBC", before_vram = 0x80058F60, text = "ctx->r17 = rr64_music_volume_update(ctx->r17);" },
+    { func = "func_80058DBC", before_vram = 0x80058F60, text = "ctx->r17 = rr64_music_volume_update(ctx->r17, ctx->r16);" },
     { func = "func_80058DBC", before_vram = 0x80058F80, text = "ctx->r5 = rr64_music_stock_volume(ctx->r5);" },
     { func = "func_8005AEE0", before_vram = 0x8005B290, text = "if (ctx->f2.fl >= ctx->f0.fl) rr64_lod_shadow_finish_hold(rdram, ctx);" },
     { func = "func_80027A90", text = "rr64_online_game_setup_before_update(rdram);" },

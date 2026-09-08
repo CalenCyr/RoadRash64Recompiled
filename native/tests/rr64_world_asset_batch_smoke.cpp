@@ -1,3 +1,5 @@
+#include "rr64_world_packet_compiler.hpp"
+#include "rr64_world_course_regions.hpp"
 #include "rr64_world_terrain_assets.hpp"
 #include "rr64_world_object_assets.hpp"
 #include "recomp.h"
@@ -106,7 +108,30 @@ bool compare(const ObjectAssets& a, const ObjectAssets& b, Normalizer& n) {
 }
 }
 int main(int argc, char** argv) {
-    if (argc != 2) { return 2; }
+    if (argc != 2 && argc != 3) { return 2; }
+    if (argc == 3 && std::string(argv[2]) == "--geometry-audit") {
+        std::ifstream stream(argv[1],std::ios::binary);
+        std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(stream)),{});
+        TerrainAssets terrain;ObjectAssets objects;std::string error;
+        if(!build_terrain_assets(bytes,terrain,error,true)||!build_object_assets(bytes,objects,error,true)){
+            std::fprintf(stderr,"audit failed: %s\n",error.c_str());return 1;
+        }
+        PacketCompiler tc,oc;tc.compile(terrain,terrain.cells);oc.compile(objects,objects.models);
+        const auto report=[](const char* name,const PacketCompiler::Stats& stats){
+            std::printf("%s packets_before=%llu packets_after=%llu vertices_before=%llu vertices_after=%llu triangles=%llu\n",name,
+                (unsigned long long)stats.packetsBefore,(unsigned long long)stats.packetsAfter,
+                (unsigned long long)stats.verticesBefore,(unsigned long long)stats.verticesAfter,(unsigned long long)stats.triangles);
+        };report("terrain",tc.stats);report("scenery_unique_models",oc.stats);
+        CourseRegions regions;CourseRegions::Mask occupied{};
+        for(const auto& cell:terrain.cells)occupied[cell.cell_index]=true;
+        regions.build(occupied);std::array<unsigned,CourseRegions::count+1> sizes{};
+        for(unsigned value:regions.region)if(value)++sizes[value];
+        std::sort(sizes.begin(),sizes.end(),std::greater<unsigned>());
+        for(unsigned i=0;i<sizes.size()&&sizes[i];++i)std::printf("connected_island_rank=%u cells=%u\n",i+1,sizes[i]);
+        unsigned billboards=0;for(const auto& placement:objects.placements)billboards+=placement.billboard;
+        std::printf("scenery models=%zu placements=%zu billboards=%u terrain_cells=%zu\n",objects.models.size(),objects.placements.size(),billboards,terrain.cells.size());
+        return 0;
+    }
     std::ifstream input(argv[1], std::ios::binary);
     std::vector<std::uint8_t> rom((std::istreambuf_iterator<char>(input)), {});
     TerrainAssets terrain, terrainBatch; ObjectAssets objects, objectsBatch; std::string error;

@@ -115,6 +115,12 @@ std::atomic_uint64_t consumed_actor_count{0};
 std::atomic_uint64_t fallback_actor_count{0};
 std::array<std::atomic_uint64_t, static_cast<std::size_t>(lod::ActivityCounter::Count)> activity{};
 std::array<std::atomic_uint64_t, static_cast<std::size_t>(lod::FindFailure::Count)> find_failures{};
+std::array<std::atomic_uint64_t, 4> view_published{}, view_detailed{}, view_fallback{};
+bool view_diagnostics_enabled() {
+    static const bool enabled = [] { const auto* value = std::getenv("RR64_DIAGNOSTICS");
+        return value && std::strcmp(value, "1") == 0; }();
+    return enabled;
+}
 std::array<std::atomic_uint32_t, 6> last_scene{};
 std::array<std::atomic_uint32_t, 2> last_camera_planes{};
 struct ActorDetailCounters {
@@ -178,9 +184,11 @@ void mapping(Runtime& state, unsigned char* rdram) {
 }
 
 bool viewport(unsigned char* rdram, std::uint32_t& view, std::uint32_t& slot) {
-    return engine::read_u32(rdram, engine::globals::active_viewport, view) &&
+    std::uint32_t views = 0;
+    return engine::read_u32(rdram, 0x8009DB88u, views) && views >= 1u && views <= 4u &&
+        engine::read_u32(rdram, engine::globals::active_viewport, view) &&
         engine::read_u32(rdram, engine::globals::actor_render_buffer_slot, slot) &&
-        view == 0u && slot < 2u;
+        view < views && slot < 2u;
 }
 
 void bind_private_float_registers(recomp_context& context) noexcept {
@@ -289,6 +297,9 @@ void record_actor_detail(unsigned char* rdram, std::uint32_t node, std::uint32_t
         !engine::read_u32(rdram, node + 8u + view * 4u, distance) ||
         !std::isfinite(std::bit_cast<float>(distance)) || std::bit_cast<float>(distance) < 0.0f ||
         !engine::read_u32(rdram, node + engine::actor_scene::display_lists + (detailed ? 0u : stock_lod * 4u), list)) { return; }
+    if (view_diagnostics_enabled()) {
+        (detailed ? view_detailed[view] : view_fallback[view]).fetch_add(1u, std::memory_order_relaxed);
+    }
     auto& counters = actor_details[id * 2u + (type - 1u)];
     counters.node.store(node, std::memory_order_relaxed);
     std::uint32_t owner = type == 2u ? entity : 0u, style = 0;
@@ -380,6 +391,11 @@ void count_far_fallback(unsigned char* rdram, std::uint32_t node, std::uint32_t 
 
 rr64::lod::ActivitySnapshot rr64::lod::read_activity() noexcept {
     ActivitySnapshot result;
+    for (unsigned view = 0; view < 4; ++view) {
+        result.view_published[view] = view_published[view].load(std::memory_order_relaxed);
+        result.view_detailed[view] = view_detailed[view].load(std::memory_order_relaxed);
+        result.view_fallback[view] = view_fallback[view].load(std::memory_order_relaxed);
+    }
     for (std::size_t i = 0; i < result.counts.size(); ++i) {
         result.counts[i] = activity[i].load(std::memory_order_relaxed);
     }
@@ -864,6 +880,7 @@ extern "C" void rr64_lod_prepare_shadow(unsigned char* rdram, void* context,
         if (input.eligible && input.stage_mask == (1u | 2u | 4u | 128u)) {
             if (state.store.publish(rdram, scratch, input.bike_node, input.rider_node, view, slot)) {
                 published_pair_count.fetch_add(1u, std::memory_order_relaxed);
+                if (view_diagnostics_enabled()) view_published[view].fetch_add(1u, std::memory_order_relaxed);
             }
             else { count_activity(lod::ActivityCounter::PublishRejected); }
         }
@@ -1001,9 +1018,40 @@ extern "C" unsigned int rr64_lod_root_source(unsigned char* rdram,
     return bound_root_plan.render_source;
 }
 
+namespace {
+std::mutex rootRangeMutex;
+rr64::lod::RootRangeReport rootRangeReport;
+void capture_root_range(unsigned char* m,unsigned node,unsigned record,unsigned matrix) {
+    static const bool enabled=[] {const char* v=std::getenv("RR64_WEAPON_DIAGNOSTICS");return v&&std::strcmp(v,"1")==0;}();
+    if(!enabled||shadow_mapping)return;
+    rr64::lod::RootRangeSample sample{};sample.node=node;sample.record=record;
+    unsigned views=0,sourceRecord=0;
+    using namespace rr64::engine;
+    if(!read_u32(m,0x8009DB88u,views)||views<2||views>4||
+       !read_u32(m,globals::active_viewport,sample.view)||sample.view>=views||
+       !read_u32(m,node,sample.type)||!read_u32(m,0x800A1830u,sample.epoch)||
+       !read_u32(m,record+0x14u,sourceRecord))return;
+    std::uint16_t source=0;if(!read_u16(m,sourceRecord+0x12u,source))return;sample.source=source;
+    std::array<float,16> values{};
+    for(unsigned i=0;i<16;++i){if(!read_float(m,matrix+i*4,values[i])||!std::isfinite(values[i]))return;
+        sample.maximum=std::max(sample.maximum,std::abs(values[i]));}
+    sample.x=values[12];sample.y=values[13];sample.z=values[14];
+    std::lock_guard lock(rootRangeMutex);++rootRangeReport.examined;
+    if(sample.maximum<30000)return;
+    ++rootRangeReport.nearLimit;
+    auto& saved=rootRangeReport.samples[((node>>4)^(record>>3)^sample.view)%64];
+    if(saved.node&&(saved.node!=node||saved.record!=record||saved.view!=sample.view))++rootRangeReport.replaced;
+    saved=sample;
+}
+}
+rr64::lod::RootRangeReport rr64::lod::take_root_range_report(){
+    std::lock_guard lock(rootRangeMutex);auto result=rootRangeReport;rootRangeReport={};return result;
+}
+
 extern "C" void rr64_lod_scale_root_matrix(unsigned char* rdram,
     unsigned int node, unsigned int record, unsigned int matrix_address)
 {
+    capture_root_range(rdram,node,record,matrix_address);
     if (!root_source_selected || !pose_binding.active() || shadow_mapping ||
         rdram != bound_mapping || node != bound_node ||
         record != bound_root_plan.record || !bound_root_plan.normalized ||

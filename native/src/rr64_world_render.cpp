@@ -388,7 +388,7 @@ extern "C" void rr64_world_observe_allocation(unsigned char* m, unsigned node, u
     expire(s);
 }
 extern "C" void rr64_world_observe_roots(unsigned char* m, unsigned type) {
-    if (!rr64_world_distance_enabled() || type < 3u || type > 5u || !rr64::lod::supported_scene(m)) return;
+    if (!rr64_world_distance_enabled() || type < 3u || type > 5u || !rr64::world::supported_scene(m)) return;
     auto& s = state(); std::lock_guard lock(s.mutex); map(s, m);
     for (unsigned i = 0; i < s.allocations.size(); ++i) {
         if (s.allocations[i].type != type) continue;
@@ -402,14 +402,14 @@ extern "C" void rr64_world_observe_roots(unsigned char* m, unsigned type) {
     }
 }
 extern "C" void rr64_world_begin_draw(unsigned char* m) {
-    rr64_world_end_actor(); draw_active = rr64_world_distance_enabled() && rr64::lod::supported_scene(m);
+    rr64_world_end_actor(); draw_active = rr64_world_distance_enabled() && rr64::world::supported_scene(m);
 }
 extern "C" void rr64_world_end_draw(unsigned char* m) {
     rr64_world_end_actor(); draw_active = false; rr64_world_invalidate(m);
 }
 extern "C" unsigned rr64_world_actor_hidden(unsigned char* m, unsigned node, unsigned hidden, const void* caller) {
     rr64_world_end_actor();
-    if (!draw_active || !caller || !rr64_world_distance_enabled() || !rr64::lod::supported_scene(m)) return hidden;
+    if (!draw_active || !caller || !rr64_world_distance_enabled() || !rr64::world::supported_scene(m)) return hidden;
     unsigned type = 0;
     if (!read_u32(m, node, type) || type < 3u || type > 5u) return hidden;
     const auto fallback = [&] { counters[3].fetch_add(1u, std::memory_order_relaxed); return hidden; };

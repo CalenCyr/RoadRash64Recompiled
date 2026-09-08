@@ -1,8 +1,10 @@
-// Read-only timing probes for the long-session R6 slowdown investigation.
+// Optional observations only: never use these probes to authorize rendering.
 #pragma once
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 
 extern "C" void rr64_record_pipeline_stage(unsigned int stage,
     unsigned long long nanoseconds);
@@ -13,13 +15,23 @@ extern "C" void rr64_record_pipeline_resources(unsigned long long targets,
     unsigned long long reuseMisses, unsigned long long recycledBytes, unsigned long long recycledImages);
 
 namespace RT64::RR64PipelineDiagnostics {
+    inline bool enabled() {
+        // Match the application's process-start opt-in. Disabled probes must
+        // not read the clock or prepare expensive observation data.
+        static const bool value = [] {
+            const char* setting = std::getenv("RR64_DIAGNOSTICS");
+            return setting && std::strcmp(setting, "1") == 0;
+        }();
+        return value;
+    }
+
     enum class Stage : unsigned int {
         FullSync, ProducerWaitPresent, PresentWaitProducer, Matching,
         RenderTotal, RenderLock, WorkerLock, UploadWait, SubmitWait,
         GpuCommands, CopyTotal, CopyAllocation, PresentTotal, DisplayList,
         GuestUpdate, FullSyncTiles, FullSyncParameters, FullSyncUpload,
         FullSyncUploadWait, FullSyncGpuWait, FullSyncTextureWait,
-        FullSyncAdvance, Count
+        FullSyncAdvance, RspVertices, RspTriangles, RspTriangleBatch, Count
     };
 
     inline constexpr const char* Names[] = {
@@ -28,13 +40,15 @@ namespace RT64::RR64PipelineDiagnostics {
         "gpu-commands", "copy-total", "copy-allocation", "present-total",
         "display-list", "guest-update", "full-sync-tiles", "full-sync-parameters",
         "full-sync-upload", "full-sync-upload-wait", "full-sync-gpu-wait",
-        "full-sync-texture-wait", "full-sync-advance"
+        "full-sync-texture-wait", "full-sync-advance",
+        "rsp-vertices", "rsp-triangles-inclusive", "rsp-triangle-batch-inclusive"
     };
     static_assert(sizeof(Names) / sizeof(Names[0]) == static_cast<unsigned int>(Stage::Count));
 
     class Scope {
     public:
-        explicit Scope(Stage stage) : stage(stage), start(Clock::now()) { }
+        explicit Scope(Stage stage) : stage(stage), active(enabled()),
+            start(active ? Clock::now() : Clock::time_point{}) { }
         ~Scope() { finish(); }
         Scope(const Scope&) = delete;
         Scope& operator=(const Scope&) = delete;
@@ -50,7 +64,7 @@ namespace RT64::RR64PipelineDiagnostics {
     private:
         using Clock = std::chrono::steady_clock;
         Stage stage;
+        bool active;
         Clock::time_point start;
-        bool active = true;
     };
 }

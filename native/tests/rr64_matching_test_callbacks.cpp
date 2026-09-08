@@ -4,6 +4,7 @@
 extern "C" {
 void rr64_record_pipeline_stage(unsigned, unsigned long long) { std::abort(); }
 int rr64_is_race_mode_active() { std::abort(); }
+int rr64_is_race_presentation_active() { std::abort(); }
 void rr64_record_geometry_compatibility(unsigned long long, unsigned, unsigned) { std::abort(); }
 void rr64_record_owned_batch(unsigned long long, unsigned, unsigned, unsigned) { std::abort(); }
 void rr64_record_interpolation_workload(unsigned, unsigned, unsigned, unsigned, unsigned, unsigned) { std::abort(); }

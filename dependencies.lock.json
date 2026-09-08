@@ -136,11 +136,11 @@
       },
       {
         "path": "src/common/rt64_rr64_texture_hash_cache.h",
-        "sha256": "2a3bf4c4bcbef360c0b8a22ca300973760cbaad85f9b9934af1dce63a7315c47"
+        "sha256": "5677668ae096564f8de2dff919c1a5aac931ca5f4b5b0c8ab7bef6d75ab91162"
       },
       {
         "path": "src/common/rt64_rr64_texture_load_cache.h",
-        "sha256": "877b7b202fc53ae59b76e8762d0f46495e74250fe0f5401cbf758ab9b8d4758c"
+        "sha256": "56289f80cdbdfe5b84b270ea2f1146b44a93033ac1b70171c90591919ee0b9fe"
       },
       {
         "path": "src/common/rt64_rr64_video_aspect.h",
@@ -180,7 +180,7 @@
       },
       {
         "path": "src/hle/rt64_rr64_pipeline_diagnostics.h",
-        "sha256": "8c58dd57fca3f8faec4cc86da8956744b6042a4b076cff485217ce707ad938ae"
+        "sha256": "6f1a93e4bcf3bbc0b227d2a781473d280b21ac806bf579bf2c49422b5cf093d5"
       },
       {
         "path": "src/hle/rt64_rr64_translation_rejection.h",
@@ -342,7 +342,12 @@
     "url": "https://github.com/N64Recomp/RecompFrontend.git",
     "commit": "d0d90ba49f46f4896aaeda362056c21b1e342561",
     "patch": "dependency-patches/native_lib_RecompFrontend.patch",
-    "extraFiles": []
+    "extraFiles": [
+      {
+        "path": "recompinput/include/recompinput/rr64_player_assignment.h",
+        "sha256": "4ecf4b2424e9d282b47c409a56319d14bafa52b7fd11ff0d98ace8a12ddd9524"
+      }
+    ]
   },
   {
     "path": "native/lib/RecompFrontend/recompui/lib/RmlUi",

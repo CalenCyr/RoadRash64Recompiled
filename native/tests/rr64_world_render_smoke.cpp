@@ -75,7 +75,7 @@ void banks(unsigned char* m, bool fr1 = false, float world_far = 700.0f) {
     floats(m,0x8009DBC4u,std::array<float,4>{55.0f,1.0f,world_far,4.0f/3.0f});
     constexpr float scales[]{4,100,10};
     for(unsigned source=0;source<3;++source) {
-        const unsigned bank=0x800B6B68u+source*0x34u; const float s=scales[source];
+        const unsigned bank=0x800B6B68u+word(m,globals::active_viewport)*0x9cu+source*0x34u; const float s=scales[source];
         floats(m,bank,std::array<float,3>{1.25f*s,2.5f*s,0.5f*s});
         floats(m,bank+12u,std::array<float,3>{1.25f*s,3.5f*s,0.5f*s});
         floats(m,bank+24u,std::array<float,3>{0,0,1});
@@ -211,8 +211,9 @@ void negative(Bad bad, unsigned type) {
     check(memory==before,"refused world actor never mutates guest state");
     rr64_world_end_draw(m);++cases;
 }
-void camera_case(unsigned slot,bool fr1,bool enabled,bool unsupported=false) {
+void camera_case(unsigned slot,bool fr1,bool enabled,bool unsupported=false,unsigned camera_index=0) {
     auto memory=seed(4u,100,slot);auto* m=memory.data();
+    write_u32(m,0x800A6578u,4u);write_u32(m,0x8009DB88u,4u);write_u32(m,globals::active_viewport,camera_index);
     if(unsupported)write_u32(m,globals::main_mode,0u);
     banks(m,fr1,900.0f);
     const bool extended=enabled&&!unsupported;
@@ -226,9 +227,9 @@ void camera_case(unsigned slot,bool fr1,bool enabled,bool unsupported=false) {
         write_float(o,stack+0x10u,scale);
         write_float(o,stack+0x14u,extended?30000.0f*scale:std::fmin(900.0f*scale,32767.0f));
         write_float(o,stack+0x18u,1.0f);guPerspective(o,&ctx);
-        const unsigned offset=source*128u+slot*64u, projection=0x800B6568u+offset, view=0x800B6DE8u+offset;
+        const unsigned offset=camera_index*0x180u+source*128u+slot*64u, projection=0x800B6568u+offset, view=0x800B6DE8u+offset;
         for(unsigned i=0;i<16;++i)check(word(m,projection+i*4u)==word(o,matrix+i*4u),"actual167BC packed projection equals exact intended original guPerspective inputs");
-        std::uint16_t actual_norm=0,expected_norm=0;read_u16(m,0x800B73E8u+source*4u+slot*2u,actual_norm);read_u16(o,matrix+64u,expected_norm);
+        std::uint16_t actual_norm=0,expected_norm=0;read_u16(m,0x800B73E8u+camera_index*12u+source*4u+slot*2u,actual_norm);read_u16(o,matrix+64u,expected_norm);
         if(extended&&expected_norm==0)expected_norm=1;
         check(actual_norm==expected_norm&&actual_norm!=0,"large far-plane perspective normalization stays usable");
         check(bool(rr64_world_camera_ready(m,source,slot))==extended,"camera readiness requires an accepted current producer");
@@ -260,7 +261,7 @@ int main(int argc,char** argv) {
             positive(type,d,slot,fr1,slot,3u,slot);
         for(unsigned mode:{1u,3u})for(unsigned motion:{0u,1u})for(unsigned previous:{0u,1u})positive(3u,450,previous,false,previous,mode,motion);
         for(unsigned type:{3u,4u,5u})for(unsigned i=0;i<unsigned(Bad::Count);++i)negative(Bad(i),type);
-        for(unsigned slot:{0u,1u})for(bool fr1:{false,true})for(bool unsupported:{false,true})camera_case(slot,fr1,true,unsupported);
+        for(unsigned slot:{0u,1u})for(bool fr1:{false,true})for(bool unsupported:{false,true})for(unsigned camera_index=0;camera_index<4;++camera_index)camera_case(slot,fr1,true,unsupported,camera_index);
     }
     if(passed)std::printf("[RR64-WORLD] PASS: %u original root/animation, unit-bank, allocation, lifecycle and rollback cases%s.\n",cases,disabled?" (disabled)":"");
     return passed?EXIT_SUCCESS:EXIT_FAILURE;

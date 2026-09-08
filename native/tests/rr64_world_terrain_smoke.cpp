@@ -3,9 +3,14 @@
 #include "rr64_world_terrain_assets_smoke.cpp"
 #undef main
 #include "rr64_world_terrain.hpp"
+#include "rr64_world_frustum.hpp"
 #include "rr64_actor_render_fixture.hpp"
 #include "librecomp/addresses.hpp"
 #include "librecomp/game.hpp"
+#include <cstdlib>
+#include <chrono>
+#include "rr64_local_world_window.hpp"
+bool testLocalWindow=true;
 
 extern "C" void func_8007D814(std::uint8_t*, recomp_context*);
 extern "C" void guMtxF2L(std::uint8_t*, recomp_context*);
@@ -103,6 +108,13 @@ void driver_checks() {
     const auto other_before = allocation_bytes(1u);
     rr64_world_terrain_draw(memory.data());
     auto stats = rr64::world::terrain_statistics();
+    const char* diagnostic_switch=std::getenv("RR64_COURSE_DIAGNOSTICS");
+    const bool diagnostics=diagnostic_switch&&std::string(diagnostic_switch)=="1";
+    check(stats.evidence.enabled==diagnostics,"course evidence obeys independent opt-in");
+    if(diagnostics)check(stats.evidence.views[0].valid && stats.evidence.views[0].epoch==1 &&
+        stats.evidence.views[0].extended==1 && stats.evidence.views[0].triangles==3 &&
+        stats.evidence.views[0].extended_last[0]==1 && !stats.evidence.views[1].valid,
+        "course evidence matches emitted fixture cell, epoch and view without another view leaking");
     check(stats.frames == 1u && stats.visible_cells == 1u && stats.drawn_triangles == 3u,
         "certified visible cell draws once outside the stock set");
     check(memory_word(memory, 0x800ac650u) == 0x80200210u,
@@ -129,6 +141,9 @@ void driver_checks() {
     check(rr64::world::terrain_statistics().stock_cells == 1u &&
         rr64::world::terrain_statistics().visible_cells == 0u && memory_word(memory, 0x800ac650u) == 0x80200200u,
         "stock cell ownership is deduplicated and never drawn twice");
+    if(diagnostics){const auto evidence=rr64::world::terrain_statistics().evidence;
+        check(evidence.views[0].stock_union[0]==1 && evidence.views[0].extended_last[0]==0,
+            "stock observation retained and last extended bitmap cleared on empty pass");}
     for (unsigned invalid = 0; invalid < 6u; ++invalid) {
         setup(0u, 4u + invalid); camera_current = true; driver_enabled = true;
         memory_word(memory, 0x8009cb90u, 0x80200000u); memory_word(memory, 0x800bc9a0u, 0x4650u);
@@ -168,6 +183,39 @@ void driver_checks() {
                 [](std::uint8_t value) { return value == 0xceu; }),
             "restart does not access retired allocation addresses");
     }
+    memory_word(memory,rr64::lod::test::Fixture::race_player_count,4u);memory_word(memory,0x8009DB88u,4u);
+    testLocalWindow=false;
+    const auto priorFrames=rr64::world::terrain_statistics().frames;
+    for(unsigned count=2;count<=4;++count)for(unsigned camera=0;camera<count;++camera){
+        setup(0,50);memory_word(memory,rr64::lod::test::Fixture::race_player_count,count);
+        memory_word(memory,0x8009DB88u,count);memory_word(memory,globals::active_viewport,camera);
+        const auto pointer=memory_word(memory,0x800ac650u);
+        rr64_world_terrain_begin(memory.data());rr64_world_terrain_draw(memory.data());
+        check(rr64::world::terrain_statistics().frames==priorFrames && memory_word(memory,0x800ac650u)==pointer,
+            "two to four split screens retain original terrain without extended submissions");
+    }
+    memory_word(memory,rr64::lod::test::Fixture::race_player_count,1u);memory_word(memory,0x8009DB88u,1u);
+    testLocalWindow=true;
+    for(unsigned camera=0;camera<4;++camera){
+        setup(0,52);memory_word(memory,rr64::lod::test::Fixture::race_player_count,4u);
+        memory_word(memory,0x8009DB88u,4u);memory_word(memory,globals::active_viewport,camera);
+        pack(memory,0x800b6568u+camera*0x180u,projection);pack(memory,0x800b6de8u+camera*0x180u,view);
+        rr64_world_terrain_begin(memory.data());rr64_world_terrain_draw(memory.data());
+        check(rr64::world::terrain_statistics().frames==priorFrames+camera+1,"local window admits nearby terrain for each of four split screens");
+    }
+    testLocalWindow=true;
+    memory_word(memory,rr64::lod::test::Fixture::race_player_count,1u);memory_word(memory,0x8009DB88u,1u);
+    if(diagnostics){
+        const auto generation=rr64::world::terrain_statistics().evidence.generation;
+        setup(0,51);memory_word(memory,globals::active_viewport,0u);
+        memory_word(memory,globals::multiplayer_game_setup_words[0],123u);
+        rr64_world_terrain_begin(memory.data());rr64_world_terrain_draw(memory.data());
+        const auto evidence=rr64::world::terrain_statistics().evidence;
+        check(evidence.generation==generation+1 && evidence.raw_setup[2]==123 &&
+            !evidence.views[1].valid && evidence.views[0].stock_union[0]==0,
+            "changed raw setup resets prior view evidence and union");
+    }
+    memory_word(memory,rr64::lod::test::Fixture::race_player_count,1u);memory_word(memory,0x8009DB88u,1u);memory_word(memory,globals::active_viewport,0u);
     // Cell culling stays conservative at intersecting planes and rejects only
     // wholly outside bounds; the actual camera producer is tested separately.
     rr64::world::TerrainCellAsset cell; cell.minimum = {-1,-1,-1}; cell.maximum = {1,1,1};
@@ -182,6 +230,30 @@ void driver_checks() {
     auto outside = view; outside[12] = 10;
     check(!rr64::world::terrain_in_frustum(cell, outside, view, view), "wholly outside clip bounds are culled");
 
+    for(unsigned sample=0;sample<1000;++sample){
+        auto root=view;root[12]=float(int(sample%31)-15)*.2f;root[13]=float(int(sample%19)-9)*.2f;root[14]=float(int(sample%13)-6)*.2f;
+        const bool reference=rr64::world::terrain_in_frustum(cell,root,view,projection);
+        const bool fast=rr64::world::WorldFrustum(view,projection).intersects(cell.minimum,cell.maximum,root);
+        check(!reference||fast,"plane culling never drops a box retained by the corner reference");
+    }
+    // The format permits all 4,900 cells, even though the locked ROM occupies
+    for(unsigned sample=0;sample<20000;++sample){
+        auto camera=view;
+        const float angle=float(sample%360)*0.0174532925f;
+        camera[0]=std::cos(angle);camera[1]=std::sin(angle);
+        camera[4]=-camera[1];camera[5]=camera[0];
+        camera[12]=float(int(sample%113)-56)*10.0f;
+        cell.minimum={-20,-40,-10};cell.maximum={30,50,80};
+        cell.authored_origin={float(int(sample%71)-35)*100,float(int(sample%53)-26)*100};
+        const auto root=rr64::world::terrain_matrix(cell,17,-23);
+        const rr64::world::WorldFrustum frustum(camera,projection);
+        check(frustum.intersects(cell.minimum,cell.maximum,root)==
+            frustum.intersectsTerrain(rr64::world::TerrainBounds(cell.minimum,cell.maximum),root[12],root[13]),
+            "shared terrain bounds match general matrix culling across camera rotations and translations");
+    }
+    {const rr64::world::WorldFrustum frustum(view,projection);
+        check(!frustum.intersectsTerrain(rr64::world::TerrainBounds({1,0,0},{0,1,1}),0,0),
+            "invalid terrain extents are rejected");}
     // The format permits all 4,900 cells, even though the locked ROM occupies
     // fewer. Exercise the actual writer at that bound, then omit the first
     // cell to prove IDs survive visible-list compaction and buffer changes.
@@ -278,9 +350,39 @@ void course_checks(){
     check(!frame.read(&memory,4)[71]&&frame.read(&memory,5)[71]&&frame.read(&other,4)[71],"course selection cannot leak into another frame or mapping");
 }
 int main() {
+    if(std::getenv("RR64_BOUNDS_BENCHMARK")){
+        std::array<float,16> identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+        rr64::world::WorldFrustum frustum(identity,identity);
+        std::vector<rr64::world::Matrix> matrices;
+        std::array<float,3> low{-1,-1,-1},high{1,1,1};
+        const rr64::world::TerrainBounds bounds(low,high);
+        for(unsigned i=0;i<4900;++i){auto m=identity;m[10]=.5f;
+            m[12]=float(int(i%70)-35)*.1f;m[13]=float(int(i/70)-35)*.1f;matrices.push_back(m);}
+        for(unsigned run=0;run<6;++run)for(unsigned order=0;order<2;++order){
+            const bool fast=(order+run)%2;unsigned hits=0;
+            const auto start=std::chrono::steady_clock::now();
+            for(unsigned repeat=0;repeat<200;++repeat)for(const auto& m:matrices)
+                hits+=fast?frustum.intersectsTerrain(bounds,m[12],m[13]):frustum.intersects(low,high,m);
+            const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+            std::printf("bounds-benchmark run=%u specialized=%u ms=%.3f hits=%u\n",run,unsigned(fast),ms,hits);
+        }
+    }
+    {using namespace rr64::world;
+        const std::array<float,16> camera{0,1,0,0,-1,0,0,0,0,0,1,0,20,-10,0,1};
+        double x=0,y=0;check(terrain_eye(camera,x,y)&&x==10&&y==20,"camera eye inversion follows rotation and translation");
+        check(window_cell(0,0,5999,0,6001,1,false),"entry uses nearest box edge");
+        check(!window_cell(0,0,6500,0,6501,1,false)&&window_cell(0,0,6500,0,6501,1,true),"hysteresis retains an entered cell without admitting a new distant cell");
+        check(!window_cell(0,0,7501,0,7502,1,true),"outer boundary bounds retained terrain");
+        check(!window_cell(0,0,0,0,1,1,false,0),"zero slider adds no terrain");
+        check(!window_cell(0,0,7000,0,7001,1,false,6000)&&window_cell(0,0,7000,0,7001,1,false,8000),"slider increases admission distance");
+        check(!window_cell(0,0,10001,0,10002,1,true,8000),"retention stays bounded at adjusted distance");
+    }
     course_checks();
     matrix_parity(); driver_checks();
     std::printf("Terrain driver smoke: %s (%d failures); actual7D814,frustum,privatecache,slot lifetime,Gfx guards\n",
         failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }
+
+extern "C" bool rr64_draw_distance_enabled(){return testLocalWindow;}
+extern "C" double rr64_draw_distance_percent(){return 100.0;}

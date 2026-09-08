@@ -134,6 +134,7 @@ target_include_directories(recompui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 add_executable(RoadRash64Recompiled
     src/main.cpp
+    src/rr64_weapon_render.cpp
     src/register_overlays.cpp
     src/rr64_achievement_audio.cpp
     src/rr64_music.cpp
@@ -313,6 +314,15 @@ target_compile_definitions(RR64SchedulerQueueLegacySiSmoke PRIVATE
 add_executable(RR64FrameMetadataSmoke EXCLUDE_FROM_ALL
     tests/rr64_frame_metadata_smoke.cpp
 )
+
+add_executable(RR64PipelineDiagnosticsSmoke EXCLUDE_FROM_ALL
+    tests/rr64_pipeline_diagnostics_smoke.cpp)
+target_compile_features(RR64PipelineDiagnosticsSmoke PRIVATE cxx_std_17)
+target_include_directories(RR64PipelineDiagnosticsSmoke PRIVATE "${RT64_ROOT}/src")
+add_executable(RR64LocalPlayersSmoke EXCLUDE_FROM_ALL tests/rr64_local_players_smoke.cpp)
+target_compile_features(RR64LocalPlayersSmoke PRIVATE cxx_std_17)
+target_include_directories(RR64LocalPlayersSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/RecompFrontend/recompinput/include")
 
 add_executable(RR64AuthoredFrameSmoke EXCLUDE_FROM_ALL
     tests/rr64_authored_frame_smoke.cpp
@@ -743,3 +753,6 @@ add_executable(RR64ActionBindingsSmoke EXCLUDE_FROM_ALL tests/rr64_action_bindin
 target_compile_features(RR64ActionBindingsSmoke PRIVATE cxx_std_20)
 target_link_libraries(RR64ActionBindingsSmoke PRIVATE recompinput)
 target_include_directories(RR64ActionBindingsSmoke PRIVATE $<TARGET_PROPERTY:recompinput,INCLUDE_DIRECTORIES>)
+
+add_executable(RR64WeaponRenderSmoke EXCLUDE_FROM_ALL tests/rr64_weapon_render_smoke.cpp src/rr64_weapon_render.cpp)
+target_include_directories(RR64WeaponRenderSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include" "${N64MODERN_RUNTIME_ROOT}/ultramodern/include" "${N64MODERN_RUNTIME_ROOT}/librecomp/include" "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon")

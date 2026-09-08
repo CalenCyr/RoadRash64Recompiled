@@ -1,4 +1,5 @@
 #include "rr64_online_race_sync.hpp"
+#include "rr64_local_players.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -125,6 +126,18 @@ std::string safe_display_name(const netplay::Status& status, std::uint8_t slot) 
 
 void apply_online_display_names(unsigned char* rdram) {
     const netplay::Status status = netplay::get_status();
+    if (!status.active && rdram && local_players::active.load(std::memory_order_acquire)) {
+        static_assert(engine::globals::multiplayer_display_name_stride == 12);
+        const auto names = local_players::snapshot();
+        for (unsigned slot = 0; slot < names.size(); ++slot) {
+            const auto address = engine::globals::multiplayer_display_names +
+                slot * engine::globals::multiplayer_display_name_stride;
+            for (unsigned i = 0; i < engine::globals::multiplayer_display_name_stride; ++i) {
+                engine::write_s8(rdram, address + i, i < names[slot].size() ? names[slot][i] : 0);
+            }
+        }
+        return;
+    }
     if (!status.active || !status.connected || status.phase < netplay::Phase::CharacterSelect ||
         status.local_slot >= netplay::kMaximumPlayers) {
         return;

@@ -1,4 +1,5 @@
 #include "rr64_actor_render_fixture.hpp"
+#include "rr64_world_render.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -272,6 +273,48 @@ bool check_results_scenes() {
 }
 }
 
+bool check_split_screen() {
+    using namespace rr64::engine;
+    using namespace rr64::lod;
+    using Fixture = rr64::lod::test::Fixture;
+    auto f = std::make_unique<Fixture>();
+    auto store = std::make_unique<SnapshotStore>();
+    f->register_allocations(*store);
+    bool world_gate_passed = check(rr64::world::supported_scene(f->live.data()), "single-camera world extension remains supported");
+    write_u32(f->live.data(), Fixture::race_player_count, 4u);
+    write_u32(f->live.data(), 0x8009DB88u, 4u);
+    write_u16(f->live.data(), globals::gameplay_pause_state, 1u);
+    bool passed = world_gate_passed && check(!rr64::world::supported_scene(f->live.data()) &&
+        supported_scene(f->live.data()), "actor split-screen admission does not enable single-camera world buffers");
+    for (unsigned round = 0; round < 2; ++round) {
+        for (unsigned view = 0; view < 4; ++view) {
+            write_u32(f->live.data(), globals::active_viewport, view);
+            store->invalidate();
+            store->begin_pose_epoch(f->live.data());
+            f->prepare();
+            if (round) {
+                passed &= check(store->seed_previous_rider_children(f->live.data(), f->shadow.data(),
+                    Fixture::rider_node, view, 0u, true), "each camera retains its own previous child pose");
+                float child = 0;
+                read_float(f->shadow.data(), Fixture::rider_pose + 0x20u, child);
+                passed &= check(child == 10.0f + view, "other cameras cannot overwrite animation history");
+            }
+            write_float(f->shadow.data(), Fixture::rider_pose + 0x20u, 10.0f + view);
+            const auto original = f->live;
+            passed &= check(store->publish(f->live.data(), f->shadow.data(), Fixture::bike_node,
+                Fixture::rider_node, view, 0u), "split-screen publishes a certified pair for each camera");
+            for (unsigned slot = 0; slot < 2; ++slot) {
+                passed &= check(store->find(f->live.data(), Fixture::bike_node, view, slot) &&
+                    store->find(f->live.data(), Fixture::rider_node, view, slot), "both actors use certified per-camera buffer slots");
+            }
+            passed &= check(!store->find(f->live.data(), Fixture::bike_node, (view + 1u) % 4u, 0u),
+                "another camera cannot consume this camera's snapshot");
+            passed &= check(f->live == original, "split-screen preparation preserves live guest bytes");
+        }
+    }
+    return passed;
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--crash-only") == 0) {
         const bool passed = check_crash_attachment();
@@ -490,6 +533,7 @@ int main(int argc, char** argv) {
     passed &= check_visual_attachment();
     passed &= check_crash_attachment();
     passed &= check_results_scenes();
+    passed &= check_split_screen();
     std::puts(passed ? "[RR64-LOD-TEST] PASS" : "[RR64-LOD-TEST] FAIL");
     return passed ? 0 : 1;
 }

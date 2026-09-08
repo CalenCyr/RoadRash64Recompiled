@@ -5,19 +5,19 @@
 
 namespace {
 struct Stamp { unsigned char* mapping = nullptr; unsigned epoch = 0; bool valid = false; };
-thread_local Stamp stamps[3][2];
+thread_local Stamp stamps[4][3][2];
 bool camera(unsigned char* m, const recomp_context* c, unsigned& view, unsigned& source, unsigned& slot) {
-    if (!c || !rr64_world_distance_enabled() || !rr64::lod::supported_scene(m)) return false;
+    if (!c || !rr64_world_distance_enabled() || !rr64::world::static_scene(m)) return false;
     source = unsigned(c->r18); slot = unsigned(c->r22);
     return source < 3u && slot < 2u &&
-        rr64::engine::read_u32(m, 0x8009db84u, view) && view == 0u;
+        rr64::engine::read_u32(m, 0x8009db84u, view) && view < 4u;
 }
 }
 extern "C" void rr64_world_camera_far(unsigned char* m, void* context) {
     auto* c = static_cast<recomp_context*>(context);
     unsigned view = 0, source = 0, slot = 0;
     if (!camera(m, c, view, source, slot)) return;
-    stamps[source][slot].valid = false;
+    stamps[view][source][slot].valid = false;
     constexpr float scales[]{4.0f, 100.0f, 10.0f};
     // Hook 16888 follows the legacy 32767 clamp, while f4 still holds the
     // source scale. All three banks use the same world near/far convention.
@@ -42,12 +42,12 @@ extern "C" void rr64_world_camera_normalization(unsigned char* m, void* context)
         rr64::engine::write_u16(m, address, 1u);
     unsigned epoch = 0;
     if (rr64::engine::read_u32(m, 0x800a1830u, epoch))
-        stamps[source][slot] = {m, epoch, true};
+        stamps[view][source][slot] = {m, epoch, true};
 }
 extern "C" int rr64_world_camera_ready(unsigned char* m, unsigned source, unsigned slot) {
-    unsigned epoch = 0;
-    if (source >= 3u || slot >= 2u || !rr64_world_distance_enabled() ||
-        !rr64::lod::supported_scene(m) || !rr64::engine::read_u32(m, 0x800a1830u, epoch)) return 0;
-    const auto& stamp = stamps[source][slot];
+    unsigned epoch = 0, view = 0;
+    if (!rr64::engine::read_u32(m, 0x8009db84u, view) || view >= 4u || source >= 3u || slot >= 2u || !rr64_world_distance_enabled() ||
+        !rr64::world::static_scene(m) || !rr64::engine::read_u32(m, 0x800a1830u, epoch)) return 0;
+    const auto& stamp = stamps[view][source][slot];
     return stamp.valid && stamp.mapping == m && stamp.epoch == epoch;
 }

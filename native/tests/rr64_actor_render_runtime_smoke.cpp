@@ -827,6 +827,29 @@ int main(int argc, char** argv) {
         test_float_context_copies(fixture);
         return 0;
     }
+    // Run actual hook transactions for every local camera, with both slots.
+    for (unsigned players = 2; players <= 4; ++players) {
+        for (unsigned view = 0; view < players; ++view) {
+            for (unsigned slot = 0; slot < 2; ++slot) {
+                fixture.live = original_memory;
+                write_u32(live_mapping, Fixture::race_player_count, players);
+                write_u32(live_mapping, 0x8009DB88u, players);
+                write_u32(live_mapping, globals::active_viewport, view);
+                write_u32(live_mapping, globals::actor_render_buffer_slot, slot);
+                const auto before = fixture.live;
+                prepare(fixture, 1);
+                rr64_lod_begin_draw(live_mapping);
+                require(rr64_lod_select(live_mapping, Fixture::bike_node, 2u) == (enabled ? 0u : 2u),
+                    "split-screen bike selection follows MAX LOD in every viewport and slot");
+                rr64_lod_end_actor();
+                require(rr64_lod_select(live_mapping, Fixture::rider_node, 2u) == (enabled ? 0u : 2u),
+                    "split-screen rider selection follows MAX LOD in every viewport and slot");
+                rr64_lod_end_draw(live_mapping);
+                require(fixture.live == before, "split-screen restores every borrowed guest byte");
+            }
+        }
+    }
+    fixture.live = original_memory;
     prepare(fixture, 0);
     require(fixture.live == original_memory,
         "preparation must preserve every byte of real RDRAM, including physics and animation");

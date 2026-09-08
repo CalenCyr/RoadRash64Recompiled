@@ -50,7 +50,7 @@ bool prepare_held_bike_pose(unsigned char* scratch, std::uint32_t node,
         if (!read_u32(scratch, constant[0], bits) || bits != constant[1]) { return false; }
     }
     std::uint32_t type = 0, entity = 0, owner = 0, rider_node = 0, model_state = 0, id = 0;
-    std::uint32_t graph = 0, detailed = 0, view = 0;
+    std::uint32_t graph = 0, detailed = 0, view = 0, views = 0;
     std::uint16_t pause = 0, enabled = 0, special = 0, active = 0, selected = 0, flags = 0;
     float speed = 0.0f, limit = 0.0f, effect = 0.0f;
     if (!valid_guest_range(node, 0x148u) ||
@@ -62,7 +62,8 @@ bool prepare_held_bike_pose(unsigned char* scratch, std::uint32_t node,
         !read_u32(scratch, model_state + actor_scene::model_state_pose_owner, owner) ||
         !read_u32(scratch, owner + actor_scene::pose_owner_rider_node, rider_node) ||
         !visual_pair(scratch, node, rider_node) ||
-        !read_u32(scratch, globals::active_viewport, view) || view != 0u ||
+        !read_u32(scratch, 0x8009DB88u, views) ||
+        !read_u32(scratch, globals::active_viewport, view) || view >= views ||
         !read_u16(scratch, globals::gameplay_pause_state, pause) || pause != 0u ||
         !read_u16(scratch, 0x800A65BCu, enabled) || enabled == 0u ||
         !read_u16(scratch, 0x800D8570u + id * 0x118u + 0x24u, active) || active == 0u ||

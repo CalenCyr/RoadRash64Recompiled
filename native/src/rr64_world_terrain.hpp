@@ -4,6 +4,19 @@
 
 namespace rr64::world {
 using Matrix = std::array<float, 16>;
+// Cell bit i is row*70+column; these are observations, not course ownership.
+struct TerrainViewEvidence {
+    bool valid = false;
+    unsigned epoch = 0, stock = 0, extended = 0, triangles = 0, excluded = 0;
+    float x = 0, y = 0;
+    std::array<unsigned long long, 77> stock_union{}, extended_last{};
+};
+struct TerrainEvidence {
+    bool enabled = false;
+    unsigned generation = 0;
+    std::array<unsigned, 19> raw_setup{}; // mode, pending, then engine setup words
+    std::array<TerrainViewEvidence, 4> views{};
+};
 // Identity-quaternion 7D814 convention: Z basis is halved, translation is raw.
 Matrix terrain_matrix(const TerrainCellAsset& cell, float origin_x, float origin_y) noexcept;
 bool terrain_in_frustum(const TerrainCellAsset& cell, const Matrix& model,
@@ -14,6 +27,7 @@ struct TerrainStatistics {
     unsigned course_excluded_cells = 0;
     unsigned stock_course_excluded = 0;
     unsigned long long frames = 0, refusals = 0;
+    TerrainEvidence evidence{};
 };
 TerrainStatistics terrain_statistics() noexcept;
 // Called by the existing runtime immediately before it reinitializes its heap.
