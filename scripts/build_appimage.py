@@ -18,6 +18,16 @@ every bundled library is replaced with a pristine, unmodified copy from
 the host, and a small custom AppRun sets LD_LIBRARY_PATH instead of
 relying on per-library RPATH patches - sidestepping the corruption
 without giving up linuxdeploy's dependency discovery.
+
+Deliberately does NOT add extra exclusions beyond linuxdeploy's own
+exclude-list (earlier revisions of this script excluded libsystemd/
+libselinux/libmount/libblkid too, as a blanket "these segfaulted once"
+precaution taken before the pristine-copy fix above existed). Once every
+library is copied pristine, that crash risk is gone for all of them
+equally, and excluding a library instead means silently depending on the
+host having it - which broke the AppImage on SteamOS (Steam Deck), which
+has no libselinux at all. Bundle everything linuxdeploy finds; don't
+assume any of it is safe to leave off the host's word alone.
 """
 import os
 import shutil
@@ -37,12 +47,6 @@ OUTPUT = NATIVE_BUILD / "RoadRash64Recompiled-x86_64.AppImage"
 
 LINUXDEPLOY_URL = "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage"
 APPIMAGETOOL_URL = "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
-
-# Libraries that are too tightly coupled to the host system to bundle
-# safely: on top of linuxdeploy's own exclude-list (glibc, libstdc++,
-# Mesa/GL, ...), these specifically crash during their ELF constructors
-# when relocated into an AppImage (see module docstring).
-EXTRA_EXCLUDES = ["libsystemd.so*", "libselinux.so*", "libmount.so*", "libblkid.so*"]
 
 SEARCH_DIRS = ["/lib64", "/usr/lib64", "/lib", "/usr/lib", "/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu"]
 
@@ -110,8 +114,6 @@ def main() -> None:
         "--desktop-file", str(desktop_path),
         "--icon-file", str(icon_path),
     ]
-    for pattern in EXTRA_EXCLUDES:
-        cmd += ["--exclude-library", pattern]
     subprocess.run(cmd, check=True, env=env)
 
     print("Replacing patchelf-modified libraries with pristine copies...")
