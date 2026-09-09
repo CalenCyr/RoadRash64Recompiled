@@ -369,5 +369,12 @@
     "commit": "83c58df8103dc7dca423dfd824992af94d49bed6",
     "patch": null,
     "extraFiles": []
+  },
+  {
+    "path": "native/lib/ffmpeg",
+    "url": "https://github.com/FFmpeg/FFmpeg.git",
+    "commit": "38b88335f99e76ed89ff3c93f877fdefce736c13",
+    "patch": null,
+    "extraFiles": []
   }
 ]

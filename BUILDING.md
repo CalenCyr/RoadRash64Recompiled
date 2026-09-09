@@ -1,28 +1,49 @@
-# Building Release 1.0 yourself
+# Building yourself
 
-The game executable is built ahead of time. Players of the binary release only select a ROM; these instructions are for compiling from source.
+The game executable is built ahead of time. Players of the binary release only select a ROM; these instructions are for compiling from source, on Windows or Linux.
 
 ## Prerequisites
+
+### Windows
 
 - 64-bit Windows and **Visual Studio 2022**, with Desktop development with C++, the x64 Windows SDK, and the **C++ Clang tools for Windows** component (ClangCL toolset).
 - Git, CMake 3.20 or newer, and Python 3.11 or newer available on PATH.
 - Internet access to obtain pinned open-source dependencies, SDL2 and Opus.
-- Your own supported Road Rash 64 USA v1.0 ROM. No ROM download is performed by these scripts.
 
-Open a Visual Studio Developer PowerShell with the x64 environment initialized. Work from the source repository root. Commands below are PowerShell commands; adjust only your ROM path and build parallelism as needed.
+### Linux
+
+- A 64-bit distro with a C++20-capable compiler (GCC or Clang), `make`, `pkg-config`, and `ninja-build`. On Fedora: `sudo dnf install gcc-c++ clang make ninja-build pkg-config`.
+- Git, CMake 3.20 or newer, and Python 3.11 or newer available on PATH.
+- SDL2 development package (`sudo dnf install SDL2-devel` on Fedora, `libsdl2-dev` on Debian/Ubuntu).
+- Internet access to obtain pinned open-source dependencies (SDL2, Opus, and — Linux only — a minimal FFmpeg build compiled from source for custom soundtrack decoding; see `native/lib/ffmpeg` and `native/CMakeLists.txt`).
+- To package a portable AppImage afterward: ImageMagick (`sudo dnf install ImageMagick`) and `curl`. No other setup needed — the AppImage tooling downloads itself.
+
+Both platforms: your own supported Road Rash 64 USA v1.0 ROM. No ROM download is performed by these scripts.
 
 ## Obtain the source and dependencies
 
-```powershell
-git clone https://github.com/linkssy2/RoadRash64Recompiled.git
+```bash
+git clone https://github.com/CalenCyr/RoadRash64Recompiled.git
 cd RoadRash64Recompiled
-git checkout v1.0.0
 python scripts/setup_dependencies.py
 ```
 
-Until the repository/tag is published, extract the prepared Source ZIP and run the same setup command from its root. `dependencies.lock.json` records the exact upstream commits, including nested dependencies. The script applies the checked-in `dependency-patches` and `dependency-overrides`; cloning only current upstream branches does not reproduce this release. Existing conflicting folders/files cause an error rather than being erased. Use a fresh source folder for a clean build.
+(Windows: use `python`, not `python3`, in a Visual Studio Developer PowerShell with the x64 environment initialized; the rest of the commands below are otherwise identical across platforms except where noted.)
+
+`dependencies.lock.json` records the exact upstream commits, including nested dependencies. The script applies the checked-in `dependency-patches` and `dependency-overrides`; cloning only current upstream branches does not reproduce this build. Existing conflicting folders/files cause an error rather than being erased. Use a fresh source folder for a clean build.
+
+If a pinned dependency's `dependency-patches` entry changes after you've already checked it out (for example, after pulling upstream changes), re-running the script can fail with "patch does not apply" — that means the checkout still has an older patch applied on top of the same pinned commit. Reset that one dependency folder to pristine and retry:
+
+```bash
+cd native/lib/<the dependency that failed>
+git checkout -- .
+cd -
+python scripts/setup_dependencies.py
+```
 
 ## Stage your ROM and build the translators
+
+### Windows
 
 ```powershell
 python tools/stage_rom.py "C:\YourDumps\Road Rash 64 (USA).z64"
@@ -30,9 +51,19 @@ cmake -S tools/N64Recomp -B build/toolchain -G "Visual Studio 17 2022" -A x64 -T
 cmake --build build/toolchain --config Release --target N64RecompCLI RSPRecomp --parallel 2
 ```
 
-The staging tool normalizes supported byte order and checks the ROM hash. It writes the working ROM to ignored `build/roadrash64.us.z64`. It does not modify the original input.
+### Linux
+
+```bash
+python3 tools/stage_rom.py "/path/to/Road Rash 64 (USA).z64"
+cmake -S tools/N64Recomp -B build/toolchain -G Ninja
+cmake --build build/toolchain --target N64RecompCLI RSPRecomp --parallel "$(nproc)"
+```
+
+The staging tool normalizes supported byte order and checks the ROM hash. It writes the working ROM to ignored `build/roadrash64.us.z64`. It does not modify the original input. The built tools land at `build/toolchain/N64Recomp` and `build/toolchain/RSPRecomp` on both platforms (`.exe` suffix on Windows).
 
 ## Generate CPU and audio code locally
+
+### Windows
 
 ```powershell
 $cpu = Get-ChildItem build/toolchain -Recurse -Filter N64Recomp.exe | Select-Object -First 1
@@ -44,9 +75,20 @@ if ($LASTEXITCODE -ne 0) { throw "CPU recompilation failed" }
 if ($LASTEXITCODE -ne 0) { throw "Audio recompilation failed" }
 ```
 
-Generated code belongs under ignored `build/RecompiledFuncs`. It is excluded from the public source archive and must not be committed. The checked-in symbol map and hooks are the release inputs; do not replace them with an older generated symbol map.
+### Linux
+
+Run from the repository root, so the relative paths inside the `.toml` configs resolve correctly:
+
+```bash
+./build/toolchain/N64Recomp config/roadrash64.us.toml
+./build/toolchain/RSPRecomp config/roadrash64.us.audio_rsp.toml
+```
+
+Generated code belongs under ignored `build/RecompiledFuncs`. It is excluded from the public source archive and must not be committed. The checked-in symbol map and hooks are the release inputs; do not replace them with an older generated symbol map. If you pull source changes that touch `config/roadrash64.us.toml`, the generated `funcs_*.c` bodies can go stale against updated native function signatures (a compile error citing a mismatched argument count is the usual symptom) — re-run both commands above, then rebuild.
 
 ## Compile the native application
+
+### Windows
 
 ```powershell
 cmake -S native -B native/build -G "Visual Studio 17 2022" -A x64 -T ClangCL
@@ -55,23 +97,57 @@ cmake --build native/build --config Release --target RoadRash64Recompiled RoadRa
 
 The executable, frontend assets and required graphics/SDL DLLs are placed under `native/build/bin`. Run `RoadRash64Recompiled.exe` there and select your supported ROM. Keep the DLLs and assets with the EXE. `RoadRash64DirectStart.exe` uses the same configured ROM and settings.
 
-Build time and memory use depend on the machine. Start with two parallel jobs if compiler memory is limited. Do not copy a game's installed AppData/config folder into a public package; it can contain the locally stored ROM and saves.
+### Linux
+
+```bash
+cmake -S native -B native/build -G Ninja
+cmake --build native/build --target RoadRash64Recompiled --parallel "$(nproc)"
+```
+
+The executable and frontend assets are placed under `native/build/bin`; run `RoadRash64Recompiled` there and select your supported ROM. Custom-soundtrack decoding (FLAC/MP3/MP4/M4A/AAC/WMA) statically links a minimal FFmpeg built from the pinned source in `native/lib/ffmpeg` as part of this step — no system `ffmpeg`/`ffmpeg-devel` package is required, and none of FFmpeg's shared libraries are needed at runtime either.
+
+Build time and memory use depend on the machine; on Linux, the first build additionally compiles that vendored FFmpeg subset, adding a couple of minutes. Do not copy a game's installed AppData/config folder (`~/.config/RoadRash64Recompiled` on Linux) into a public package; it can contain the locally stored ROM and saves.
+
+## Packaging a portable Linux release (AppImage)
+
+After a successful Linux build (above), package it into a self-contained AppImage that runs on other machines without any dependencies installed:
+
+```bash
+python3 scripts/build_appimage.py
+```
+
+This produces `native/build/RoadRash64Recompiled-x86_64.AppImage`. It downloads and caches its own packaging tools (`linuxdeploy`, `appimagetool`) under `native/build/appimage-tools/` on first run — no `sudo` needed. Test the result before distributing it:
+
+```bash
+./native/build/RoadRash64Recompiled-x86_64.AppImage
+```
+
+The script deliberately does its own post-processing pass after `linuxdeploy` runs, rather than trusting `linuxdeploy`'s bundled library copies directly — see the comment at the top of `scripts/build_appimage.py` for why (an older bundled `patchelf` corrupts libraries built with newer toolchains' compressed relative relocations, in a way that only surfaces as a segfault at launch, not at build time). If a future `linuxdeploy` release fixes that upstream, the workaround can likely be simplified.
 
 ## Validation and limitations
 
-The release preparation used the existing Windows toolchain and regression suite. The four dependency patches were applied to clean archives of their pinned upstream revisions and compared against the working sources (ignoring line-ending differences). The release owner additionally reports a successful source build by another user on a different computer; that tester’s build log and archive checksum were not supplied. A successful compilation or offline input/rendering test does not prove the absence of runtime bugs; multiplayer and the latest menu changes still require broader live testing.
+The release preparation used the existing Windows toolchain and regression suite. The four dependency patches were applied to clean archives of their pinned upstream revisions and compared against the working sources (ignoring line-ending differences). The release owner additionally reports a successful source build by another user on a different computer; that tester's build log and archive checksum were not supplied. A successful compilation or offline input/rendering test does not prove the absence of runtime bugs; multiplayer and the latest menu changes still require broader live testing. The Linux port and its AppImage packaging are comparatively newer and have seen less real-world testing than the Windows build.
 
 For an initial ROM-free check after configuring:
 
 ```powershell
+# Windows
 cmake --build native/build --config Release --target RR64PopupInputSmoke RR64ActionBindingsSmoke RR64AchievementAudioSmoke --parallel 2
 & native/build/bin/RR64PopupInputSmoke.exe
 & native/build/bin/RR64ActionBindingsSmoke.exe
 & native/build/bin/RR64AchievementAudioSmoke.exe
 ```
 
-Some other developer tests require locally generated fixtures or the local ROM and are not part of the player release. Routine diagnostic reports can be explicitly enabled in a developer session with `$env:RR64_DIAGNOSTICS='1'`; leave this unset for normal play. Never publish ROM-containing fixtures or personal logs.
+```bash
+# Linux
+cmake --build native/build --target RR64PopupInputSmoke RR64ActionBindingsSmoke RR64AchievementAudioSmoke --parallel "$(nproc)"
+./native/build/bin/RR64PopupInputSmoke
+./native/build/bin/RR64ActionBindingsSmoke
+./native/build/bin/RR64AchievementAudioSmoke
+```
+
+Some other developer tests require locally generated fixtures or the local ROM and are not part of the player release; a few `EXCLUDE_FROM_ALL` test targets are also still Windows-only (they reference Windows-specific paths) and have not been ported. Routine diagnostic reports can be explicitly enabled in a developer session with `$env:RR64_DIAGNOSTICS='1'` (PowerShell) or `RR64_DIAGNOSTICS=1` (Linux, as an environment variable prefix); leave this unset for normal play. Never publish ROM-containing fixtures or personal logs.
 
 ## Versioning and existing mods
 
-The application version is **1.0.0**, package version **v1.0.0**, public designation **Release 1.0**. Internal development builds previously used 1.0.6. The mod loader retains an explicit compatibility floor of 1.0.6 because the interfaces were not downgraded when the public version was reset. This allows existing working mods to remain installed; it does not alter their files or pretend that the application version is 1.0.6. Mods requesting newer unsupported interfaces still fail their version check.
+The application version is **1.1.0**. The mod loader retains an explicit compatibility floor of 1.0.6 from earlier internal development builds; this allows existing working mods to remain installed without pretending the application version is 1.0.6. Mods requesting newer unsupported interfaces still fail their version check.

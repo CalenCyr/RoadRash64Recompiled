@@ -42,6 +42,7 @@ Exact dependency revisions and local modifications are recorded in dependencies.
 - native/lib/RecompFrontend/recompui/lib/RmlUi: [LICENSE.txt](licenses/dependencies/native/lib/RecompFrontend/recompui/lib/RmlUi/LICENSE.txt) ([upstream](https://github.com/mikke89/RmlUi))
 - native/lib/RecompFrontend/recompui/lib/freetype-windows-binaries: [LICENSE.TXT](licenses/dependencies/native/lib/RecompFrontend/recompui/lib/freetype-windows-binaries/LICENSE.TXT) ([upstream](https://github.com/ubawurinna/freetype-windows-binaries/))
 - native/lib/RecompFrontend/recompui/lib/lunasvg: [LICENSE](licenses/dependencies/native/lib/RecompFrontend/recompui/lib/lunasvg/LICENSE) ([upstream](https://github.com/sammycage/lunasvg))
+- native/lib/ffmpeg: [COPYING.LGPLv2.1](licenses/dependencies/native/lib/ffmpeg/COPYING.LGPLv2.1) ([upstream](https://github.com/FFmpeg/FFmpeg.git)) — Linux only, built with a minimal audio-decode-only configuration (no `--enable-gpl`, no encoders/muxers/network/video/hardware acceleration) so it stays under the LGPL rather than pulling in GPL-only components. Statically linked into the player executable to decode custom soundtrack FLAC/MP3/MP4/M4A/AAC/WMA files; the Windows build uses the OS-provided Media Foundation codecs for the same formats instead.
 - opus: [COPYING](licenses/opus/COPYING)
 - sdl2: [COPYING.txt](licenses/sdl2/COPYING.txt)
 

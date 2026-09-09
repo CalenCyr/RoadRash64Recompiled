@@ -118,6 +118,73 @@ else()
     set(RR64_SDL2_INCLUDE_DIRS "${SDL2_INCLUDE_DIRS}")
     set(RR64_SDL2_LIB_DIRS "")
     set(RR64_SDL2_TARGET SDL2::SDL2)
+
+    # Custom soundtrack support decodes FLAC/MP3/MP4/M4A/AAC/WMA through a
+    # minimal, statically linked FFmpeg built here from the pinned source in
+    # native/lib/ffmpeg: audio decode only, no encoders, muxers, network,
+    # video, or hardware acceleration. This mirrors how the Windows build
+    # uses the OS-provided Media Foundation codecs for the same formats, but
+    # avoids pulling in the huge dependency tree (200+ shared libraries,
+    # including unrelated things like Samba and video encoders) that a
+    # distro's full-featured FFmpeg package drags in.
+    include(ExternalProject)
+    include(ProcessorCount)
+    ProcessorCount(RR64_FFMPEG_NPROC)
+    if(RR64_FFMPEG_NPROC EQUAL 0)
+        set(RR64_FFMPEG_NPROC 1)
+    endif()
+    set(RR64_FFMPEG_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/lib/ffmpeg")
+    set(RR64_FFMPEG_PREFIX "${CMAKE_BINARY_DIR}/ffmpeg-install")
+    set(RR64_FFMPEG_INCLUDE_DIR "${RR64_FFMPEG_PREFIX}/include")
+    set(RR64_FFMPEG_LIBS
+        "${RR64_FFMPEG_PREFIX}/lib/libavformat.a"
+        "${RR64_FFMPEG_PREFIX}/lib/libavcodec.a"
+        "${RR64_FFMPEG_PREFIX}/lib/libswresample.a"
+        "${RR64_FFMPEG_PREFIX}/lib/libavutil.a"
+    )
+    ExternalProject_Add(rr64_ffmpeg
+        SOURCE_DIR "${RR64_FFMPEG_SOURCE}"
+        BUILD_IN_SOURCE 0
+        CONFIGURE_COMMAND "${RR64_FFMPEG_SOURCE}/configure"
+            --disable-everything
+            --disable-programs
+            --disable-doc
+            --disable-avdevice
+            --disable-avfilter
+            --disable-swscale
+            --disable-network
+            --disable-encoders
+            --disable-muxers
+            --disable-bsfs
+            --disable-hwaccels
+            --disable-devices
+            --disable-x86asm
+            --disable-sdl2
+            --disable-libxcb
+            --disable-libxcb-shm
+            --disable-libxcb-xfixes
+            --disable-libxcb-shape
+            --disable-iconv
+            --disable-lzma
+            --disable-bzlib
+            --enable-decoder=mp3,mp3float,aac,flac,wmav1,wmav2
+            --enable-demuxer=mp3,mov,flac,asf,aac
+            --enable-parser=mpegaudio,aac,flac
+            --enable-protocol=file
+            --enable-swresample
+            --enable-static
+            --disable-shared
+            --extra-cflags=-fPIC
+            --prefix=${RR64_FFMPEG_PREFIX}
+        BUILD_COMMAND make -j${RR64_FFMPEG_NPROC}
+        INSTALL_COMMAND make install
+        BUILD_BYPRODUCTS ${RR64_FFMPEG_LIBS}
+        LOG_CONFIGURE ON
+        LOG_BUILD ON
+        LOG_INSTALL ON
+        USES_TERMINAL_CONFIGURE ON
+        USES_TERMINAL_BUILD ON
+    )
 endif()
 
 # Voice chat uses Opus' low-latency speech mode. Build it statically with the
@@ -778,6 +845,14 @@ target_link_directories(RR64MusicSmoke PRIVATE "${sdl2_SOURCE_DIR}/lib/x64")
 if(WIN32)
     target_link_libraries(RoadRash64Recompiled PRIVATE mfplat mfreadwrite mfuuid ole32)
     target_link_libraries(RR64MusicSmoke PRIVATE mfplat mfreadwrite mfuuid ole32)
+else()
+    add_dependencies(RoadRash64Recompiled rr64_ffmpeg)
+    target_include_directories(RoadRash64Recompiled PRIVATE "${RR64_FFMPEG_INCLUDE_DIR}")
+    target_link_libraries(RoadRash64Recompiled PRIVATE ${RR64_FFMPEG_LIBS} z pthread)
+
+    add_dependencies(RR64MusicSmoke rr64_ffmpeg)
+    target_include_directories(RR64MusicSmoke PRIVATE "${RR64_FFMPEG_INCLUDE_DIR}")
+    target_link_libraries(RR64MusicSmoke PRIVATE ${RR64_FFMPEG_LIBS} z pthread)
 endif()
 add_executable(RR64NetplayLimitSmoke EXCLUDE_FROM_ALL tests/rr64_netplay_limit_smoke.cpp src/rr64_netplay.cpp)
 target_include_directories(RR64NetplayLimitSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
