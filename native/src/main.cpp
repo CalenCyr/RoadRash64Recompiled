@@ -621,7 +621,7 @@ ultramodern::gfx_callbacks_t::gfx_data_t create_gfx() {
 ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::gfx_data_t) {
     rr64_log("[RR64-STAGE] create_window entered.\n");
     uint32_t flags = SDL_WINDOW_RESIZABLE;
-#if defined(RT64_SDL_WINDOW_VULKAN)
+#if defined(PLUME_SDL_VULKAN_ENABLED)
     flags |= SDL_WINDOW_VULKAN;
 #endif
 

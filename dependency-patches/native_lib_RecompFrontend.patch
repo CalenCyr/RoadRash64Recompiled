@@ -1519,3 +1519,15 @@ index 5ca5349..0ccecfa 100644
  }
  
  Rml::RenderInterface* recompui::RmlRenderInterface_RT64::get_rml_interface() {
+diff --git a/recompinput/include/recompinput/recompinput.h b/recompinput/include/recompinput/recompinput.h
+index 855ec2e..9a70053 100644
+--- a/recompinput/include/recompinput/recompinput.h
++++ b/recompinput/include/recompinput/recompinput.h
+@@ -2,6 +2,7 @@
+ 
+ #include "SDL.h"
+ #include "chrono"
++#include "string"
+ 
+ namespace recompinput {
+     constexpr size_t max_num_players_supported = 128;

@@ -37,7 +37,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NATIVE_BUILD = ROOT / "native" / "build"
+# Override to package a build made in a different directory, e.g. one built
+# inside a container against an older glibc for wider compatibility.
+NATIVE_BUILD = Path(os.environ["RR64_NATIVE_BUILD_DIR"]) if os.environ.get("RR64_NATIVE_BUILD_DIR") else ROOT / "native" / "build"
 BINARY = NATIVE_BUILD / "bin" / "RoadRash64Recompiled"
 ASSETS = NATIVE_BUILD / "bin" / "assets"
 ICON_SOURCE = ROOT / "native" / "assets" / "RoadRashIcon.png"
@@ -48,7 +50,7 @@ OUTPUT = NATIVE_BUILD / "RoadRash64Recompiled-x86_64.AppImage"
 LINUXDEPLOY_URL = "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage"
 APPIMAGETOOL_URL = "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
 
-SEARCH_DIRS = ["/lib64", "/usr/lib64", "/lib", "/usr/lib", "/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu"]
+SEARCH_DIRS = ["/lib64", "/usr/lib64", "/lib", "/usr/lib", "/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/usr/local/lib"]
 
 APPRUN = """#!/bin/sh
 HERE="$(dirname "$(readlink -f "${0}")")"

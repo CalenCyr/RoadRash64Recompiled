@@ -157,6 +157,7 @@ else()
             --disable-muxers
             --disable-bsfs
             --disable-hwaccels
+            --disable-libdrm
             --disable-devices
             --disable-x86asm
             --disable-sdl2

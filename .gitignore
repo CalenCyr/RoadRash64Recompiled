@@ -1,6 +1,7 @@
 # User data and generated game material
 build/
 native/build/
+native/build-*/
 engine/build/
 RecompiledFuncs/
 *.z64
