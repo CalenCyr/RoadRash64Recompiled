@@ -39,7 +39,7 @@ This is the same broad static-recompilation/user-ROM architecture described by [
 - **16:9 and 21:9 aspect options**, a **30–240 FPS presentation slider**, and D3D12/Vulkan rendering through RT64.
 - **Keyboard and controller remapping**, including **Eject from Bike** (left-stick click by default) and **Spoke Jam Attack** (right-stick click by default). With fists selected, the latter retains the existing punch/weapon-steal behavior and original proximity/timing rules.
 - **Persistent saves** through the virtual Controller Pak implementation and saved frontend settings.
-- **Optional custom music rotation** from the `music` folder. WAV/OGG and Windows-decoded formats including FLAC, MP3, MP4/M4A, AAC, and WMA are supported subject to codec availability. No additional music is included and there is no song-title popout.
+- **Optional custom music rotation** from the `music` folder. WAV, OGG, FLAC, MP3, MP4/M4A, AAC, and WMA are all supported on both Windows (via Windows Media Foundation) and Linux (via a statically linked FFmpeg subset). No additional music is included and there is no song-title popout.
 - **52 local achievements**, saved on this computer, with paged browsing. There is no RetroAchievements account login, account scoring, or unlock synchronization.
 - **Mod/texture-pack support** through Settings. The Windows package includes an optional conversion of Crisaty’s Remastered Edition pack; see its credits and installation instructions below.
 - A compact launcher, direct-start executable, and input guards intended to stop overlay dismissal from activating a menu behind it.
@@ -48,7 +48,11 @@ Draw Distance adjusts terrain and scenery range together. MAX LOD controls rider
 
 ## Requirements
 
-The supplied build targets **64-bit Windows**, with a CPU compatible with the build's Nehalem/SSE4-era instruction target and a GPU/driver supporting the selected RT64 D3D12 or Vulkan backend. Windows 10/11 are the intended environments; a broad hardware compatibility matrix has not been established. Custom media decoding uses Windows Media Foundation. Other operating systems are not supported by this release's build configuration.
+Both platforms need a CPU compatible with the build's Nehalem/SSE4-era instruction target; a broad hardware compatibility matrix has not been established for either.
+
+**Windows:** 64-bit Windows 10/11, and a GPU/driver supporting the selected RT64 D3D12 or Vulkan backend. Custom media decoding uses Windows Media Foundation.
+
+**Linux:** a 64-bit distro with a working Vulkan driver (Mesa RADV for AMD, NVIDIA's proprietary driver, or AMDVLK) — RT64 only targets D3D12 and Vulkan, and only Vulkan is available outside Windows, so there is no software-rendering fallback if the driver is missing or broken. A running audio server (PipeWire, PulseAudio, or ALSA) is also expected, as on any modern desktop Linux. There is no pre-built Linux download yet; see [BUILDING.md](BUILDING.md) to build from source and optionally package a portable AppImage. Custom media decoding is self-contained (a minimal FFmpeg subset is statically linked into the executable at build time) and needs no system codec packages at runtime.
 
 ## Multiplayer — early and very untested
 
