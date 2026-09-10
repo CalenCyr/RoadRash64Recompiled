@@ -23,7 +23,7 @@ struct Direction {
     int x = 0;
     int y = 0;
 
-    bool operator==(const Direction&) const = default;
+    bool operator==(const Direction &) const = default;
 };
 
 struct NavigationState {
@@ -92,12 +92,8 @@ bool valid_grid_value(float value) {
     return std::isfinite(value) && value >= 1.0f && value <= 256.0f;
 }
 
-void step_cursor(
-    unsigned char* rdram,
-    Direction direction,
-    std::uint32_t column_count,
-    std::uint32_t maximum_row)
-{
+void step_cursor(unsigned char *rdram, Direction direction, std::uint32_t column_count,
+                 std::uint32_t maximum_row) {
     if (column_count == 0 || column_count > 16 || maximum_row > 8) {
         return;
     }
@@ -119,13 +115,9 @@ void step_cursor(
     const int last_column = static_cast<int>(column_count) - 1;
     const int last_row = static_cast<int>(maximum_row);
     const int current_column = std::clamp(
-        static_cast<int>(std::floor(std::max(0.0f, cursor_x) / cell_width)),
-        0,
-        last_column);
+        static_cast<int>(std::floor(std::max(0.0f, cursor_x) / cell_width)), 0, last_column);
     const int current_row = std::clamp(
-        static_cast<int>(std::floor(std::max(0.0f, cursor_y) / cell_height)),
-        0,
-        last_row);
+        static_cast<int>(std::floor(std::max(0.0f, cursor_y) / cell_height)), 0, last_row);
     const int target_column = std::clamp(current_column + direction.x, 0, last_column);
     const int target_row = std::clamp(current_row - direction.y, 0, last_row);
 
@@ -140,11 +132,8 @@ void step_cursor(
 
 } // namespace
 
-extern "C" void rr64_name_entry_navigation(
-    unsigned char* rdram,
-    unsigned int column_count,
-    unsigned int maximum_row)
-{
+extern "C" void rr64_name_entry_navigation(unsigned char *rdram, unsigned int column_count,
+                                           unsigned int maximum_row) {
     using namespace rr64::engine;
     std::uint16_t buttons = 0;
     std::int8_t stick_x = 0;
@@ -179,8 +168,7 @@ extern "C" void rr64_name_entry_navigation(
     if (should_step) {
         g_navigation.held_direction = direction;
         g_navigation.next_repeat = now + kInitialRepeatDelay;
-    }
-    else if (now >= g_navigation.next_repeat) {
+    } else if (now >= g_navigation.next_repeat) {
         should_step = true;
         g_navigation.next_repeat = now + kRepeatInterval;
     }

@@ -1,12 +1,14 @@
 """Fetch pinned dependencies and apply this release's local changes. No ROM downloads."""
 from pathlib import Path
-import hashlib,json,subprocess,shutil
+import hashlib,json,subprocess,shutil,sys
 ROOT=Path(__file__).resolve().parents[1]
 def run(*args,cwd=ROOT,check=True):
     return subprocess.run(args,cwd=cwd,check=check,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 def main():
     records=json.loads((ROOT/'dependencies.lock.json').read_text())
     for entry in records:
+        if entry.get('platforms') and sys.platform not in entry['platforms']:
+            continue
         target=(ROOT/entry['path']).resolve()
         if ROOT not in target.parents:raise ValueError('Dependency path outside repository')
         if not (target/'.git').exists():

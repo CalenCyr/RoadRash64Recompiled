@@ -2,10 +2,18 @@
 #include "rr64_native.hpp"
 #include "rr64_weapon_diagnostics.hpp"
 #include <vector>
+#include <algorithm>
 #include <bit>
 #include <cstdio>
 #include <cstring>
 static unsigned calls=0,expectedSource=2;static bool enabled=true;
+static bool preparedAvailable=false;
+static unsigned preparedSource=1;
+static std::array<unsigned,7> preparedRoot{};
+extern "C" int rr64_lod_weapon_root(unsigned char*,unsigned,unsigned* words,unsigned* source){
+    if(!preparedAvailable)return 0;
+    std::copy(preparedRoot.begin(),preparedRoot.end(),words);*source=preparedSource;return 1;
+}
 extern "C" int rr64_render_only_max_lod_enabled(){return enabled;}
 extern "C" void func_80016A18(unsigned char*,recomp_context* c){if(c->r4!=expectedSource)std::abort();++calls;c->r4=99;c->r8=55;}
 int main(){
@@ -83,6 +91,22 @@ int main(){
     rr64_weapon_end();check(memory==originalMemory);
     rr64_weapon_begin(m,node,graph);rr64_weapon_begin(m,node,graph+32);
     check(memory==originalMemory);rr64_weapon_end();
+    // Distant stock cop root was zero in the captured failing view. The
+    // prepared rider root must win, retaining animation and exact restoration.
+    for(unsigned i=0;i<7;++i){write_u32(m,pose+i*4,0);preparedRoot[i]=std::bit_cast<unsigned>(i==0?18000.f:float(i));}
+    preparedAvailable=true;preparedSource=2;expectedSource=2;
+    const auto beforePrepared=memory;
+    for(unsigned view=0;view<4;++view){
+        write_u32(m,globals::active_viewport,view);
+        const auto beforeView=memory;
+        rr64_weapon_begin(m,node,graph);
+        for(unsigned i=0;i<7;++i){unsigned actual=0;read_u32(m,weaponPose+i*4,actual);check(actual==preparedRoot[i]);}
+        const auto prior=calls;rr64_weapon_source(m,&c,graph);check(calls==prior+1);
+        rr64_weapon_end();check(memory==beforeView);
+    }
+    preparedAvailable=false;
+    write_u32(m,globals::active_viewport,1);
+    check(memory==beforePrepared);
     write_u32(m,0x8009DB88,1);const auto singleViewMemory=memory;
     rr64_weapon_begin(m,node,graph);rr64_weapon_end();check(memory==singleViewMemory);
     std::printf("Weapon scope/source-transition and read-only packed-matrix capture: %u failures\n",failures);return failures?1:0;

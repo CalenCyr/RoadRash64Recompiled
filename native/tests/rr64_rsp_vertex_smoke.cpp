@@ -66,6 +66,14 @@ int main(int argc, char **argv) {
             reinterpret_cast<float *>(ram.data() + 0x7000)[i * 3 + k] = float(i * 3 + k) * -0.125f;
         }
     }
+    if (mode & 1024) {
+        if ((uint64_t(vertices)+batch-1)/batch*32*sizeof(RSP::Vertex) > ram.size()-0x10000) return 2;
+        for (unsigned j=0;j<vertices;j+=batch) {
+            auto *packet=reinterpret_cast<RSP::Vertex *>(ram.data()+0x10000+(j/batch)*32*sizeof(RSP::Vertex));
+            std::copy_n(source,32,packet);
+            packet[0].x=int16_t(j%30000);
+        }
+    }
     auto prepare = [&]() {
         workload.reset(); rsp.reset();
         rsp.projectionIndex = 0; rsp.projectionMatrixChanged = false; rsp.viewportChanged = false;
@@ -79,6 +87,11 @@ int main(int argc, char **argv) {
         rsp.lightsChanged = false; rsp.lookAtChanged = false; rsp.fogChanged = false;
         rsp.vertexLightIndex = 3; rsp.vertexLightCount = 2; rsp.vertexFogIndex = 2; rsp.vertexLookAtIndex = 1;
         rsp.curViewProjIndex = 5; rsp.curTransformIndex = 7;
+        if (mode & 128) {
+            TransformGroup terrain{}; terrain.matrixId=0x52510000;
+            workload.drawData.transformGroups.push_back(terrain);
+            rsp.extended.curModelMatrixIdGroupIndex=int(workload.drawData.transformGroups.size()-1);
+        }
         rsp.vertexColorPDAddress = 0x4000;
         setUserFogEnabled((mode & 4) == 0);
     };
@@ -86,10 +99,13 @@ int main(int argc, char **argv) {
     uint64_t checksum = 0;
     for (unsigned frame = 0; frame < frames + 20; ++frame) {
         prepare();
+        if (mode & 256) source[0].x=int16_t(frame*17-600);
+        if (mode & 512) {rsp.textureState.sc=uint16_t(65535-frame*123);rsp.textureState.tc=uint16_t(frame*419);}
+        if (mode & 2048) rsp.modelViewProjMatrix[3][0]=float(frame)*0.125f;
         const auto start = std::chrono::steady_clock::now();
         for (unsigned j = 0; j < vertices; j += batch) {
             const unsigned format = (mode & 64) ? ((j / batch) % 3) : ((mode & 16) ? 2 : ((mode & 8) ? 1 : 0));
-            const uint32_t address = 0x1000 + format * 0x1000;
+            const uint32_t address = (mode & 1024) ? 0x10000+(j/batch)*32*sizeof(RSP::Vertex) : 0x1000 + format * 0x1000;
             if (mode & 32) {
                 rsp.setVertexSegmentV1(true, G_EX_VERTEX_POSITION, 0x6000, address);
                 rsp.setVertexSegmentV1(true, G_EX_VERTEX_VELOCITY, 0x7000, address);

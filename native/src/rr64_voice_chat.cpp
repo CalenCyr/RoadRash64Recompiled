@@ -37,8 +37,8 @@ struct PlaybackState {
 
 std::atomic_bool g_enabled = true;
 SDL_AudioDeviceID g_capture_device = 0;
-OpusEncoder* g_encoder = nullptr;
-std::array<OpusDecoder*, netplay::kMaximumPlayers> g_decoders{};
+OpusEncoder *g_encoder = nullptr;
+std::array<OpusDecoder *, netplay::kMaximumPlayers> g_decoders{};
 std::array<PlaybackState, netplay::kMaximumPlayers> g_playback{};
 std::mutex g_playback_mutex;
 bool g_race_active = false;
@@ -62,7 +62,7 @@ void reset_codecs() {
     if (g_encoder != nullptr) {
         opus_encoder_ctl(g_encoder, OPUS_RESET_STATE);
     }
-    for (OpusDecoder* decoder : g_decoders) {
+    for (OpusDecoder *decoder : g_decoders) {
         if (decoder != nullptr) {
             opus_decoder_ctl(decoder, OPUS_RESET_STATE);
         }
@@ -110,11 +110,11 @@ bool ensure_capture() {
     return true;
 }
 
-OpusDecoder* decoder_for(std::uint8_t slot) {
+OpusDecoder *decoder_for(std::uint8_t slot) {
     if (slot >= g_decoders.size()) {
         return nullptr;
     }
-    OpusDecoder*& decoder = g_decoders[slot];
+    OpusDecoder *&decoder = g_decoders[slot];
     if (decoder == nullptr) {
         int error = OPUS_OK;
         decoder = opus_decoder_create(kVoiceRate, 1, &error);
@@ -144,12 +144,8 @@ void capture_frames() {
         if (SDL_DequeueAudio(g_capture_device, pcm.data(), frame_bytes) != frame_bytes) {
             break;
         }
-        const int encoded_size = opus_encode(
-            g_encoder,
-            pcm.data(),
-            kFrameSamples,
-            encoded.data(),
-            static_cast<opus_int32>(encoded.size()));
+        const int encoded_size = opus_encode(g_encoder, pcm.data(), kFrameSamples, encoded.data(),
+                                             static_cast<opus_int32>(encoded.size()));
         if (encoded_size > 0) {
             netplay::submit_local_voice(std::span<const std::uint8_t>(
                 encoded.data(), static_cast<std::size_t>(encoded_size)));
@@ -159,44 +155,39 @@ void capture_frames() {
 
 void decode_received_frames() {
     std::vector<netplay::ReceivedVoiceFrame> frames = netplay::take_received_voice_frames();
-    for (const netplay::ReceivedVoiceFrame& frame : frames) {
+    for (const netplay::ReceivedVoiceFrame &frame : frames) {
         if (frame.speaker_slot >= netplay::kMaximumPlayers || frame.payload_size == 0 ||
             frame.payload_size > frame.payload.size()) {
             continue;
         }
-        OpusDecoder* decoder = decoder_for(frame.speaker_slot);
+        OpusDecoder *decoder = decoder_for(frame.speaker_slot);
         if (decoder == nullptr) {
             continue;
         }
         std::array<std::int16_t, kFrameSamples> decoded{};
-        const int decoded_samples = opus_decode(
-            decoder,
-            frame.payload.data(),
-            frame.payload_size,
-            decoded.data(),
-            kFrameSamples,
-            0);
+        const int decoded_samples = opus_decode(decoder, frame.payload.data(), frame.payload_size,
+                                                decoded.data(), kFrameSamples, 0);
         if (decoded_samples <= 0) {
             continue;
         }
 
         std::lock_guard lock(g_playback_mutex);
-        PlaybackState& playback = g_playback[frame.speaker_slot];
+        PlaybackState &playback = g_playback[frame.speaker_slot];
         if (playback.target_gain <= 0.001f) {
             continue;
         }
-        playback.samples.insert(
-            playback.samples.end(), decoded.begin(), decoded.begin() + decoded_samples);
+        playback.samples.insert(playback.samples.end(), decoded.begin(),
+                                decoded.begin() + decoded_samples);
         while (playback.samples.size() > kMaximumPlaybackSamples) {
             playback.samples.pop_front();
         }
     }
 }
 
-void update_spatial_gains(const netplay::Status& status) {
+void update_spatial_gains(const netplay::Status &status) {
     netplay::RiderState local{};
     const bool has_local = status.local_slot < netplay::kMaximumPlayers &&
-        netplay::get_rider_state(status.local_slot, local);
+                           netplay::get_rider_state(status.local_slot, local);
 
     std::array<float, netplay::kMaximumPlayers> gains{};
     if (has_local) {
@@ -228,7 +219,7 @@ void update_spatial_gains(const netplay::Status& status) {
     }
 }
 
-bool prime_playback(PlaybackState& playback) {
+bool prime_playback(PlaybackState &playback) {
     if (playback.primed) {
         return true;
     }
@@ -256,8 +247,8 @@ bool enabled() {
 
 void update() {
     const netplay::Status status = netplay::get_status();
-    const bool active = enabled() && status.active && status.connected &&
-        status.phase == netplay::Phase::Race;
+    const bool active =
+        enabled() && status.active && status.connected && status.phase == netplay::Phase::Race;
     if (!active) {
         netplay::take_received_voice_frames();
         if (g_race_active) {
@@ -281,23 +272,23 @@ void mix(std::span<std::int16_t> stereo_samples, std::uint32_t output_rate) {
         return;
     }
 
-    const double source_step = static_cast<double>(kVoiceRate) /
-        static_cast<double>(output_rate);
+    const double source_step = static_cast<double>(kVoiceRate) / static_cast<double>(output_rate);
     std::lock_guard lock(g_playback_mutex);
-    for (PlaybackState& playback : g_playback) {
+    for (PlaybackState &playback : g_playback) {
         if (playback.gain <= 0.001f || !prime_playback(playback)) {
             continue;
         }
         for (std::size_t output = 0; output + 1 < stereo_samples.size(); output += 2) {
-            const float interpolated = static_cast<float>(playback.current) +
+            const float interpolated =
+                static_cast<float>(playback.current) +
                 (static_cast<float>(playback.next) - static_cast<float>(playback.current)) *
                     static_cast<float>(playback.phase);
-            const int voice = static_cast<int>(std::lround(
-                interpolated * playback.gain * kVoiceMixGain));
-            stereo_samples[output] = static_cast<std::int16_t>(std::clamp(
-                static_cast<int>(stereo_samples[output]) + voice, -32768, 32767));
-            stereo_samples[output + 1] = static_cast<std::int16_t>(std::clamp(
-                static_cast<int>(stereo_samples[output + 1]) + voice, -32768, 32767));
+            const int voice =
+                static_cast<int>(std::lround(interpolated * playback.gain * kVoiceMixGain));
+            stereo_samples[output] = static_cast<std::int16_t>(
+                std::clamp(static_cast<int>(stereo_samples[output]) + voice, -32768, 32767));
+            stereo_samples[output + 1] = static_cast<std::int16_t>(
+                std::clamp(static_cast<int>(stereo_samples[output + 1]) + voice, -32768, 32767));
 
             playback.phase += source_step;
             while (playback.phase >= 1.0) {
@@ -323,7 +314,7 @@ void shutdown() {
         opus_encoder_destroy(g_encoder);
         g_encoder = nullptr;
     }
-    for (OpusDecoder*& decoder : g_decoders) {
+    for (OpusDecoder *&decoder : g_decoders) {
         if (decoder != nullptr) {
             opus_decoder_destroy(decoder);
             decoder = nullptr;

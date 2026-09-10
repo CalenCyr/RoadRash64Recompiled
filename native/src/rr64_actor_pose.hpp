@@ -54,40 +54,28 @@ struct SegmentTableSnapshot {
 
 float fixed_16_16_to_float(std::int16_t integer, std::uint16_t fraction) noexcept;
 
-bool decode_n64_matrix(
-    unsigned char* rdram,
-    std::uint32_t matrix_address,
-    Matrix4x4Snapshot& snapshot) noexcept;
+bool decode_n64_matrix(unsigned char *rdram, std::uint32_t matrix_address,
+                       Matrix4x4Snapshot &snapshot) noexcept;
 
-bool capture_model_graph_topology(
-    unsigned char* rdram,
-    std::uint32_t first_record,
-    ModelGraphTopologySnapshot& snapshot) noexcept;
+bool capture_model_graph_topology(unsigned char *rdram, std::uint32_t first_record,
+                                  ModelGraphTopologySnapshot &snapshot) noexcept;
 
-bool capture_render_transform_set(
-    unsigned char* rdram,
-    std::uint32_t transform_buffer,
-    std::uint16_t transform_count,
-    RenderTransformSetSnapshot& snapshot) noexcept;
+bool capture_render_transform_set(unsigned char *rdram, std::uint32_t transform_buffer,
+                                  std::uint16_t transform_count,
+                                  RenderTransformSetSnapshot &snapshot) noexcept;
 
-bool capture_segment_table(
-    unsigned char* rdram,
-    std::uint32_t node,
-    std::uint32_t lod,
-    std::uint16_t segment_count,
-    SegmentTableSnapshot& snapshot) noexcept;
+bool capture_segment_table(unsigned char *rdram, std::uint32_t node, std::uint32_t lod,
+                           std::uint16_t segment_count, SegmentTableSnapshot &snapshot) noexcept;
 
 // Strict compatibility deliberately ignores absolute guest addresses but
 // requires the same record traversal and transform allocation. Equal matrix
 // counts alone are not enough to establish a safe cross-tier mapping.
-bool compatible_transform_topology(
-    const ModelGraphTopologySnapshot& left,
-    const ModelGraphTopologySnapshot& right) noexcept;
+bool compatible_transform_topology(const ModelGraphTopologySnapshot &left,
+                                   const ModelGraphTopologySnapshot &right) noexcept;
 
 // Weaker than exact topology compatibility: permits different byte strides
 // between records but requires the same ordered transform-producing records.
-bool compatible_transform_allocation(
-    const ModelGraphTopologySnapshot& left,
-    const ModelGraphTopologySnapshot& right) noexcept;
+bool compatible_transform_allocation(const ModelGraphTopologySnapshot &left,
+                                     const ModelGraphTopologySnapshot &right) noexcept;
 
 } // namespace rr64::engine

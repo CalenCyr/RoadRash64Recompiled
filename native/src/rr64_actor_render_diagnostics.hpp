@@ -7,25 +7,53 @@
 
 namespace rr64::lod {
 struct RootRangeSample {
-    std::uint32_t node=0,record=0,type=0,view=0,epoch=0,source=0;
-    float x=0,y=0,z=0,maximum=0;
+    std::uint32_t node = 0, record = 0, type = 0, view = 0, epoch = 0, source = 0;
+    float x = 0, y = 0, z = 0, maximum = 0;
 };
 struct RootRangeReport {
-    std::array<RootRangeSample,64> samples{};
-    std::uint64_t examined=0,nearLimit=0,replaced=0;
+    std::array<RootRangeSample, 64> samples{};
+    std::uint64_t examined = 0, nearLimit = 0, replaced = 0;
 };
 RootRangeReport take_root_range_report();
 enum class ActivityCounter : std::size_t {
-    Draw, PairObserved, PairQueued, Prepare, EmptyPrepare, Select, InactiveSelect,
-    SceneRejected, Allocation, AllocationAccepted, PreflightRejected,
-    StageRejected, PublishRejected, MissingBikeRoot, MissingRiderRoot,
-    MissingRiderAnimation, MissingBikeAnimation, ConsumedSlot0, ConsumedSlot1,
-    StockLodMismatch, BindingRejected,
-    BikeTier1ToMax, BikeTier2ToMax, RiderTier1ToMax, RiderTier2ToMax,
-    BikeFarNormalized, RiderFarNormalized,
-    RiderRangeObserved, RiderRangeRestored, RiderRangeRejected,
-    FarBikeFallback, FarRiderFallback, HeldBikePrepared, FullWeightRiderPrepared,
-    HeldResultsPrepared, FinishBlendPrepared, FinishSeedPrepared, Count
+    Draw,
+    PairObserved,
+    PairQueued,
+    Prepare,
+    EmptyPrepare,
+    Select,
+    InactiveSelect,
+    SceneRejected,
+    Allocation,
+    AllocationAccepted,
+    PreflightRejected,
+    StageRejected,
+    PublishRejected,
+    MissingBikeRoot,
+    MissingRiderRoot,
+    MissingRiderAnimation,
+    MissingBikeAnimation,
+    ConsumedSlot0,
+    ConsumedSlot1,
+    StockLodMismatch,
+    BindingRejected,
+    BikeTier1ToMax,
+    BikeTier2ToMax,
+    RiderTier1ToMax,
+    RiderTier2ToMax,
+    BikeFarNormalized,
+    RiderFarNormalized,
+    RiderRangeObserved,
+    RiderRangeRestored,
+    RiderRangeRejected,
+    FarBikeFallback,
+    FarRiderFallback,
+    HeldBikePrepared,
+    FullWeightRiderPrepared,
+    HeldResultsPrepared,
+    FinishBlendPrepared,
+    FinishSeedPrepared,
+    Count
 };
 
 struct ActorDetailSnapshot {

@@ -123,14 +123,12 @@ struct ActorSceneSnapshot {
 // Captures one coherent, read-only view after the original update callback.
 // A false return means the fixed frame globals could not be read. Individual
 // bike entries remain invalid when their owning pool is unavailable.
-bool capture_frame_snapshot(unsigned char* rdram, FrameSnapshot& snapshot) noexcept;
+bool capture_frame_snapshot(unsigned char *rdram, FrameSnapshot &snapshot) noexcept;
 
 // Captures the render-side actor graph after the original scene preparation
 // pass. The scene list is bounded and cycle-checked, and every bike node is
 // matched back to its authoritative physics record before it is exposed.
-bool capture_actor_scene_snapshot(
-    unsigned char* rdram,
-    std::uint32_t viewport,
-    ActorSceneSnapshot& snapshot) noexcept;
+bool capture_actor_scene_snapshot(unsigned char *rdram, std::uint32_t viewport,
+                                  ActorSceneSnapshot &snapshot) noexcept;
 
 } // namespace rr64::engine

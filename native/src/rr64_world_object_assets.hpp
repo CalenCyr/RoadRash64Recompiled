@@ -51,13 +51,12 @@ struct ObjectAssets {
 };
 
 // Batching wraps each packet's unchanged triangles in the RR64 renderer command.
-bool build_object_assets(std::span<const std::uint8_t> rom,
-    ObjectAssets& output, std::string& error) noexcept;
-bool build_object_assets(std::span<const std::uint8_t> rom,
-    ObjectAssets& output, std::string& error, bool batch_triangles) noexcept;
+bool build_object_assets(std::span<const std::uint8_t> rom, ObjectAssets &output,
+                         std::string &error) noexcept;
+bool build_object_assets(std::span<const std::uint8_t> rom, ObjectAssets &output,
+                         std::string &error, bool batch_triangles) noexcept;
 
-bool build_object_assets(std::span<const std::uint8_t> rom,
-    ObjectAssets& output, std::string& error, bool batch_triangles, bool compile_packets) noexcept;
+bool build_object_assets(std::span<const std::uint8_t> rom, ObjectAssets &output,
+                         std::string &error, bool batch_triangles, bool compile_packets) noexcept;
 
 } // namespace rr64::world
-

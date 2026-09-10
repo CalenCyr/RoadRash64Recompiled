@@ -110,4 +110,58 @@ int main(){
  std::sort(times.begin(),times.end());std::printf("PASS actual-R22-oracles=%u proven=%u deferred=%u history-recovery=1 proof-median-ms=%.6f digest=%llu\n",proven+deferred,proven,deferred,times[times.size()/2],(unsigned long long)digest);
  std::vector<double> matchtimes;for(unsigned i=0;i<35;++i){auto f=frame(1);auto start=std::chrono::steady_clock::now();match(f,p,*q);if(i>=5)matchtimes.push_back(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count());}std::sort(matchtimes.begin(),matchtimes.end());
  std::printf("matching-median-ms=%.6f\n",matchtimes[matchtimes.size()/2]);
+ // One immutable workload can require a partial certificate for one frame
+ // pair and a full certificate for another. Pair policy must not poison reuse.
+ seed(q->workloads[0],7,8,0);seed(q->workloads[1],7,8,0);
+ q->workloads[0].paused=q->workloads[1].paused=false;
+ auto old=frame(0),moving=frame(1);
+ q->workloads[1].drawData.worldTransforms[0][3][0]=8;
+ q->workloads[1].drawData.viewTransforms[0][3][0]=-2;
+ match(moving,old,*q);
+ check(bool(q->workloads[1].rr64GeometryCache[1]),"Partial certificate not populated");
+ q->workloads[1].drawData.worldTransforms[0][3][0]=0;
+ q->workloads[1].drawData.viewTransforms[0][3][0]=0;
+ auto still=frame(1);match(still,old,*q);
+ check(still.rr64InterpolationCompatible && q->workloads[1].rr64GeometryCache[0],"Partial evidence reused as full");
+ // Paused editing is explicitly uncached, including leaving pause afterwards.
+ q->workloads[1].paused=true;
+ q->workloads[1].drawData.posFloats[0]=std::numeric_limits<float>::quiet_NaN();
+ auto edited=frame(1);match(edited,old,*q);
+ check((edited.rr64GeometryRejectionReasons&2)!=0,"Paused geometry edit used stale evidence");
+ check(!q->workloads[1].rr64GeometryCache[0]&&!q->workloads[1].rr64GeometryCache[1],"Paused certificate retained");
+ q->workloads[1].drawData.posFloats[0]=0;q->workloads[1].paused=false;
+ auto resumed=frame(1);match(resumed,old,*q);check(resumed.rr64InterpolationCompatible,"Resume retained invalid certificate");
+ seed(q->workloads[1],7,8,0);
+ std::swap(q->workloads[1].drawData.faceIndices[1],q->workloads[1].drawData.faceIndices[2]);
+ auto replaced=frame(1);match(replaced,old,*q);
+ check((replaced.rr64GeometryRejectionReasons&16)!=0,"Reused allocation retained old topology");
+ std::puts("PASS geometry certificate lifecycle, policy changes and paused edits");
+ // Reproduce a small direction reversal with real frame matching, not just the
+ // policy helper. Compare explicit world tags with unrelated actors and bounds.
+ for(unsigned id:{0x52510000u,0x52522690u,0x52517fffu,0x52518000u,0x12345678u})
+ for(float delta:{0.02f,4.9f,5.0f,50.0f}) {
+  seed(q->workloads[0],1,8,0);seed(q->workloads[1],1,8,0);
+  for(unsigned w=0;w<2;w++)q->workloads[w].drawData.transformGroups[1].matrixId=id;
+  auto previous=frame(0),current=frame(1);previous.matched=true;
+  auto &history=previous.frameMap.workloads[0];history.mapped=true;history.transforms.resize(1);history.viewProjections.resize(1);
+  history.transforms[0].rigidBody.linearVelocity={-1,0,0};
+  previous.buildTransformIdMap(q->workloads[0],q->workloads[0].transformIdMap,q->workloads[0].transformIgnoredIds);
+  q->workloads[1].drawData.worldTransforms[0][3][0]=delta;
+  q->workloads[1].drawData.viewTransforms[0][3][0]=-0.2f;
+  const bool expected=(id==0x52510000u||id==0x52522690u||id==0x52517fffu)&&delta<5;
+  const bool rejected=RR64TranslationRejection::reject(true,current,previous,*q);
+  match(current,previous,*q);
+  const auto &body=current.frameMap.workloads[1].transforms[0].rigidBody;
+  check(body.lerpTranslation==expected,"Small world reversal policy or actor isolation failed");
+  check(current.rr64InterpolationCompatible==expected,"Full scene did not agree with small-world motion");
+  check(rejected!=expected,"Early proof diverged from full matcher");
+  check(std::abs(body.linearVelocity[0]-delta)<0.00001f,"AUTO velocity history was discarded");
+ }
+ TransformGroup staticGroup;staticGroup.matrixId=0x52520000;staticGroup.ordering=G_EX_ORDER_LINEAR;
+ auto origin=hlslpp::float4x4::identity(),invalidMatrix=origin;
+ invalidMatrix[3][0]=std::numeric_limits<float>::quiet_NaN();
+ check(!RR64StaticWorldMotion::smallTranslation(staticGroup,origin,invalidMatrix),"Nonfinite translation accepted");
+ staticGroup.positionInterpolation=G_EX_COMPONENT_SKIP;
+ check(!RR64StaticWorldMotion::smallTranslation(staticGroup,origin,origin),"Explicit hold policy overridden");
+ std::puts("PASS small static-world reversal, actor isolation, jump boundary and early-proof agreement");
 }

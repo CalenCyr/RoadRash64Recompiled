@@ -1,15 +1,24 @@
 cmake_minimum_required(VERSION 3.20)
 project(RoadRash64Recompiled LANGUAGES C CXX)
 
+if(UNIX)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_GNU_SOURCE")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GNU_SOURCE")
+endif()
+
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(NOT WIN32)
-    message(FATAL_ERROR "The v0.3.0 native probe currently targets Windows x64 only.")
+if(NOT MSVC)
+    add_compile_options(
+        "$<$<COMPILE_LANGUAGE:C>:-include;stdint.h>"
+        "$<$<COMPILE_LANGUAGE:CXX>:-include;cstdint>"
+    )
 endif()
+
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "Road Rash 64 Recompiled requires a 64-bit build.")
@@ -62,6 +71,18 @@ set(BUILD_SHARED_LIBS OFF)
 add_compile_definitions(HLSL_CPU NOMINMAX _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
 
 add_subdirectory("${RT64_ROOT}" "${CMAKE_BINARY_DIR}/rt64")
+# Optional, local compiler profile for the frame matcher. Empty by default so
+# source builds require no private training artifact. Keep this module-specific:
+# an offline matcher profile does not represent simulation/audio/gameplay.
+set(RR64_MATCHER_PROFILE "" CACHE FILEPATH "Optional Clang profile for RT64 frame matching")
+if(RR64_MATCHER_PROFILE)
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR NOT EXISTS "${RR64_MATCHER_PROFILE}")
+        message(FATAL_ERROR "RR64_MATCHER_PROFILE requires Clang and an existing profile file")
+    endif()
+    set_property(SOURCE "${RT64_ROOT}/src/hle/rt64_game_frame.cpp"
+        TARGET_DIRECTORY rt64 APPEND PROPERTY COMPILE_OPTIONS
+        "$<$<CONFIG:Release>:/clang:-fprofile-instr-use=${RR64_MATCHER_PROFILE}>")
+endif()
 add_subdirectory("${N64MODERN_RUNTIME_ROOT}" "${CMAKE_BINARY_DIR}/N64ModernRuntime")
 target_include_directories(rt64 PRIVATE "${CMAKE_BINARY_DIR}/rt64/src")
 
@@ -84,6 +105,7 @@ if(MSVC)
     )
 else()
     target_compile_options(RecompiledFuncs PRIVATE
+        -march=nehalem
         -fno-strict-aliasing
         -Wno-unused-variable
         -Wno-implicit-function-declaration
@@ -91,12 +113,93 @@ else()
 endif()
 
 include(FetchContent)
-set(SDL2_VERSION "2.30.3" CACHE STRING "SDL2 development package version")
-FetchContent_Declare(
-    sdl2
-    URL "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-VC.zip"
-)
-FetchContent_MakeAvailable(sdl2)
+if(WIN32)
+    set(SDL2_VERSION "2.30.3" CACHE STRING "SDL2 development package version")
+    FetchContent_Declare(sdl2
+        URL "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-VC.zip")
+    FetchContent_MakeAvailable(sdl2)
+    set(RR64_SDL2_INCLUDE_DIRS "${sdl2_SOURCE_DIR}/include")
+    set(RR64_SDL2_LIB_DIRS "${sdl2_SOURCE_DIR}/lib/x64")
+    set(RR64_SDL2_TARGET SDL2)
+else()
+    find_package(SDL2 2.26 REQUIRED)
+    set(RR64_SDL2_INCLUDE_DIRS "${SDL2_INCLUDE_DIRS}")
+    set(RR64_SDL2_LIB_DIRS "")
+    set(RR64_SDL2_TARGET SDL2::SDL2)
+
+    # Custom soundtrack support decodes FLAC/MP3/MP4/M4A/AAC/WMA through a
+    # minimal, bundled shared FFmpeg built here from the pinned source in
+    # native/lib/ffmpeg: audio decode only, no encoders, muxers, network,
+    # video, or hardware acceleration. This mirrors how the Windows build
+    # uses the OS-provided Media Foundation codecs for the same formats, but
+    # avoids pulling in the huge dependency tree (200+ shared libraries,
+    # including unrelated things like Samba and video encoders) that a
+    # distro's full-featured FFmpeg package drags in.
+    # Bundled shared libraries keep LGPL replacement straightforward. Exact
+    # sources, configure flags and notices accompany the experimental download.
+    include(ExternalProject)
+    include(ProcessorCount)
+    ProcessorCount(RR64_FFMPEG_NPROC)
+    if(RR64_FFMPEG_NPROC EQUAL 0)
+        set(RR64_FFMPEG_NPROC 1)
+    endif()
+    set(RR64_FFMPEG_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/lib/ffmpeg")
+    set(RR64_FFMPEG_PREFIX "${CMAKE_BINARY_DIR}/ffmpeg-install")
+    set(RR64_FFMPEG_INCLUDE_DIR "${RR64_FFMPEG_PREFIX}/include")
+    set(RR64_FFMPEG_LIBS
+        "${RR64_FFMPEG_PREFIX}/lib/libavformat.so"
+        "${RR64_FFMPEG_PREFIX}/lib/libavcodec.so"
+        "${RR64_FFMPEG_PREFIX}/lib/libswresample.so"
+        "${RR64_FFMPEG_PREFIX}/lib/libavutil.so"
+    )
+    ExternalProject_Add(rr64_ffmpeg
+        SOURCE_DIR "${RR64_FFMPEG_SOURCE}"
+        BUILD_IN_SOURCE 0
+        CONFIGURE_COMMAND "${RR64_FFMPEG_SOURCE}/configure"
+            --disable-autodetect
+            --disable-gpl
+            --disable-nonfree
+            --disable-everything
+            --disable-programs
+            --disable-doc
+            --disable-avdevice
+            --disable-avfilter
+            --disable-swscale
+            --disable-network
+            --disable-encoders
+            --disable-muxers
+            --disable-bsfs
+            --disable-hwaccels
+            --disable-libdrm
+            --disable-devices
+            --disable-x86asm
+            --disable-sdl2
+            --disable-libxcb
+            --disable-libxcb-shm
+            --disable-libxcb-xfixes
+            --disable-libxcb-shape
+            --disable-iconv
+            --disable-lzma
+            --disable-bzlib
+            --enable-decoder=mp3,mp3float,aac,flac,wmav1,wmav2
+            --enable-demuxer=mp3,mov,flac,asf,aac
+            --enable-parser=mpegaudio,aac,flac
+            --enable-protocol=file
+            --enable-swresample
+            --disable-static
+            --enable-shared
+            --extra-cflags=-fPIC
+            --prefix=${RR64_FFMPEG_PREFIX}
+        BUILD_COMMAND make -j${RR64_FFMPEG_NPROC}
+        INSTALL_COMMAND make install
+        BUILD_BYPRODUCTS ${RR64_FFMPEG_LIBS}
+        LOG_CONFIGURE ON
+        LOG_BUILD ON
+        LOG_INSTALL ON
+        USES_TERMINAL_CONFIGURE ON
+        USES_TERMINAL_BUILD ON
+    )
+endif()
 
 # Voice chat uses Opus' low-latency speech mode. Build it statically with the
 # port so release packages do not require another runtime DLL.
@@ -125,12 +228,28 @@ if(MSVC)
         "-fspv-extension=SPV_KHR_ray_tracing"
         "-fspv-extension=SPV_EXT_descriptor_indexing")
     set(DXC "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxc.exe")
+else()
+    set(DXC_COMMON_OPTS "-I${CMAKE_CURRENT_SOURCE_DIR}/src")
+    set(DXC_SPV_OPTS "-spirv" "-fspv-target-env=vulkan1.0" "-fvk-use-dx-layout")
+    set(DXC_PS_OPTS "${DXC_COMMON_OPTS}" "-E" "PSMain" "-T" "ps_6_0" "-D" "DYNAMIC_RENDER_PARAMS")
+    set(DXC_VS_OPTS "${DXC_COMMON_OPTS}" "-E" "VSMain" "-T" "vs_6_0" "-D" "DYNAMIC_RENDER_PARAMS" "-fvk-invert-y")
+    set(DXC_CS_OPTS "${DXC_COMMON_OPTS}" "-E" "CSMain" "-T" "cs_6_0")
+    set(DXC_GS_OPTS "${DXC_COMMON_OPTS}" "-E" "GSMain" "-T" "gs_6_0")
+    set(DXC_RT_OPTS "${DXC_COMMON_OPTS}" "-D" "RT_SHADER" "-T" "lib_6_3"
+        "-fspv-target-env=vulkan1.1spirv1.4"
+        "-fspv-extension=SPV_KHR_ray_tracing"
+        "-fspv-extension=SPV_EXT_descriptor_indexing")
+    set(DXC "LD_LIBRARY_PATH=${RT64_ROOT}/src/contrib/dxc/lib/x64" "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxc-linux")
 endif()
 
 set(RECOMP_FRONTEND_N64MODERNRUNTIME_PATH "${N64MODERN_RUNTIME_ROOT}")
 set(RECOMP_FRONTEND_RT64_PATH "${RT64_ROOT}")
 add_subdirectory("${RECOMP_FRONTEND_ROOT}" "${CMAKE_BINARY_DIR}/RecompFrontend")
 target_include_directories(recompui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+if(RT64_SDL_WINDOW_VULKAN)
+    target_compile_definitions(recompui PUBLIC PLUME_SDL_VULKAN_ENABLED)
+endif()
 
 add_executable(RoadRash64Recompiled
     src/main.cpp
@@ -147,6 +266,10 @@ add_executable(RoadRash64Recompiled
     src/rr64_world_render.cpp
     src/rr64_world_camera.cpp
     src/rr64_video_mode.cpp
+    src/rr64_custom_cop.cpp
+    src/rr64_custom_cop_ui.cpp
+    src/rr64_custom_cop_runtime.cpp
+    src/rr64_local_race_options.cpp
     src/rr64_world_terrain_assets.cpp
     src/rr64_world_terrain.cpp
     src/rr64_world_object_assets.cpp
@@ -182,10 +305,10 @@ target_include_directories(RoadRash64Recompiled PRIVATE
     "${RECOMP_FRONTEND_ROOT}/recompinput/include"
     "${RECOMP_FRONTEND_ROOT}/recompui/include"
     "${RECOMP_FRONTEND_ROOT}/recompui/src"
-    "${sdl2_SOURCE_DIR}/include"
+    "${RR64_SDL2_INCLUDE_DIRS}"
 )
 
-target_link_directories(RoadRash64Recompiled PRIVATE "${sdl2_SOURCE_DIR}/lib/x64")
+target_link_directories(RoadRash64Recompiled PRIVATE ${RR64_SDL2_LIB_DIRS})
 
 if(MSVC)
     target_compile_options(RoadRash64Recompiled PRIVATE
@@ -209,20 +332,26 @@ target_link_libraries(RoadRash64Recompiled PRIVATE
     ultramodern
     rt64
     nfd
-    SDL2
+    ${RR64_SDL2_TARGET}
     opus
-    Winmm.lib
-    Ws2_32.lib
 )
+if(WIN32)
+    target_link_libraries(RoadRash64Recompiled PRIVATE Winmm.lib Ws2_32.lib)
+endif()
+
+if(WIN32)
+    add_custom_command(TARGET RoadRash64Recompiled POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${sdl2_SOURCE_DIR}/lib/x64/SDL2.dll"
+            "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxil.dll"
+            "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxcompiler.dll"
+            "$<TARGET_FILE_DIR:RoadRash64Recompiled>"
+    )
+endif()
 
 add_custom_command(TARGET RoadRash64Recompiled POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:RoadRash64Recompiled>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${sdl2_SOURCE_DIR}/lib/x64/SDL2.dll"
-        "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxil.dll"
-        "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxcompiler.dll"
-        "$<TARGET_FILE_DIR:RoadRash64Recompiled>"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/assets"
         "$<TARGET_FILE_DIR:RoadRash64Recompiled>/assets"
@@ -250,7 +379,9 @@ target_include_directories(RR64NetplaySmoke PRIVATE
     "${N64MODERN_RUNTIME_ROOT}/librecomp/include"
     "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon"
 )
-target_link_libraries(RR64NetplaySmoke PRIVATE Ws2_32.lib)
+if(WIN32)
+    target_link_libraries(RR64NetplaySmoke PRIVATE Ws2_32.lib)
+endif()
 
 # ROM-free host-audio queue policy and telemetry validation.
 add_executable(RR64AudioQueueSmoke EXCLUDE_FROM_ALL
@@ -320,6 +451,12 @@ add_executable(RR64PipelineDiagnosticsSmoke EXCLUDE_FROM_ALL
 target_compile_features(RR64PipelineDiagnosticsSmoke PRIVATE cxx_std_17)
 target_include_directories(RR64PipelineDiagnosticsSmoke PRIVATE "${RT64_ROOT}/src")
 add_executable(RR64LocalPlayersSmoke EXCLUDE_FROM_ALL tests/rr64_local_players_smoke.cpp)
+add_executable(RR64LocalRaceOptionsSmoke EXCLUDE_FROM_ALL tests/rr64_local_race_options_smoke.cpp src/rr64_local_race_options.cpp src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp)
+target_compile_features(RR64LocalRaceOptionsSmoke PRIVATE cxx_std_20)
+target_include_directories(RR64LocalRaceOptionsSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
+    "${N64MODERN_RUNTIME_ROOT}/ultramodern/include"
+    "${N64MODERN_RUNTIME_ROOT}/librecomp/include")
 target_compile_features(RR64LocalPlayersSmoke PRIVATE cxx_std_17)
 target_include_directories(RR64LocalPlayersSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/RecompFrontend/recompinput/include")
@@ -343,7 +480,7 @@ target_include_directories(RR64WorldMatchingSmoke PRIVATE "${RT64_ROOT}/src"
     "${RT64_ROOT}/src/contrib" "${RT64_ROOT}/src/contrib/hlslpp/include"
     "${RT64_ROOT}/src/contrib/dxc/inc")
 target_link_libraries(RR64WorldMatchingSmoke PRIVATE rt64)
-target_link_directories(RR64WorldMatchingSmoke PRIVATE "${sdl2_SOURCE_DIR}/lib/x64")
+target_link_directories(RR64WorldMatchingSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
 if(MSVC)
     target_compile_options(RR64WorldMatchingSmoke PRIVATE /clang:-march=nehalem)
 endif()
@@ -370,9 +507,9 @@ foreach(RR64_CPU_TEST RR64OwnedTextureReuseSmoke RR64RSPVertexSmoke RR64WorldMat
         tests/rr64_matching_test_callbacks.cpp)
     target_include_directories(${RR64_CPU_TEST} PRIVATE "${RT64_ROOT}" "${RT64_ROOT}/src"
         "${RT64_ROOT}/src/contrib" "${RT64_ROOT}/src/contrib/hlslpp/include"
-        "${RT64_ROOT}/src/contrib/dxc/inc" "${sdl2_SOURCE_DIR}/include")
+        "${RT64_ROOT}/src/contrib/dxc/inc" "${RR64_SDL2_INCLUDE_DIRS}")
     target_link_libraries(${RR64_CPU_TEST} PRIVATE rt64)
-    target_link_directories(${RR64_CPU_TEST} PRIVATE "${sdl2_SOURCE_DIR}/lib/x64")
+    target_link_directories(${RR64_CPU_TEST} PRIVATE ${RR64_SDL2_LIB_DIRS})
     set_target_properties(${RR64_CPU_TEST} PROPERTIES CXX_STANDARD 17)
 endforeach()
 add_executable(RR64CoordinateConsistencySmoke EXCLUDE_FROM_ALL
@@ -693,7 +830,9 @@ target_include_directories(RR64NetplayCapacity PRIVATE
     "${N64MODERN_RUNTIME_ROOT}/librecomp/include"
     "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon"
 )
-target_link_libraries(RR64NetplayCapacity PRIVATE Ws2_32.lib)
+if(WIN32)
+    target_link_libraries(RR64NetplayCapacity PRIVATE Ws2_32.lib)
+endif()
 
 # ROM-free validation for the proximity attenuation curve. Codec, microphone,
 # and network transport are exercised by the normal build and netplay smoke.
@@ -715,23 +854,39 @@ target_include_directories(RR64OnlineViewportSmoke PRIVATE
 )
 target_compile_features(RR64OnlineViewportSmoke PRIVATE cxx_std_20)
 
-add_executable(RR64MusicSmoke EXCLUDE_FROM_ALL tests/rr64_music_smoke.cpp)
+if(WIN32)
+    add_executable(RR64MusicSmoke EXCLUDE_FROM_ALL tests/rr64_music_smoke.cpp)
+else()
+    add_executable(RR64MusicSmoke EXCLUDE_FROM_ALL tests/rr64_music_linux_smoke.cpp)
+endif()
 add_executable(RR64ConnectionSmoke EXCLUDE_FROM_ALL tests/rr64_connection_smoke.cpp)
 target_compile_features(RR64ConnectionSmoke PRIVATE cxx_std_20)
-target_link_libraries(RR64ConnectionSmoke PRIVATE Ws2_32.lib)
+if(WIN32)
+    target_link_libraries(RR64ConnectionSmoke PRIVATE Ws2_32.lib)
+endif()
 target_include_directories(RR64MusicSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(RR64MusicSmoke PRIVATE SDL2)
-target_include_directories(RR64MusicSmoke PRIVATE "${sdl2_SOURCE_DIR}/include")
+target_link_libraries(RR64MusicSmoke PRIVATE ${RR64_SDL2_TARGET})
+target_include_directories(RR64MusicSmoke PRIVATE "${RR64_SDL2_INCLUDE_DIRS}")
 target_include_directories(RR64MusicSmoke PRIVATE "${N64MODERN_RUNTIME_ROOT}/librecomp/include")
 target_include_directories(RR64MusicSmoke PRIVATE "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include")
-target_link_directories(RR64MusicSmoke PRIVATE "${sdl2_SOURCE_DIR}/lib/x64")
+target_link_directories(RR64MusicSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
 if(WIN32)
     target_link_libraries(RoadRash64Recompiled PRIVATE mfplat mfreadwrite mfuuid ole32)
     target_link_libraries(RR64MusicSmoke PRIVATE mfplat mfreadwrite mfuuid ole32)
+else()
+    add_dependencies(RoadRash64Recompiled rr64_ffmpeg)
+    target_include_directories(RoadRash64Recompiled PRIVATE "${RR64_FFMPEG_INCLUDE_DIR}")
+    target_link_libraries(RoadRash64Recompiled PRIVATE ${RR64_FFMPEG_LIBS} z pthread)
+
+    add_dependencies(RR64MusicSmoke rr64_ffmpeg)
+    target_include_directories(RR64MusicSmoke PRIVATE "${RR64_FFMPEG_INCLUDE_DIR}")
+    target_link_libraries(RR64MusicSmoke PRIVATE ${RR64_FFMPEG_LIBS} z pthread)
 endif()
 add_executable(RR64NetplayLimitSmoke EXCLUDE_FROM_ALL tests/rr64_netplay_limit_smoke.cpp src/rr64_netplay.cpp)
 target_include_directories(RR64NetplayLimitSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(RR64NetplayLimitSmoke PRIVATE Ws2_32.lib)
+if(WIN32)
+    target_link_libraries(RR64NetplayLimitSmoke PRIVATE Ws2_32.lib)
+endif()
 
 if(WIN32)
     enable_language(RC)
@@ -755,4 +910,16 @@ target_link_libraries(RR64ActionBindingsSmoke PRIVATE recompinput)
 target_include_directories(RR64ActionBindingsSmoke PRIVATE $<TARGET_PROPERTY:recompinput,INCLUDE_DIRECTORIES>)
 
 add_executable(RR64WeaponRenderSmoke EXCLUDE_FROM_ALL tests/rr64_weapon_render_smoke.cpp src/rr64_weapon_render.cpp)
+add_executable(RR64MenuEjectSmoke EXCLUDE_FROM_ALL tests/rr64_menu_eject_smoke.cpp)
+# Developer-only traffic recorder; no production hooks or recorder thread.
+add_executable(RR64TrafficTraceSmoke EXCLUDE_FROM_ALL tests/rr64_traffic_trace_smoke.cpp src/rr64_traffic_trace.cpp)
+target_include_directories(RR64TrafficTraceSmoke PRIVATE $<TARGET_PROPERTY:RR64MenuEjectSmoke,INCLUDE_DIRECTORIES>)
+target_include_directories(RR64MenuEjectSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include" "${N64MODERN_RUNTIME_ROOT}/ultramodern/include" "${N64MODERN_RUNTIME_ROOT}/librecomp/include" "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon")
 target_include_directories(RR64WeaponRenderSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include" "${N64MODERN_RUNTIME_ROOT}/ultramodern/include" "${N64MODERN_RUNTIME_ROOT}/librecomp/include" "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon")
+
+if(NOT WIN32)
+    # Release player builds keep optimization, but offline assertions must run.
+    foreach(RR64_CHECK RR64MenuEjectSmoke RR64WeaponRenderSmoke RR64ActionBindingsSmoke RR64MusicSmoke RR64TrafficTraceSmoke)
+        target_compile_options(${RR64_CHECK} PRIVATE -UNDEBUG)
+    endforeach()
+endif()

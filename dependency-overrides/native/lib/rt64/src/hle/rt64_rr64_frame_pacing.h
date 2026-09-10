@@ -212,6 +212,15 @@ namespace RT64::RR64FramePacing {
         int64_t deadlineNanoseconds = 0;
     };
 
+    // Rational targets alternate floor/ceil frame counts. The accumulator in
+    // WorkloadQueue carries the fractional remainder between source updates.
+    constexpr bool validGeneratedFrameCount(uint32_t target, uint32_t source, uint32_t count) {
+        if (!source || target <= source || !count || count > MaximumCadenceFrames) return false;
+        const uint64_t ceiling = (uint64_t(target) + source - 1) / source;
+        return ceiling <= MaximumCadenceFrames &&
+            (count == target / source || count == ceiling);
+    }
+
     // A known lower-rate source can repeat its selected completed image at an
     // integer output cadence when interpolation is unavailable. Equal or
     // unresolved source rates require only one native image.

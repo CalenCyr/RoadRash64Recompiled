@@ -105,6 +105,18 @@ int main(int argc, char** argv) {
 
     require(exactCadenceFrameCount(60, 30) == 2,
         "a known 30 Hz source has two output slots at 60 Hz");
+    for (uint32_t target : {61u, 75u, 90u, 100u, 119u, 120u, 144u, 165u, 240u}) {
+        uint64_t remainder=0, frames=0;
+        for (unsigned update=0; update<60; ++update) {
+            remainder+=target;
+            const auto count=uint32_t(remainder/60);remainder%=60;
+            require(validGeneratedFrameCount(target,60,count), "fractional batch accepted");
+            frames+=count;
+        }
+        require(frames==target, "one second of source updates yields requested output count");
+    }
+    require(!validGeneratedFrameCount(144,60,4), "reject invalid fractional batch size");
+    require(!validGeneratedFrameCount(144,0,2), "reject unknown source rate");
     require(exactCadenceFrameCount(120, 30) == 4,
         "a known 30 Hz source has four output slots at 120 Hz");
     require(exactCadenceFrameCount(60, 15) == 4,

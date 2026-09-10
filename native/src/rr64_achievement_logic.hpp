@@ -12,9 +12,8 @@ inline constexpr std::size_t kAchievementCount = 52;
 inline constexpr std::size_t kInvalidAchievement = kAchievementCount;
 
 constexpr std::size_t campaign_level_index(std::uint32_t new_level) {
-    return new_level >= 1 && new_level <= 4
-        ? static_cast<std::size_t>(new_level - 1)
-        : kInvalidAchievement;
+    return new_level >= 1 && new_level <= 4 ? static_cast<std::size_t>(new_level - 1)
+                                            : kInvalidAchievement;
 }
 
 inline constexpr std::size_t kCampaignCompletionIndex = 4;

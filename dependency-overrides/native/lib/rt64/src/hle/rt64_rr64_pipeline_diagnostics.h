@@ -31,8 +31,21 @@ namespace RT64::RR64PipelineDiagnostics {
         GpuCommands, CopyTotal, CopyAllocation, PresentTotal, DisplayList,
         GuestUpdate, FullSyncTiles, FullSyncParameters, FullSyncUpload,
         FullSyncUploadWait, FullSyncGpuWait, FullSyncTextureWait,
-        FullSyncAdvance, RspVertices, RspTriangles, RspTriangleBatch, Count
+        FullSyncAdvance, RspVertices, RspTriangles, RspTriangleBatch, GeometryCollect, GeometryIntern,
+        GeometryCertify, GeometryCoherence, MatchScene, GeometryHash, GeometryReuse, Count
     };
+
+    inline bool stageEnabled(Stage stage) {
+        if (!enabled()) { return false; }
+        if (stage != Stage::RspVertices && stage != Stage::RspTriangles && stage != Stage::RspTriangleBatch) { return true; }
+        // Per-packet probes can execute millions of times per report. Keep them
+        // separate from ordinary frame-stage timing to avoid skewing CPU tests.
+        static const bool packets = [] {
+            const char *value = std::getenv("RR64_PACKET_TIMING");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        return packets;
+    }
 
     inline constexpr const char* Names[] = {
         "full-sync", "producer-wait-present", "present-wait-producer", "matching",
@@ -41,13 +54,15 @@ namespace RT64::RR64PipelineDiagnostics {
         "display-list", "guest-update", "full-sync-tiles", "full-sync-parameters",
         "full-sync-upload", "full-sync-upload-wait", "full-sync-gpu-wait",
         "full-sync-texture-wait", "full-sync-advance",
-        "rsp-vertices", "rsp-triangles-inclusive", "rsp-triangle-batch-inclusive"
+        "rsp-vertices", "rsp-triangles-inclusive", "rsp-triangle-batch-inclusive",
+        "geometry-collect", "geometry-intern", "geometry-certify", "geometry-coherence",
+        "match-scene-inclusive", "geometry-hash", "geometry-reuse-copy"
     };
     static_assert(sizeof(Names) / sizeof(Names[0]) == static_cast<unsigned int>(Stage::Count));
 
     class Scope {
     public:
-        explicit Scope(Stage stage) : stage(stage), active(enabled()),
+        explicit Scope(Stage stage) : stage(stage), active(stageEnabled(stage)),
             start(active ? Clock::now() : Clock::time_point{}) { }
         ~Scope() { finish(); }
         Scope(const Scope&) = delete;

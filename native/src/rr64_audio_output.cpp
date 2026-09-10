@@ -18,12 +18,10 @@ void QueueMonitor::reset(std::uint32_t sample_rate, std::uint32_t host_period_fr
     health_.minimum_queued_before_frames = std::numeric_limits<std::uint32_t>::max();
 }
 
-QueueObservation QueueMonitor::observe(
-    std::uint32_t queued_before_frames,
-    std::uint32_t queued_after_frames,
-    std::span<const std::int16_t> samples,
-    Clock::time_point now) noexcept
-{
+QueueObservation QueueMonitor::observe(std::uint32_t queued_before_frames,
+                                       std::uint32_t queued_after_frames,
+                                       std::span<const std::int16_t> samples,
+                                       Clock::time_point now) noexcept {
     QueueObservation observation{};
     observation.sequence = ++health_.submitted_buffers;
     observation.sample_rate = sample_rate_;
@@ -42,8 +40,8 @@ QueueObservation QueueMonitor::observe(
             static_cast<std::uint64_t>(previous_submitted_frames_) * 1000000ull / sample_rate_;
         const std::uint64_t host_period_microseconds =
             static_cast<std::uint64_t>(host_period_frames_) * 1000000ull / sample_rate_;
-        observation.late_submit =
-            observation.gap_microseconds > observation.expected_microseconds + host_period_microseconds;
+        observation.late_submit = observation.gap_microseconds >
+                                  observation.expected_microseconds + host_period_microseconds;
     }
 
     if (have_previous_samples_ && samples.size() >= 2u) {
@@ -63,7 +61,8 @@ QueueObservation QueueMonitor::observe(
     previous_submit_ = now;
 
     health_.empty_before_submit += observation.empty_before_submit ? 1u : 0u;
-    health_.below_host_period_before_submit += observation.below_host_period_before_submit ? 1u : 0u;
+    health_.below_host_period_before_submit +=
+        observation.below_host_period_before_submit ? 1u : 0u;
     health_.late_submits += observation.late_submit ? 1u : 0u;
     health_.minimum_queued_before_frames =
         std::min(health_.minimum_queued_before_frames, queued_before_frames);

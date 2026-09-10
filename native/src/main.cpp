@@ -1,7 +1,9 @@
+#include "recompui/startup_diagnostics.h"
 #include "rr64_popup_input.hpp"
 #include "rr64_view_width.hpp"
 #include "rr64_weapon_diagnostics.hpp"
 #include "rr64_local_players.hpp"
+#include "rr64_local_race_options.hpp"
 #include "composites/ui_player_card.h"
 #include "rr64_log_batch.hpp"
 #include "rr64_presentation_options.hpp"
@@ -12,6 +14,7 @@
 #include <cassert>
 #include <chrono>
 #include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cinttypes>
 #include <cstdint>
@@ -41,7 +44,30 @@
 #define SDL_MAIN_HANDLED
 #include "SDL.h"
 #include "SDL_syswm.h"
-
+#ifdef None
+#undef None
+#endif
+#ifdef Always
+#undef Always
+#endif
+#ifdef Bool
+#undef Bool
+#endif
+#ifdef Status
+#undef Status
+#endif
+#ifdef Success
+#undef Success
+#endif
+#ifdef LockMask
+#undef LockMask
+#endif
+#ifdef True
+#undef True
+#endif
+#ifdef False
+#undef False
+#endif
 #include "recompui/recompui.h"
 #include "recompui/program_config.h"
 #include "recompui/renderer.h"
@@ -54,6 +80,8 @@
 #include "hle/rt64_rsp.h"
 #include "hle/rt64_rr64_frame_pacing.h"
 #include "hle/rt64_rr64_pipeline_diagnostics.h"
+#include "hle/rt64_rr64_matching_evidence.h"
+#include "hle/rt64_rr64_command_profile.h"
 #include "ultramodern/rr64_scheduler_diagnostics.hpp"
 #include "contrib/plume/plume_present_outcome.h"
 #include "recompinput/input_events.h"
@@ -64,10 +92,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <psapi.h>
-#include <share.h>
 #include <timeapi.h>
 #endif
 
+#include "rr64_msvc_crt_compat.hpp"
 #include "rr64_native.hpp"
 #include "rr64_actor_render_diagnostics.hpp"
 #include "rr64_world_terrain.hpp"
@@ -83,7 +111,7 @@
 #include "rr64_online_menu.hpp"
 #include "rr64_voice_chat.hpp"
 
-constexpr const char* kVersion = "1.1.0";
+constexpr const char* kVersion = "1.2.0";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -95,6 +123,7 @@ const std::u8string kProgramId = u8"RoadRash64Recompiled";
 
 // RecompFrontend expects these port globals to have external linkage.
 SDL_Window* window = nullptr;
+std::atomic_bool rr64_dynamic_ultrawide{false};
 
 extern "C" void recomp_entrypoint(uint8_t* rdram, recomp_context* ctx);
 gpr get_entrypoint_address();
@@ -280,7 +309,12 @@ FILE* audio_trace_file() {
         return nullptr;
     }
 
+#ifdef _WIN32
     const errno_t result = fopen_s(&g_audio_trace_file, path, "w");
+#else
+    g_audio_trace_file = std::fopen(path, "w");
+    const errno_t result = (g_audio_trace_file != nullptr) ? 0 : errno;
+#endif
     std::free(path);
     if (result != 0 || g_audio_trace_file == nullptr) {
         std::fprintf(stderr, "[RR64-AUDIO] Could not open RR64_AUDIO_TRACE.\n");
@@ -318,7 +352,11 @@ void write_runtime_log(std::string_view text) {
     if (!g_runtime_log && !g_runtime_log_path.empty() &&
         (text.find("[RR64-CRASH]") != std::string_view::npos ||
          text.find("[RR64-EXIT]") != std::string_view::npos)) {
+#ifdef _WIN32
         g_runtime_log = _wfsopen(g_runtime_log_path.c_str(), L"w", _SH_DENYNO);
+#else
+        g_runtime_log = _fsopen(g_runtime_log_path.c_str(), "w", _SH_DENYNO);
+#endif
     }
     std::fwrite(text.data(),1,text.size(),stderr);
     std::fflush(stderr);
@@ -348,7 +386,18 @@ std::filesystem::path executable_directory() {
     buffer.resize(length);
     return std::filesystem::path(buffer).parent_path();
 }
+#else
+std::filesystem::path executable_directory() {
+    std::error_code ec;
+    const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) {
+        return std::filesystem::current_path();
+    }
+    return self.parent_path();
+}
+#endif
 
+#ifdef _WIN32
 LONG WINAPI rr64_unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
     DWORD code = 0;
     void* address = nullptr;
@@ -375,7 +424,7 @@ LONG WINAPI rr64_unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) 
         "\n[RR64-CRASH] Unhandled Windows exception 0x%08lX at %p thread=%lu\n"
         "[RR64-CRASH] module_base=%p rva=0x%" PRIXPTR " access=%s target=0x%" PRIXPTR "\n"
         "[RR64-CRASH] create_gfx=%d window=%d renderer=%d launcher=%d update=%d event_thread=%lu ui_thread=%lu\n"
-        "[RR64-CRASH] Runtime log: %ls\n",
+        "[RR64-CRASH] Runtime log: " RR64_PATH_FORMAT "\n",
         static_cast<unsigned long>(code),
         address,
         static_cast<unsigned long>(crash_thread_id),
@@ -525,8 +574,8 @@ void initialize_runtime_diagnostics() {
 
     rr64_log("[RR64-DIAG] Runtime diagnostics enabled.\n");
 #ifdef _WIN32
-    rr64_log("[RR64-DIAG] Executable directory: %ls\n", executable_directory().c_str());
-    rr64_log("[RR64-DIAG] Runtime log: %ls\n", g_runtime_log_path.c_str());
+    rr64_log("[RR64-DIAG] Executable directory: " RR64_PATH_FORMAT "\n", executable_directory().c_str());
+    rr64_log("[RR64-DIAG] Runtime log: " RR64_PATH_FORMAT "\n", g_runtime_log_path.c_str());
 #else
     rr64_log("[RR64-DIAG] Runtime log: %s\n", g_runtime_log_path.string().c_str());
 #endif
@@ -575,9 +624,10 @@ ultramodern::gfx_callbacks_t::gfx_data_t create_gfx() {
 }
 
 ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::gfx_data_t) {
+    recompui::startup_checkpoint("window-begin");
     rr64_log("[RR64-STAGE] create_window entered.\n");
     uint32_t flags = SDL_WINDOW_RESIZABLE;
-#if defined(RT64_SDL_WINDOW_VULKAN)
+#if defined(PLUME_SDL_VULKAN_ENABLED)
     flags |= SDL_WINDOW_VULKAN;
 #endif
 
@@ -605,7 +655,8 @@ ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::
     rr64_log("[RR64-STAGE] HWND acquired: %p thread=%lu\n", static_cast<void*>(wm_info.info.win.window), static_cast<unsigned long>(GetCurrentThreadId()));
     return ultramodern::renderer::WindowHandle{ wm_info.info.win.window, GetCurrentThreadId() };
 #else
-#error "The v0.3.0 Road Rash native probe is currently Windows-only."
+    rr64_log("[RR64-STAGE] SDL window handle acquired: %p\n", static_cast<void*>(window));
+    return window;
 #endif
 }
 
@@ -786,6 +837,24 @@ void update_gfx(void*) {
                 geometry_accepted, geometry_fallback, geometry_reasons[0], geometry_reasons[1],
                 geometry_reasons[2], geometry_reasons[3], geometry_reasons[4], geometry_reasons[5]);
         }
+        RT64::RR64MatchingEvidence::buffer.drain([](const RT64::RR64MatchingEvidence::Record &r) {
+            rr64_log("[RR64-MATCH-EVIDENCE] category=%u submission=%llu workload=%llu fb=%u proj=%u view=%u world=%u previous=%u id=%08X previous-id=%08X occurrences=%u/%u mapped=%u policy=%u order=%u lerp=%u/%u vertices=%u indices=%u topology=%llu\n",
+                r.category,(unsigned long long)r.submission,(unsigned long long)r.workload,r.framebuffer,r.projection,r.view,r.world,r.previousWorld,
+                r.id,r.previousId,r.idOccurrences,r.previousIdOccurrences,unsigned(r.mapped),r.positionPolicy,r.ordering,unsigned(r.worldLerp),unsigned(r.viewLerp),r.vertices,r.indices,(unsigned long long)r.topologyHash);
+            rr64_log("[RR64-MATCH-EVIDENCE-POS] category=%u submission=%llu world=%u world-before=%.9g,%.9g,%.9g world-after=%.9g,%.9g,%.9g view-before=%.9g,%.9g,%.9g view-after=%.9g,%.9g,%.9g\n",
+                r.category,(unsigned long long)r.submission,r.world,r.worldBefore[0],r.worldBefore[1],r.worldBefore[2],r.worldAfter[0],r.worldAfter[1],r.worldAfter[2],
+                r.viewBefore[0],r.viewBefore[1],r.viewBefore[2],r.viewAfter[0],r.viewAfter[1],r.viewAfter[2]);
+        });
+        if (RT64::RR64CommandProfile::enabled()) {
+            for (unsigned opcode=0;opcode<RT64::RR64CommandProfile::buckets.size();opcode++) {
+                const auto &bucket=RT64::RR64CommandProfile::buckets[opcode];
+                const auto samples=bucket.samples.load(std::memory_order_relaxed);
+                if (!samples) { continue; }
+                const auto ns=bucket.nanoseconds.load(std::memory_order_relaxed);
+                rr64_log("[RR64-COMMAND-PROFILE] extended=%u opcode=%02X cumulative-samples=%llu cumulative-ns=%llu nominal-rate=1024 approximate-snapshot=1\n",
+                    opcode>=256,opcode&255u,(unsigned long long)samples,(unsigned long long)ns);
+            }
+        }
         std::array<std::uint64_t,
             static_cast<std::size_t>(plume::D3D12PresentOutcome::Count)> present_outcomes{};
         std::uint64_t present_attempts = 0;
@@ -879,6 +948,13 @@ void update_gfx(void*) {
                         for(auto word:words){char hex[20];std::snprintf(hex,sizeof(hex),"%016llx,",word);out+=hex;}return out;};
                     rr64_log("[RR64-COURSE] view=%u stock-union=%s\n",i,bitmap(v.stock_union).c_str());
                     rr64_log("[RR64-COURSE] view=%u extended-last=%s\n",i,bitmap(v.extended_last).c_str());
+                    const auto float_bits=[](const auto& values){std::string out;
+                        for(float value:values){uint32_t bits;std::memcpy(&bits,&value,sizeof(bits));char hex[12];std::snprintf(hex,sizeof(hex),"%08x,",bits);out+=hex;}return out;};
+                    rr64_log("[RR64-TERRAIN-REPLAY] schema=1 view=%u epoch=%u origin-width-f32=%s matrix-layout=row-major\n",
+                        i,v.epoch,float_bits(std::array<float,3>{v.x,v.y,v.view_width}).c_str());
+                    rr64_log("[RR64-TERRAIN-REPLAY] view=%u epoch=%u view-f32=%s projection-f32=%s\n",
+                        i,v.epoch,float_bits(v.view).c_str(),float_bits(v.projection).c_str());
+                    rr64_log("[RR64-TERRAIN-REPLAY] view=%u epoch=%u stock-last=%s\n",i,v.epoch,bitmap(v.stock_last).c_str());
                 }
             }
             static std::array<unsigned long long, 5> previous_world{};
@@ -895,9 +971,10 @@ void update_gfx(void*) {
                 objects.visible_placements, objects.stock_placements, objects.drawn_triangles,
                 objects.frames, objects.refusals, objects.unmatched_stock, objects.texture_syncs);
         }
-        std::array<unsigned long long,7> weaponCounts{};
+        std::array<unsigned long long,8> weaponCounts{};
         for(unsigned i=0;i<weaponCounts.size();++i)weaponCounts[i]=rr64_weapon_counter(i);
         if(weaponCounts[6])rr64_log("[RR64-WEAPON] per-view-root-refreshed=%llu\n",weaponCounts[6]);
+        if(weaponCounts[7])rr64_log("[RR64-WEAPON] certified-rider-root=%llu\n",weaponCounts[7]);
         const auto weaponReport=rr64::weapon::take_report();
         if(weaponReport.examined)rr64_log("[RR64-WEAPON-POSE] examined=%u keys=%u omitted=%u\n",weaponReport.examined,weaponReport.size,weaponReport.omitted);
         for(unsigned i=0;i<weaponReport.size;++i){const auto& s=weaponReport.samples[i];
@@ -1422,25 +1499,31 @@ bool get_local_input_with_road_rumble(
     if (got_response && buttons != nullptr) {
         apply_responsive_menu_navigation(profile_index, *buttons, x, y);
     }
-    if (profile_index == 0) {
-        static bool left_stick_was_held = false;
-        static bool right_stick_was_held = false;
-        const bool shortcut_input_available =
-            !dismissal_input_blocked &&
-            !recompinput::game_input_disabled() &&
-            recompinput::game_window_focused();
-        const bool gameplay_shortcuts_allowed =
-            rr64_are_gameplay_shortcuts_active() &&
-            shortcut_input_available;
-        const bool eject_shortcut_allowed =
-            gameplay_shortcuts_allowed;
-        const bool left_stick_held = recompinput::profiles::get_action_input(profile_index, recompinput::GameInput::RR64_EJECT);
-        const bool eject_pressed = left_stick_held && !left_stick_was_held;
-        left_stick_was_held = left_stick_held;
-        if (eject_pressed && eject_shortcut_allowed) {
-            rr64_request_rider_eject();
+    if (got_response && buttons && !dismissal_input_blocked &&
+        !recompinput::game_input_disabled() && recompinput::game_window_focused() &&
+        rr64_are_gameplay_shortcuts_active() &&
+        recompinput::profiles::get_action_input(profile_index, recompinput::GameInput::RR64_WEAPON_TRICK)) {
+        // Remove the old RB/C-Down binding in existing profiles as well.
+        *buttons &= ~0x0004;
+        *buttons |= rr64_custom_cop_active() ? 0x0004 : 0x0020;
+    }
+    // Edge state and requests belong to the controller slot, not player one.
+    if (profile_index >= 0 && profile_index < 4) {
+        static std::array<bool, 4> eject_was_held{};
+        const bool held = got_response && recompinput::profiles::get_action_input(
+            profile_index, recompinput::GameInput::RR64_EJECT);
+        const bool pressed = held && !eject_was_held[profile_index];
+        eject_was_held[profile_index] = held;
+        if (pressed && !dismissal_input_blocked && !recompinput::game_input_disabled() &&
+            recompinput::game_window_focused() && rr64_are_gameplay_shortcuts_active()) {
+            rr64_request_rider_eject(profile_index);
         }
-
+    }
+    if (profile_index == 0) {
+        static bool right_stick_was_held = false;
+        const bool gameplay_shortcuts_allowed = rr64_are_gameplay_shortcuts_active() &&
+            !dismissal_input_blocked && !recompinput::game_input_disabled() &&
+            recompinput::game_window_focused();
         const bool right_stick_held = recompinput::profiles::get_action_input(profile_index, recompinput::GameInput::RR64_SPOKE_JAM);
         const bool right_stick_pressed = right_stick_held && !right_stick_was_held;
         right_stick_was_held = right_stick_held;
@@ -1513,6 +1596,12 @@ void update_gameplay_rumble() {
 }
 
 bool get_input_with_trace(int controller_num, uint16_t* buttons, float* x, float* y) {
+    // Keep actor edge visibility consistent with the renderer's expanding
+    // ultrawide output when the window changes size.
+    if (controller_num == 0 && window && rr64_dynamic_ultrawide.load()) {
+        int width=0,height=0;SDL_GetWindowSize(window,&width,&height);
+        if(width>0 && height>0) rr64::view_width.store(double(width)/height/(4.0/3.0));
+    }
     if (rr64::online_menu::controls_online_players()) {
         const rr64::netplay::Status status = rr64::netplay::get_status();
         if (rr64::online_menu::host_controls_game_setup()) {
@@ -1804,6 +1893,7 @@ void init_recompui_config() {
         [](recomp::config::ConfigValueVariant value,recomp::config::ConfigValueVariant,recomp::config::OptionChangeContext){
             const auto aspect=static_cast<ultramodern::renderer::AspectRatio>(std::get<uint32_t>(value));
             using A=ultramodern::renderer::AspectRatio;
+            rr64_dynamic_ultrawide.store(aspect==A::Manual);
             rr64::view_width.store(aspect==A::Manual?7.0/4.0:(aspect==A::Original||aspect==A::Stretch?1.0:4.0/3.0));
         });
     graphics_config.add_bool_option("rr64_max_lod", "MAX LOD",
@@ -1856,7 +1946,15 @@ void init_recompui_config() {
         [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
             g_master_volume_gain.store(rr64::audio::volume_gain(std::get<double>(value)), std::memory_order_relaxed);
         });
-    rr64::music::configure(sound_config, executable_directory() / "music");
+    auto music_directory = executable_directory() / "music";
+#ifndef _WIN32
+    // AppImage's mounted executable directory is read-only. Keep user tracks
+    // beside the downloaded image, not inside its temporary mount.
+    if (const char* appimage = std::getenv("APPIMAGE"); appimage && appimage[0]) {
+        music_directory = std::filesystem::path(appimage).parent_path() / "music";
+    }
+#endif
+    rr64::music::configure(sound_config, music_directory);
     sound_config.add_bool_option(
         kProximityVoiceEnabledOption,
         "Proximity Voice Chat",
@@ -1887,7 +1985,8 @@ void init_recompui_config() {
     rr64::presentation_options::world_distance.store(1); // Draw Distance replaces the legacy world toggle.
     {using A=ultramodern::renderer::AspectRatio;
     const auto aspect=static_cast<A>(std::get<uint32_t>(recompui::config::get_graphics_config().get_option_value(recompui::config::graphics::options::ar_option)));
-    rr64::view_width.store(aspect==A::Manual?7.0/4.0:(aspect==A::Original||aspect==A::Stretch?1.0:4.0/3.0));}
+    rr64_dynamic_ultrawide.store(aspect==A::Manual);
+            rr64::view_width.store(aspect==A::Manual?7.0/4.0:(aspect==A::Original||aspect==A::Stretch?1.0:4.0/3.0));}
     apply_draw_distance(std::get<double>(recompui::config::get_graphics_config().get_option_value("rr64_draw_distance")));
     g_master_volume_gain.store(rr64::audio::volume_gain(recompui::config::sound::get_main_volume()));
     rr64::netplay::configure({});
@@ -1977,7 +2076,7 @@ void on_launcher_init(recompui::LauncherMenu* menu) {
         }
     }
     if (!launcher_background_loaded) {
-        rr64_log("[RR64-LAUNCHER] Could not load %ls; using vector fallback.\n", launcher_background_path.c_str());
+        rr64_log("[RR64-LAUNCHER] Could not load " RR64_PATH_FORMAT "; using vector fallback.\n", launcher_background_path.c_str());
         menu->set_launcher_background_svg("RoadRashLauncher.svg");
     }
 
@@ -2003,6 +2102,7 @@ void on_launcher_init(recompui::LauncherMenu* menu) {
     // point where both are ready; creating the online context during config
     // registration dereferences an uninitialized RmlUi interface at startup.
     rr64::online_menu::initialize_ui();
+    rr64::local_race_options::initialize(recompui::file::get_app_folder_path());
     rr64::achievements::initialize_toast_ui();
 }
 
@@ -2032,6 +2132,8 @@ void on_launcher_update(recompui::LauncherMenu*) {
 }
 
 void on_ui_update() {
+    static bool first_update = true;
+    if (first_update) { recompui::startup_checkpoint("first-ui-update"); first_update = false; }
 #ifdef _WIN32
     DWORD expected_ui_thread = 0;
     g_ui_thread_id.compare_exchange_strong(expected_ui_thread, GetCurrentThreadId());
@@ -2039,6 +2141,7 @@ void on_ui_update() {
     rr64::netplay::update();
     recompinput::players::refresh_connected_players(rr64::local_players::keyboard_enabled.load());
     rr64::online_menu::update_ui();
+    rr64::local_race_options::flush();
     rr64::music::update_ui();
     rr64::achievements::update_ui();
 }
@@ -2414,7 +2517,7 @@ int main(int argc, char** argv) {
         rr64_log("[RR64] Unable to set working directory to executable folder: %s\n", working_directory_error.message().c_str());
         return EXIT_FAILURE;
     }
-    rr64_log("[RR64-DIAG] Working directory: %ls\n", program_directory.c_str());
+    rr64_log("[RR64-DIAG] Working directory: " RR64_PATH_FORMAT "\n", program_directory.c_str());
 #endif
 
     for (int i = 1; i < argc; ++i) {
@@ -2478,7 +2581,7 @@ int main(int argc, char** argv) {
     recompui::register_primary_font("LatoLatin-Regular.ttf", "LatoLatin");
     const auto app_folder = recompui::file::get_app_folder_path();
 #ifdef _WIN32
-    rr64_log("[RR64-STAGE] App/config folder: %ls\n", app_folder.c_str());
+    rr64_log("[RR64-STAGE] App/config folder: " RR64_PATH_FORMAT "\n", app_folder.c_str());
 #else
     rr64_log("[RR64-STAGE] App/config folder: %s\n", app_folder.string().c_str());
 #endif
@@ -2575,6 +2678,7 @@ int main(int argc, char** argv) {
                 if (!context) {
                     throw std::runtime_error("RecompFrontend returned a null RT64 renderer context");
                 }
+                recompui::startup_checkpoint("renderer-context-ready");
                 g_renderer_created = true;
                 rr64_log("[RR64-STAGE] Renderer context creation returned successfully.\n");
                 return context;
@@ -2719,7 +2823,22 @@ int main(int argc, char** argv) {
         std::fclose(g_runtime_log);
         g_runtime_log = nullptr;
     }
+    // recomp::start() only joins its bootstrap thread; the emulated N64 OS
+    // threads it spawns (game/audio/etc.) are left running, permanently
+    // blocked in ultramodern::wait_for_external_message() on a static
+    // condition_variable (mesgqueue.cpp). A normal return here would run
+    // that condition_variable's destructor via libc's exit() while those
+    // threads are still waiting on it; glibc's pthread_cond_destroy blocks
+    // in that situation, deadlocking the process. quick_exit() skips static
+    // destructors entirely and terminates immediately, matching how a plain
+    // process exit behaves on Windows (where condition_variable's destructor
+    // over CONDITION_VARIABLE is a no-op, so the same abandoned threads are
+    // harmless there).
+#ifdef _WIN32
     return EXIT_SUCCESS;
+#else
+    std::quick_exit(EXIT_SUCCESS);
+#endif
 }
 
 

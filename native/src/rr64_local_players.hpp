@@ -16,18 +16,23 @@ inline std::array<std::string, 4> names{"PLAYER 1", "PLAYER 2", "PLAYER 3", "PLA
 inline std::string display_name(std::string_view input, unsigned slot) {
     std::string result;
     for (unsigned char c : input) {
-        if (c >= 'a' && c <= 'z') c -= 'a' - 'A';
+        if (c >= 'a' && c <= 'z')
+            c -= 'a' - 'A';
         if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ') {
-            if (c == ' ' && result.empty()) continue;
+            if (c == ' ' && result.empty())
+                continue;
             result.push_back(static_cast<char>(c));
-            if (result.size() == 11) break;
+            if (result.size() == 11)
+                break;
         }
     }
-    while (!result.empty() && result.back() == ' ') result.pop_back();
+    while (!result.empty() && result.back() == ' ')
+        result.pop_back();
     return result.empty() ? "PLAYER " + std::to_string(slot + 1) : result;
 }
 inline void set_name(unsigned slot, std::string_view input) {
-    if (slot >= names.size()) return;
+    if (slot >= names.size())
+        return;
     std::scoped_lock lock(names_mutex);
     names[slot] = display_name(input, slot);
 }

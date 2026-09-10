@@ -164,7 +164,7 @@
       },
       {
         "path": "src/hle/rt64_rr64_frame_pacing.h",
-        "sha256": "044e6b6eb55c49b3126cceb3625a5ab3d902f8806149290e3f3565dd18d9f950"
+        "sha256": "a46d95e7a770d1127ceab87a58f583629eecde7a1a0903bc9807308adaaaa9e9"
       },
       {
         "path": "src/hle/rt64_rr64_geometry_match.h",
@@ -176,19 +176,35 @@
       },
       {
         "path": "src/hle/rt64_rr64_owned_frame_batch.h",
-        "sha256": "9eff9eb7ac96207e05cbcf8657a4b3b16da0e4df0159d1449a2b764573fdc12a"
+        "sha256": "ac9a60dd0b921d4e505324c09c201d772de276a3bf79d1b62d0f8d6a9b505f83"
       },
       {
         "path": "src/hle/rt64_rr64_pipeline_diagnostics.h",
-        "sha256": "6f1a93e4bcf3bbc0b227d2a781473d280b21ac806bf579bf2c49422b5cf093d5"
+        "sha256": "8f3af729828955647075e819bf01933f0fc442235d2cede6e08e9f31fe49155f"
       },
       {
         "path": "src/hle/rt64_rr64_translation_rejection.h",
-        "sha256": "302df89ef9b86a98117ebbab3ae6d876e75134dea4878f814223a7034230b9f0"
+        "sha256": "dc4ee9a7eec3a688d9799a7c46839ebe98bc33abbf97085a8e0d2fd589c9b709"
       },
       {
         "path": "src/render/rt64_rr64_frame_overwrite.h",
         "sha256": "dff303cbea767593553f43b11f6b0cc3b0eb8bdedc088ad06de7c89f43a4c670"
+      },
+      {
+        "path": "src/common/rt64_rr64_menu_borders.h",
+        "sha256": "fa42be812afde21ad16a1d9df99af8e13ab1cc26ebb36e0e7dcc28cbc8291428"
+      },
+      {
+        "path": "src/hle/rt64_rr64_command_profile.h",
+        "sha256": "f7f5fb85a2521ca00744599fa77dd0e798ef7695aa6eef72d80dd03ec72ee75a"
+      },
+      {
+        "path": "src/hle/rt64_rr64_matching_evidence.h",
+        "sha256": "59744b7d609fd7eab8cb04ae760734270be29716abc9bc27550ba43cc63ba272"
+      },
+      {
+        "path": "src/hle/rt64_rr64_static_world_motion.h",
+        "sha256": "07c8b960d345d246d43b017238825f4125e795fef88c9df0129445136820a5d0"
       }
     ]
   },
@@ -340,12 +356,16 @@
   {
     "path": "native/lib/RecompFrontend",
     "url": "https://github.com/N64Recomp/RecompFrontend.git",
-    "commit": "d0d90ba49f46f4896aaeda362056c21b1e342561",
+    "commit": "b1a1477c6556aeb7ed45defbfb5924f721efebc1",
     "patch": "dependency-patches/native_lib_RecompFrontend.patch",
     "extraFiles": [
       {
         "path": "recompinput/include/recompinput/rr64_player_assignment.h",
         "sha256": "4ecf4b2424e9d282b47c409a56319d14bafa52b7fd11ff0d98ace8a12ddd9524"
+      },
+      {
+        "path": "recompui/include/recompui/startup_diagnostics.h",
+        "sha256": "2f66a5eea12ac371b13b88d3ceea6f7fe22b8ae291948cf99f052db95f38d910"
       }
     ]
   },
@@ -369,5 +389,15 @@
     "commit": "83c58df8103dc7dca423dfd824992af94d49bed6",
     "patch": null,
     "extraFiles": []
+  },
+  {
+    "path": "native/lib/ffmpeg",
+    "url": "https://github.com/FFmpeg/FFmpeg.git",
+    "commit": "38b88335f99e76ed89ff3c93f877fdefce736c13",
+    "patch": null,
+    "extraFiles": [],
+    "platforms": [
+      "linux"
+    ]
   }
 ]

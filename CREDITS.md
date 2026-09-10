@@ -39,3 +39,11 @@ Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. This
 [Original creator and project page](https://crisaty.tumblr.com/post/113116999840/road-rash-64-remastered-edition)
 
 The optional RTZ is in `optional-mods`. Install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.
+
+## Native Linux contribution
+
+CalenCyr contributed the Linux build, POSIX compatibility, FFmpeg audio decoding,
+shutdown diagnosis and AppImage packaging work in PR #4. The contributor disclosed
+substantial Claude AI assistance and reported Fedora and Steam Deck testing. This
+experimental integration carries later Road Rash fixes and additional packaging
+changes; that earlier testing does not establish acceptance of this binary.

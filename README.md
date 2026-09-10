@@ -1,8 +1,8 @@
-# Road Rash 64 Recompiled — Release 1.0
+# Road Rash 64 Recompiled — 1.2
 
-An unofficial Windows PC recompilation of **Road Rash 64**, built with N64Recomp, N64ModernRuntime, RT64, and RecompFrontend.
+An unofficial PC recompilation for Windows and experimental native Linux of **Road Rash 64**, built with N64Recomp, N64ModernRuntime, RT64, and RecompFrontend.
 
-**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** The application version and release tag are **1.1.0** and **v1.1.0**. Online multiplayer remains experimental.
+**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** The application version and release tag are **1.2.0** and **v1.2.0**. Online multiplayer remains experimental.
 
 ## Why this exists, credits, and AI disclosure
 
@@ -14,7 +14,7 @@ I do not want to take credit for creating Road Rash 64, the recompilation techno
 
 ## Getting started
 
-1. Download **RoadRash64Recompiled-v1.1.0-Win64.zip** from this repository's Releases page. Players do not need the source-code download or a compiler.
+1. Download **RoadRash64Recompiled-v1.2.0-Win64.zip** from this repository's Releases page. Players do not need the source-code download or a compiler.
 2. Extract the entire ZIP to a writable folder. Do not run it inside the archive.
 3. Open **RoadRash64Recompiled.exe**. Choose **Select Game ROM** and select your supported `.z64`, `.n64`, or `.v64` dump.
 4. After validation, choose **Start Game**. Use **Settings** to configure your controller, graphics, and sound.
@@ -39,16 +39,22 @@ This is the same broad static-recompilation/user-ROM architecture described by [
 - **16:9 and 21:9 aspect options**, a **30–240 FPS presentation slider**, and D3D12/Vulkan rendering through RT64.
 - **Keyboard and controller remapping**, including **Eject from Bike** (left-stick click by default) and **Spoke Jam Attack** (right-stick click by default). With fists selected, the latter retains the existing punch/weapon-steal behavior and original proximity/timing rules.
 - **Persistent saves** through the virtual Controller Pak implementation and saved frontend settings.
-- **Optional custom music rotation** from the `music` folder. WAV/OGG and Windows-decoded formats including FLAC, MP3, MP4/M4A, AAC, and WMA are supported subject to codec availability. No additional music is included and there is no song-title popout.
+- **Optional custom music rotation** from the `music` folder. WAV, OGG, FLAC, MP3, MP4/M4A, AAC, and WMA are all supported on both Windows (via Windows Media Foundation) and Linux (via a bundled shared FFmpeg subset). No additional music is included and there is no song-title popout.
 - **52 local achievements**, saved on this computer, with paged browsing. There is no RetroAchievements account login, account scoring, or unlock synchronization.
 - **Mod/texture-pack support** through Settings. The Windows package includes an optional conversion of Crisaty’s Remastered Edition pack; see its credits and installation instructions below.
 - A compact launcher, direct-start executable, and input guards intended to stop overlay dismissal from activating a menu behind it.
 
 Draw Distance adjusts terrain and scenery range together. MAX LOD controls rider/bike detail separately. The Music Volume slider covers original and custom music. Local player controls support controller assignment and per-player names. Existing mods targeting the internal 1.0.6 interface remain compatible.
 
+Linux testers: download **RoadRash64Recompiled-v1.2.0-Linux-Experimental.zip**, extract it and follow its README.
+
 ## Requirements
 
-The supplied build targets **64-bit Windows**, with a CPU compatible with the build's Nehalem/SSE4-era instruction target and a GPU/driver supporting the selected RT64 D3D12 or Vulkan backend. Windows 10/11 are the intended environments; a broad hardware compatibility matrix has not been established. Custom media decoding uses Windows Media Foundation. Other operating systems are not supported by this release's build configuration.
+Both platforms need a CPU compatible with the build's Nehalem/SSE4-era instruction target; a broad hardware compatibility matrix has not been established for either.
+
+**Windows:** 64-bit Windows 10/11, and a GPU/driver supporting the selected RT64 D3D12 or Vulkan backend. Custom media decoding uses Windows Media Foundation.
+
+**Linux:** a 64-bit distro with a working Vulkan driver (Mesa RADV for AMD, NVIDIA's proprietary driver, or AMDVLK) — RT64 only targets D3D12 and Vulkan, and only Vulkan is available outside Windows, so there is no software-rendering fallback if the driver is missing or broken. A running audio server (PipeWire, PulseAudio, or ALSA) is also expected, as on any modern desktop Linux. A separate experimental Linux package is available for community testing; see [Linux notes](docs/LINUX_EXPERIMENTAL.md) for requirements and limitations. Custom media decoding is self-contained (a minimal shared FFmpeg subset is bundled in the AppImage) and needs no system codec packages at runtime.
 
 ## Multiplayer — early and very untested
 
@@ -83,3 +89,8 @@ Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. This
 [Original creator and project page](https://crisaty.tumblr.com/post/113116999840/road-rash-64-remastered-edition)
 
 The optional RTZ is in `optional-mods`. Install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.
+
+See [current local race options and controls](docs/LOCAL_RACE_OPTIONS_RELEASE.md). Release 1.2 includes these options. See [release notes](RELEASE_NOTES.md).
+
+Contributor navigation: [source layout](docs/SOURCE_READABILITY.md) and [traffic/presentation contracts](docs/TRAFFIC_AND_PRESENTATION_EDITING.md).
+

@@ -39,16 +39,13 @@ struct TerrainSceneSnapshot {
     std::uint64_t lifecycle_hash = 0;
     std::uint64_t resource_hash = 0;
     std::uint64_t candidate_hash = 0;
-    std::array<std::uint8_t,
-        terrain::maximum_map_width * terrain::maximum_map_width> cell_states{};
+    std::array<std::uint8_t, terrain::maximum_map_width * terrain::maximum_map_width> cell_states{};
 };
 
 // Aggregates the fixed terrain grid, active 31-cell candidate record, and
 // 96 display-list slots without mutating streamer or renderer state.
-bool capture_terrain_scene_snapshot(
-    unsigned char* rdram,
-    TerrainSceneSnapshot& snapshot) noexcept;
+bool capture_terrain_scene_snapshot(unsigned char *rdram, TerrainSceneSnapshot &snapshot) noexcept;
 
 } // namespace rr64::engine
 
-extern "C" void rr64_trace_terrain_scene(unsigned char* rdram);
+extern "C" void rr64_trace_terrain_scene(unsigned char *rdram);

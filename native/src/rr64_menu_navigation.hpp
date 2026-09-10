@@ -16,13 +16,9 @@ struct State {
 // Converts a held stick or D-pad direction into crisp one-item menu pulses.
 // The lower release threshold prevents diagonal stick noise from changing the
 // selected axis. Race input must bypass this helper entirely.
-void filter(
-    State& state,
-    std::uint16_t buttons,
-    float& stick_x,
-    float& stick_y,
-    std::uint64_t now_ms);
+void filter(State &state, std::uint16_t buttons, float &stick_x, float &stick_y,
+            std::uint64_t now_ms);
 
-void reset(State& state);
+void reset(State &state);
 
 } // namespace rr64::menu_navigation

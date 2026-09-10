@@ -59,13 +59,12 @@ struct TerrainAssets {
 // Materials execute the original pure command writers on private RDRAM. The
 // original terrain loader, 96-slot pool, simulation and collision stay untouched.
 // Batching wraps each packet's unchanged triangles in the RR64 renderer command.
-bool build_terrain_assets(std::span<const std::uint8_t> rom,
-    TerrainAssets& output, std::string& error) noexcept;
-bool build_terrain_assets(std::span<const std::uint8_t> rom,
-    TerrainAssets& output, std::string& error, bool batch_triangles) noexcept;
+bool build_terrain_assets(std::span<const std::uint8_t> rom, TerrainAssets &output,
+                          std::string &error) noexcept;
+bool build_terrain_assets(std::span<const std::uint8_t> rom, TerrainAssets &output,
+                          std::string &error, bool batch_triangles) noexcept;
 
-bool build_terrain_assets(std::span<const std::uint8_t> rom,
-    TerrainAssets& output, std::string& error, bool batch_triangles, bool compile_packets) noexcept;
+bool build_terrain_assets(std::span<const std::uint8_t> rom, TerrainAssets &output,
+                          std::string &error, bool batch_triangles, bool compile_packets) noexcept;
 
 } // namespace rr64::world
-

@@ -11,9 +11,42 @@
 #include <mutex>
 #include <random>
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <WinSock2.h>
 #include <WS2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <cerrno>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+using SOCKET = int;
+using socklen_type = socklen_t;
+constexpr SOCKET INVALID_SOCKET = -1;
+constexpr int SOCKET_ERROR = -1;
+constexpr int WSAEWOULDBLOCK = EWOULDBLOCK;
+
+inline int closesocket(SOCKET socket_handle) {
+    return ::close(socket_handle);
+}
+
+inline int ioctlsocket(SOCKET socket_handle, long command, u_long *argument) {
+    return ::ioctl(socket_handle, static_cast<unsigned long>(command), argument);
+}
+
+inline int WSAGetLastError() {
+    return errno;
+}
+#endif
+
+#ifdef _WIN32
+using socklen_type = int;
+#endif
 
 namespace rr64::netplay {
 namespace {
@@ -64,11 +97,11 @@ struct HelloPacket {
     PacketHeader header{};
     char player_name[kPlayerNameCapacity]{};
 };
-enum class RejectReason : std::uint16_t { Full=1, Busy=2, Version=3 };
+enum class RejectReason : std::uint16_t { Full = 1, Busy = 2, Version = 3 };
 struct ConnectRejectPacket {
     PacketHeader header{};
     RejectReason reason{};
-    std::uint16_t expected_version=kProtocolVersion;
+    std::uint16_t expected_version = kProtocolVersion;
 };
 
 struct WelcomePacket {
@@ -222,8 +255,8 @@ struct Session {
     std::deque<ReceivedVoiceFrame> received_voice_frames{};
     bool replicated_riders = false;
     Clock::time_point connect_started{}, last_host_seen{};
-    std::uint64_t hello_attempts=0, received_packets=0;
-    int last_socket_error=0;
+    std::uint64_t hello_attempts = 0, received_packets = 0;
+    int last_socket_error = 0;
 };
 
 std::mutex g_mutex;
@@ -240,12 +273,13 @@ bool is_client_locked() {
 
 std::uint64_t make_session_token() {
     const auto now = static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count());
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch())
+            .count());
     std::random_device random;
     return now ^ (static_cast<std::uint64_t>(random()) << 32) ^ random();
 }
 
-void copy_string(char* destination, std::size_t capacity, const std::string& source) {
+void copy_string(char *destination, std::size_t capacity, const std::string &source) {
     if (capacity == 0) {
         return;
     }
@@ -254,24 +288,22 @@ void copy_string(char* destination, std::size_t capacity, const std::string& sou
     destination[length] = '\0';
 }
 
-std::string read_string(const char* source, std::size_t capacity) {
-    const void* end = std::memchr(source, '\0', capacity);
-    const std::size_t length = end == nullptr
-        ? capacity
-        : static_cast<const char*>(end) - source;
+std::string read_string(const char *source, std::size_t capacity) {
+    const void *end = std::memchr(source, '\0', capacity);
+    const std::size_t length = end == nullptr ? capacity : static_cast<const char *>(end) - source;
     return std::string(source, length);
 }
 
-bool finite_rider_state(const RiderState& state) {
+bool finite_rider_state(const RiderState &state) {
     return std::isfinite(state.position_x) && std::isfinite(state.position_y) &&
-        std::isfinite(state.position_z) && std::isfinite(state.front_wheel_x) &&
-        std::isfinite(state.front_wheel_y) && std::isfinite(state.front_wheel_z) &&
-        std::isfinite(state.rear_wheel_x) && std::isfinite(state.rear_wheel_y) &&
-        std::isfinite(state.rear_wheel_z) && std::isfinite(state.bike_lean) &&
-        std::isfinite(state.front_suspension) && std::isfinite(state.rear_suspension);
+           std::isfinite(state.position_z) && std::isfinite(state.front_wheel_x) &&
+           std::isfinite(state.front_wheel_y) && std::isfinite(state.front_wheel_z) &&
+           std::isfinite(state.rear_wheel_x) && std::isfinite(state.rear_wheel_y) &&
+           std::isfinite(state.rear_wheel_z) && std::isfinite(state.bike_lean) &&
+           std::isfinite(state.front_suspension) && std::isfinite(state.rear_suspension);
 }
 
-WireRiderState to_wire(const RiderState& state) {
+WireRiderState to_wire(const RiderState &state) {
     WireRiderState wire{};
     wire.active = state.active ? 1 : 0;
     wire.animation = state.animation;
@@ -296,7 +328,7 @@ WireRiderState to_wire(const RiderState& state) {
     return wire;
 }
 
-RiderState from_wire(const WireRiderState& wire) {
+RiderState from_wire(const WireRiderState &wire) {
     RiderState state{};
     state.active = wire.active != 0;
     state.animation = wire.animation;
@@ -325,7 +357,7 @@ float blend(float from, float to, float alpha) {
     return from + (to - from) * alpha;
 }
 
-RiderState interpolate(const RiderState& previous, const RiderState& current, float alpha) {
+RiderState interpolate(const RiderState &previous, const RiderState &current, float alpha) {
     if (!previous.active || previous.tick >= current.tick) {
         return current;
     }
@@ -349,8 +381,7 @@ static_assert(sizeof(LobbySnapshotPacket) <= 1200, "Lobby snapshots must avoid U
 static_assert(sizeof(RaceSnapshotPacket) <= 1200, "Race snapshots must avoid UDP fragmentation");
 static_assert(sizeof(VoicePacket) <= 1200, "Voice packets must avoid UDP fragmentation");
 
-template <typename Packet>
-void initialize_packet(Packet& packet, PacketType type) {
+template <typename Packet> void initialize_packet(Packet &packet, PacketType type) {
     packet.header.magic = kProtocolMagic;
     packet.header.version = kProtocolVersion;
     packet.header.type = type;
@@ -359,10 +390,9 @@ void initialize_packet(Packet& packet, PacketType type) {
     packet.header.session = g_session.token;
 }
 
-bool endpoint_equal(const sockaddr_in& left, const sockaddr_in& right) {
-    return left.sin_family == right.sin_family &&
-        left.sin_port == right.sin_port &&
-        left.sin_addr.s_addr == right.sin_addr.s_addr;
+bool endpoint_equal(const sockaddr_in &left, const sockaddr_in &right) {
+    return left.sin_family == right.sin_family && left.sin_port == right.sin_port &&
+           left.sin_addr.s_addr == right.sin_addr.s_addr;
 }
 
 void close_socket_locked() {
@@ -371,31 +401,43 @@ void close_socket_locked() {
         g_session.socket = INVALID_SOCKET;
     }
 }
-void connection_failure_locked(const std::string& message) {
-    std::fprintf(stderr,"[RR64-NET] failed: %s hello-attempts=%llu received=%llu last-socket-error=%d\n",
-        message.c_str(),static_cast<unsigned long long>(g_session.hello_attempts),
-        static_cast<unsigned long long>(g_session.received_packets),g_session.last_socket_error);
+void connection_failure_locked(const std::string &message) {
+    std::fprintf(
+        stderr, "[RR64-NET] failed: %s hello-attempts=%llu received=%llu last-socket-error=%d\n",
+        message.c_str(), static_cast<unsigned long long>(g_session.hello_attempts),
+        static_cast<unsigned long long>(g_session.received_packets), g_session.last_socket_error);
     std::fflush(stderr);
-    close_socket_locked();g_session.phase=Phase::Offline;g_session.config.mode=Mode::Offline;
-    g_session.local_slot=kInvalidSlot;g_session.token=0;g_session.players={};g_session.inputs={};
-    g_session.riders={};g_session.previous_riders={};g_session.message=message;
+    close_socket_locked();
+    g_session.phase = Phase::Offline;
+    g_session.config.mode = Mode::Offline;
+    g_session.local_slot = kInvalidSlot;
+    g_session.token = 0;
+    g_session.players = {};
+    g_session.inputs = {};
+    g_session.riders = {};
+    g_session.previous_riders = {};
+    g_session.message = message;
 }
-void record_socket_error_locked(const char* operation,int error) {
-    if(error==WSAEWOULDBLOCK)return;
-    if(g_session.last_socket_error!=error){
-        std::fprintf(stderr,"[RR64-NET] %s error=%d\n",operation,error);std::fflush(stderr);
+void record_socket_error_locked(const char *operation, int error) {
+    if (error == WSAEWOULDBLOCK)
+        return;
+    if (g_session.last_socket_error != error) {
+        std::fprintf(stderr, "[RR64-NET] %s error=%d\n", operation, error);
+        std::fflush(stderr);
     }
-    g_session.last_socket_error=error;
+    g_session.last_socket_error = error;
 }
 
 bool start_winsock_locked() {
     if (g_winsock_started) {
         return true;
     }
+#ifdef _WIN32
     WSADATA data{};
     if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
         return false;
     }
+#endif
     g_winsock_started = true;
     return true;
 }
@@ -423,79 +465,82 @@ bool create_socket_locked(bool bind_host, std::uint16_t port) {
     local.sin_family = AF_INET;
     local.sin_addr.s_addr = htonl(INADDR_ANY);
     local.sin_port = htons(bind_host ? port : 0);
-    if(bind_host){
-        BOOL exclusive=TRUE;
-        if(setsockopt(g_session.socket,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,reinterpret_cast<const char*>(&exclusive),sizeof(exclusive))==SOCKET_ERROR){
-            record_socket_error_locked("exclusive-bind",WSAGetLastError());close_socket_locked();
-            g_session.message="Could not reserve the hosting port.";return false;
+#ifdef _WIN32
+    if (bind_host) {
+        BOOL exclusive = TRUE;
+        if (setsockopt(g_session.socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                       reinterpret_cast<const char *>(&exclusive),
+                       sizeof(exclusive)) == SOCKET_ERROR) {
+            record_socket_error_locked("exclusive-bind", WSAGetLastError());
+            close_socket_locked();
+            g_session.message = "Could not reserve the hosting port.";
+            return false;
         }
     }
-    if (bind(g_session.socket, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) == SOCKET_ERROR) {
-        record_socket_error_locked("bind",WSAGetLastError());
+#endif
+    if (bind(g_session.socket, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) ==
+        SOCKET_ERROR) {
+        record_socket_error_locked("bind", WSAGetLastError());
         close_socket_locked();
         g_session.message = "Could not bind UDP port " + std::to_string(port);
         return false;
     }
-    int length=sizeof(local);getsockname(g_session.socket,reinterpret_cast<sockaddr*>(&local),&length);
-    std::fprintf(stderr,"[RR64-NET] socket role=%s local-udp-port=%u protocol=%u\n",bind_host?"host":"join",ntohs(local.sin_port),kProtocolVersion);std::fflush(stderr);
+    socklen_type length = sizeof(local);
+    getsockname(g_session.socket, reinterpret_cast<sockaddr *>(&local), &length);
+    std::fprintf(stderr, "[RR64-NET] socket role=%s local-udp-port=%u protocol=%u\n",
+                 bind_host ? "host" : "join", ntohs(local.sin_port), kProtocolVersion);
+    std::fflush(stderr);
     return true;
 }
 
-bool resolve_host(const std::string& address, std::uint16_t port, sockaddr_in& endpoint) {
+bool resolve_host(const std::string &address, std::uint16_t port, sockaddr_in &endpoint) {
     addrinfo hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_protocol = IPPROTO_UDP;
-    addrinfo* results = nullptr;
+    addrinfo *results = nullptr;
     const std::string port_text = std::to_string(port);
-    if (getaddrinfo(address.c_str(), port_text.c_str(), &hints, &results) != 0 || results == nullptr) {
+    if (getaddrinfo(address.c_str(), port_text.c_str(), &hints, &results) != 0 ||
+        results == nullptr) {
         return false;
     }
-    endpoint = *reinterpret_cast<sockaddr_in*>(results->ai_addr);
+    endpoint = *reinterpret_cast<sockaddr_in *>(results->ai_addr);
     freeaddrinfo(results);
     return true;
 }
 
 template <typename Packet>
-void send_packet_locked(const Packet& packet, const sockaddr_in& endpoint) {
+void send_packet_locked(const Packet &packet, const sockaddr_in &endpoint) {
     if (g_session.socket == INVALID_SOCKET) {
         return;
     }
-    const int sent=sendto(
-        g_session.socket,
-        reinterpret_cast<const char*>(&packet),
-        static_cast<int>(sizeof(Packet)),
-        0,
-        reinterpret_cast<const sockaddr*>(&endpoint),
-        sizeof(endpoint));
-    if(sent==SOCKET_ERROR)record_socket_error_locked("send",WSAGetLastError());
+    const int sent = sendto(g_session.socket, reinterpret_cast<const char *>(&packet),
+                            static_cast<int>(sizeof(Packet)), 0,
+                            reinterpret_cast<const sockaddr *>(&endpoint), sizeof(endpoint));
+    if (sent == SOCKET_ERROR)
+        record_socket_error_locked("send", WSAGetLastError());
 }
 
-std::size_t voice_packet_size(const VoicePacket& packet) {
+std::size_t voice_packet_size(const VoicePacket &packet) {
     return offsetof(VoicePacket, payload) + packet.payload_size;
 }
 
-bool valid_voice_packet(const VoicePacket& packet, int size) {
+bool valid_voice_packet(const VoicePacket &packet, int size) {
     return packet.payload_size > 0 && packet.payload_size <= kVoicePayloadCapacity &&
-        size == static_cast<int>(voice_packet_size(packet));
+           size == static_cast<int>(voice_packet_size(packet));
 }
 
-void send_voice_packet_locked(VoicePacket& packet, const sockaddr_in& endpoint) {
+void send_voice_packet_locked(VoicePacket &packet, const sockaddr_in &endpoint) {
     if (g_session.socket == INVALID_SOCKET) {
         return;
     }
     const std::size_t size = voice_packet_size(packet);
     packet.header.size = static_cast<std::uint16_t>(size);
-    sendto(
-        g_session.socket,
-        reinterpret_cast<const char*>(&packet),
-        static_cast<int>(size),
-        0,
-        reinterpret_cast<const sockaddr*>(&endpoint),
-        sizeof(endpoint));
+    sendto(g_session.socket, reinterpret_cast<const char *>(&packet), static_cast<int>(size), 0,
+           reinterpret_cast<const sockaddr *>(&endpoint), sizeof(endpoint));
 }
 
-void enqueue_voice_frame_locked(const VoicePacket& packet) {
+void enqueue_voice_frame_locked(const VoicePacket &packet) {
     if (g_session.received_voice_frames.size() >= kMaximumQueuedVoiceFrames) {
         g_session.received_voice_frames.pop_front();
     }
@@ -508,14 +553,15 @@ void enqueue_voice_frame_locked(const VoicePacket& packet) {
 }
 
 std::uint8_t connected_count_locked() {
-    return static_cast<std::uint8_t>(std::count_if(
-        g_session.players.begin(), g_session.players.end(),
-        [](const PlayerInfo& player) { return player.connected; }));
+    return static_cast<std::uint8_t>(
+        std::count_if(g_session.players.begin(), g_session.players.end(),
+                      [](const PlayerInfo &player) { return player.connected; }));
 }
 
-std::uint8_t find_peer_slot_locked(const sockaddr_in& endpoint) {
+std::uint8_t find_peer_slot_locked(const sockaddr_in &endpoint) {
     for (std::uint8_t slot = 1; slot < kMaximumPlayers; ++slot) {
-        if (g_session.peers[slot].connected && endpoint_equal(g_session.peers[slot].endpoint, endpoint)) {
+        if (g_session.peers[slot].connected &&
+            endpoint_equal(g_session.peers[slot].endpoint, endpoint)) {
             return slot;
         }
     }
@@ -548,8 +594,11 @@ void send_hello_locked(const Clock::time_point now) {
     send_packet_locked(packet, g_session.host_endpoint);
     g_session.last_hello = now;
     ++g_session.hello_attempts;
-    if(g_session.hello_attempts==1 || g_session.hello_attempts%10==0){
-        std::fprintf(stderr,"[RR64-NET] hello attempt=%llu received=%llu\n",static_cast<unsigned long long>(g_session.hello_attempts),static_cast<unsigned long long>(g_session.received_packets));std::fflush(stderr);
+    if (g_session.hello_attempts == 1 || g_session.hello_attempts % 10 == 0) {
+        std::fprintf(stderr, "[RR64-NET] hello attempt=%llu received=%llu\n",
+                     static_cast<unsigned long long>(g_session.hello_attempts),
+                     static_cast<unsigned long long>(g_session.received_packets));
+        std::fflush(stderr);
     }
 }
 
@@ -565,8 +614,10 @@ void send_client_state_locked(const Clock::time_point now) {
     packet.character = g_session.players[slot].character;
     packet.track = g_session.players[slot].track;
     packet.buttons = g_session.inputs[slot].buttons;
-    packet.stick_x = static_cast<std::int8_t>(std::lround(std::clamp(g_session.inputs[slot].stick_x, -1.0f, 1.0f) * 127.0f));
-    packet.stick_y = static_cast<std::int8_t>(std::lround(std::clamp(g_session.inputs[slot].stick_y, -1.0f, 1.0f) * 127.0f));
+    packet.stick_x = static_cast<std::int8_t>(
+        std::lround(std::clamp(g_session.inputs[slot].stick_x, -1.0f, 1.0f) * 127.0f));
+    packet.stick_y = static_cast<std::int8_t>(
+        std::lround(std::clamp(g_session.inputs[slot].stick_y, -1.0f, 1.0f) * 127.0f));
     copy_string(packet.player_name, sizeof(packet.player_name), g_session.players[slot].name);
     send_packet_locked(packet, g_session.host_endpoint);
     g_session.last_state = now;
@@ -577,25 +628,26 @@ void send_snapshot_locked(const Clock::time_point now) {
     initialize_packet(packet, PacketType::LobbySnapshot);
     packet.phase = static_cast<std::uint8_t>(g_session.phase);
     packet.connected_players = connected_count_locked();
-    packet.reserved=static_cast<std::uint8_t>(std::clamp<unsigned>(g_session.config.maximum_players,2u,kMaximumPlayers));
+    packet.reserved = static_cast<std::uint8_t>(
+        std::clamp<unsigned>(g_session.config.maximum_players, 2u, kMaximumPlayers));
     packet.replicated_riders = g_session.replicated_riders ? 1 : 0;
     packet.game_setup.revision = g_session.game_setup.revision;
     packet.game_setup.transition_buttons = g_session.game_setup.transition_buttons;
     packet.game_setup.valid = g_session.game_setup.valid ? 1 : 0;
-    std::copy(
-        g_session.game_setup.words.begin(),
-        g_session.game_setup.words.end(),
-        packet.game_setup.words);
+    std::copy(g_session.game_setup.words.begin(), g_session.game_setup.words.end(),
+              packet.game_setup.words);
     for (std::uint8_t slot = 0; slot < kMaximumPlayers; ++slot) {
-        const PlayerInfo& player = g_session.players[slot];
-        WirePlayer& wire = packet.players[slot];
+        const PlayerInfo &player = g_session.players[slot];
+        WirePlayer &wire = packet.players[slot];
         wire.connected = player.connected ? 1 : 0;
         wire.ready = player.ready ? 1 : 0;
         wire.character = player.character;
         wire.track = player.track;
         wire.buttons = g_session.inputs[slot].buttons;
-        wire.stick_x = static_cast<std::int8_t>(std::lround(std::clamp(g_session.inputs[slot].stick_x, -1.0f, 1.0f) * 127.0f));
-        wire.stick_y = static_cast<std::int8_t>(std::lround(std::clamp(g_session.inputs[slot].stick_y, -1.0f, 1.0f) * 127.0f));
+        wire.stick_x = static_cast<std::int8_t>(
+            std::lround(std::clamp(g_session.inputs[slot].stick_x, -1.0f, 1.0f) * 127.0f));
+        wire.stick_y = static_cast<std::int8_t>(
+            std::lround(std::clamp(g_session.inputs[slot].stick_y, -1.0f, 1.0f) * 127.0f));
         wire.ping_ms = player.ping_ms;
         copy_string(wire.name, sizeof(wire.name), player.name);
     }
@@ -611,7 +663,7 @@ void send_client_rider_state_locked(const Clock::time_point now) {
     if (g_session.local_slot >= kMaximumPlayers) {
         return;
     }
-    const RiderState& state = g_session.riders[g_session.local_slot];
+    const RiderState &state = g_session.riders[g_session.local_slot];
     if (!state.active || !finite_rider_state(state)) {
         return;
     }
@@ -638,42 +690,51 @@ void send_race_snapshot_locked(const Clock::time_point now) {
     g_session.last_race_snapshot = now;
 }
 
-void send_ping_locked(std::uint8_t slot, const sockaddr_in& endpoint, const Clock::time_point now) {
+void send_ping_locked(std::uint8_t slot, const sockaddr_in &endpoint, const Clock::time_point now) {
     PingPacket packet{};
     initialize_packet(packet, PacketType::Ping);
     packet.slot = slot;
-    packet.nonce = g_session.sequence ^ static_cast<std::uint32_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
+    packet.nonce =
+        g_session.sequence ^
+        static_cast<std::uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
     if (is_host_locked()) {
         g_session.peers[slot].ping_nonce = packet.nonce;
         g_session.peers[slot].ping_sent = now;
-    }
-    else {
+    } else {
         g_session.client_ping_nonce = packet.nonce;
         g_session.client_ping_sent = now;
     }
     send_packet_locked(packet, endpoint);
 }
 
-bool valid_packet(const PacketHeader& header, int received_size) {
+bool valid_packet(const PacketHeader &header, int received_size) {
     return received_size >= static_cast<int>(sizeof(PacketHeader)) &&
-        header.magic == kProtocolMagic &&
-        header.version == kProtocolVersion &&
-        header.size == received_size;
+           header.magic == kProtocolMagic && header.version == kProtocolVersion &&
+           header.size == received_size;
 }
-void send_reject_locked(const sockaddr_in& endpoint,RejectReason reason){
-    ConnectRejectPacket packet{};initialize_packet(packet,PacketType::ConnectReject);
-    packet.header.session=0;packet.reason=reason;send_packet_locked(packet,endpoint);
+void send_reject_locked(const sockaddr_in &endpoint, RejectReason reason) {
+    ConnectRejectPacket packet{};
+    initialize_packet(packet, PacketType::ConnectReject);
+    packet.header.session = 0;
+    packet.reason = reason;
+    send_packet_locked(packet, endpoint);
 }
 
-void handle_host_packet_locked(const std::uint8_t* bytes, int size, const sockaddr_in& endpoint, const Clock::time_point now) {
-    const PacketHeader& header = *reinterpret_cast<const PacketHeader*>(bytes);
+void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockaddr_in &endpoint,
+                               const Clock::time_point now) {
+    const PacketHeader &header = *reinterpret_cast<const PacketHeader *>(bytes);
     if (header.type == PacketType::Hello && size == sizeof(HelloPacket)) {
         std::uint8_t slot = find_peer_slot_locked(endpoint);
         if (slot == kInvalidSlot) {
-            if(g_session.phase!=Phase::Lobby){send_reject_locked(endpoint,RejectReason::Busy);return;}
-            if(connected_count_locked()>=std::clamp<unsigned>(g_session.config.maximum_players,2u,kMaximumPlayers)){
-                send_reject_locked(endpoint,RejectReason::Full);return;
+            if (g_session.phase != Phase::Lobby) {
+                send_reject_locked(endpoint, RejectReason::Busy);
+                return;
+            }
+            if (connected_count_locked() >=
+                std::clamp<unsigned>(g_session.config.maximum_players, 2u, kMaximumPlayers)) {
+                send_reject_locked(endpoint, RejectReason::Full);
+                return;
             }
             slot = allocate_peer_slot_locked();
             if (slot == kInvalidSlot) {
@@ -684,10 +745,12 @@ void handle_host_packet_locked(const std::uint8_t* bytes, int size, const sockad
             g_session.players[slot].connected = true;
             g_session.players[slot].slot = slot;
             g_session.players[slot].ready = false;
-            std::fprintf(stderr,"[RR64-NET] hello accepted slot=%u peer=%s:%u\n",slot,inet_ntoa(endpoint.sin_addr),ntohs(endpoint.sin_port));std::fflush(stderr);
+            std::fprintf(stderr, "[RR64-NET] hello accepted slot=%u peer=%s:%u\n", slot,
+                         inet_ntoa(endpoint.sin_addr), ntohs(endpoint.sin_port));
+            std::fflush(stderr);
         }
         g_session.peers[slot].last_seen = now;
-        const auto& hello = *reinterpret_cast<const HelloPacket*>(bytes);
+        const auto &hello = *reinterpret_cast<const HelloPacket *>(bytes);
         g_session.players[slot].name = read_string(hello.player_name, sizeof(hello.player_name));
         if (g_session.players[slot].name.empty()) {
             g_session.players[slot].name = "Rider " + std::to_string(slot + 1);
@@ -695,7 +758,7 @@ void handle_host_packet_locked(const std::uint8_t* bytes, int size, const sockad
         send_welcome_locked(slot);
         send_snapshot_locked(now);
         g_session.message = "Lobby open - " + std::to_string(connected_count_locked()) + " / " +
-            std::to_string(kMaximumPlayers) + " riders";
+                            std::to_string(kMaximumPlayers) + " riders";
         return;
     }
 
@@ -709,11 +772,11 @@ void handle_host_packet_locked(const std::uint8_t* bytes, int size, const sockad
     g_session.peers[slot].last_seen = now;
 
     if (header.type == PacketType::ClientState && size == sizeof(ClientStatePacket)) {
-        const auto& state = *reinterpret_cast<const ClientStatePacket*>(bytes);
+        const auto &state = *reinterpret_cast<const ClientStatePacket *>(bytes);
         if (state.slot != slot) {
             return;
         }
-        PlayerInfo& player = g_session.players[slot];
+        PlayerInfo &player = g_session.players[slot];
         player.ready = state.ready != 0;
         player.character = state.character;
         player.track = state.track;
@@ -721,14 +784,15 @@ void handle_host_packet_locked(const std::uint8_t* bytes, int size, const sockad
         g_session.inputs[slot].buttons = state.buttons;
         g_session.inputs[slot].stick_x = static_cast<float>(state.stick_x) / 127.0f;
         g_session.inputs[slot].stick_y = static_cast<float>(state.stick_y) / 127.0f;
-    }
-    else if (header.type == PacketType::ClientRiderState && size == sizeof(ClientRiderStatePacket)) {
-        const auto& packet = *reinterpret_cast<const ClientRiderStatePacket*>(bytes);
+    } else if (header.type == PacketType::ClientRiderState &&
+               size == sizeof(ClientRiderStatePacket)) {
+        const auto &packet = *reinterpret_cast<const ClientRiderStatePacket *>(bytes);
         if (packet.slot != slot || g_session.phase != Phase::Race) {
             return;
         }
         RiderState proposed = from_wire(packet.state);
-        if (!proposed.active || !finite_rider_state(proposed) || proposed.tick <= g_session.riders[slot].tick) {
+        if (!proposed.active || !finite_rider_state(proposed) ||
+            proposed.tick <= g_session.riders[slot].tick) {
             return;
         }
         // The host owns the canonical array and accepts only the state carried
@@ -736,11 +800,10 @@ void handle_host_packet_locked(const std::uint8_t* bytes, int size, const sockad
         // sanity checks can be layered here without changing the wire format.
         g_session.previous_riders[slot] = g_session.riders[slot];
         g_session.riders[slot] = proposed;
-    }
-    else if (header.type == PacketType::Voice &&
-             size >= static_cast<int>(offsetof(VoicePacket, payload))) {
-        const auto& incoming = *reinterpret_cast<const VoicePacket*>(bytes);
-        Peer& peer = g_session.peers[slot];
+    } else if (header.type == PacketType::Voice &&
+               size >= static_cast<int>(offsetof(VoicePacket, payload))) {
+        const auto &incoming = *reinterpret_cast<const VoicePacket *>(bytes);
+        Peer &peer = g_session.peers[slot];
         if (peer.voice_window_start.time_since_epoch().count() == 0 ||
             now - peer.voice_window_start >= std::chrono::seconds(1)) {
             peer.voice_window_start = now;
@@ -764,22 +827,21 @@ void handle_host_packet_locked(const std::uint8_t* bytes, int size, const sockad
             }
         }
         enqueue_voice_frame_locked(canonical);
-    }
-    else if (header.type == PacketType::Ping && size == sizeof(PingPacket)) {
-        PingPacket pong = *reinterpret_cast<const PingPacket*>(bytes);
+    } else if (header.type == PacketType::Ping && size == sizeof(PingPacket)) {
+        PingPacket pong = *reinterpret_cast<const PingPacket *>(bytes);
         pong.header.type = PacketType::Pong;
         pong.header.sequence = g_session.sequence++;
         send_packet_locked(pong, endpoint);
-    }
-    else if (header.type == PacketType::Pong && size == sizeof(PingPacket)) {
-        const auto& pong = *reinterpret_cast<const PingPacket*>(bytes);
-        Peer& peer = g_session.peers[slot];
+    } else if (header.type == PacketType::Pong && size == sizeof(PingPacket)) {
+        const auto &pong = *reinterpret_cast<const PingPacket *>(bytes);
+        Peer &peer = g_session.peers[slot];
         if (pong.nonce == peer.ping_nonce) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - peer.ping_sent).count();
-            g_session.players[slot].ping_ms = static_cast<std::uint16_t>(std::clamp<std::int64_t>(elapsed, 0, 999));
+            const auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - peer.ping_sent).count();
+            g_session.players[slot].ping_ms =
+                static_cast<std::uint16_t>(std::clamp<std::int64_t>(elapsed, 0, 999));
         }
-    }
-    else if (header.type == PacketType::Disconnect) {
+    } else if (header.type == PacketType::Disconnect) {
         g_session.peers[slot] = {};
         g_session.players[slot] = {};
         g_session.inputs[slot] = {};
@@ -788,49 +850,64 @@ void handle_host_packet_locked(const std::uint8_t* bytes, int size, const sockad
     }
 }
 
-void handle_client_packet_locked(const std::uint8_t* bytes, int size, const sockaddr_in& endpoint, const Clock::time_point now) {
+void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sockaddr_in &endpoint,
+                                 const Clock::time_point now) {
     if (!endpoint_equal(endpoint, g_session.host_endpoint)) {
         return;
     }
-    const PacketHeader& header = *reinterpret_cast<const PacketHeader*>(bytes);
-    if(g_session.phase==Phase::Connecting && header.type==PacketType::ConnectReject && size==sizeof(ConnectRejectPacket)){
-        const auto& rejection=*reinterpret_cast<const ConnectRejectPacket*>(bytes);
-        switch(rejection.reason){
-        case RejectReason::Full:connection_failure_locked("The host's lobby is full.");break;
-        case RejectReason::Busy:connection_failure_locked("The host has already started. Return both games to the lobby.");break;
-        case RejectReason::Version:connection_failure_locked("Online versions differ. Run the same build on both PCs.");break;
-        default:break;
+    const PacketHeader &header = *reinterpret_cast<const PacketHeader *>(bytes);
+    if (g_session.phase == Phase::Connecting && header.type == PacketType::ConnectReject &&
+        size == sizeof(ConnectRejectPacket)) {
+        const auto &rejection = *reinterpret_cast<const ConnectRejectPacket *>(bytes);
+        switch (rejection.reason) {
+        case RejectReason::Full:
+            connection_failure_locked("The host's lobby is full.");
+            break;
+        case RejectReason::Busy:
+            connection_failure_locked(
+                "The host has already started. Return both games to the lobby.");
+            break;
+        case RejectReason::Version:
+            connection_failure_locked("Online versions differ. Run the same build on both PCs.");
+            break;
+        default:
+            break;
         }
         return;
     }
     if (header.type == PacketType::Welcome && size == sizeof(WelcomePacket)) {
-        if(g_session.phase!=Phase::Connecting || g_session.local_slot!=kInvalidSlot)return;
-        const auto& welcome = *reinterpret_cast<const WelcomePacket*>(bytes);
-        if (welcome.assigned_slot == 0 || welcome.assigned_slot >= kMaximumPlayers || welcome.maximum_players != kMaximumPlayers ||
-            header.session==0 || welcome.phase!=static_cast<std::uint8_t>(Phase::Lobby)) {
+        if (g_session.phase != Phase::Connecting || g_session.local_slot != kInvalidSlot)
+            return;
+        const auto &welcome = *reinterpret_cast<const WelcomePacket *>(bytes);
+        if (welcome.assigned_slot == 0 || welcome.assigned_slot >= kMaximumPlayers ||
+            welcome.maximum_players != kMaximumPlayers || header.session == 0 ||
+            welcome.phase != static_cast<std::uint8_t>(Phase::Lobby)) {
             return;
         }
         g_session.token = header.session;
         g_session.local_slot = welcome.assigned_slot;
         g_session.phase = static_cast<Phase>(welcome.phase);
         g_session.replicated_riders = welcome.replicated_riders != 0;
-        PlayerInfo& local = g_session.players[g_session.local_slot];
+        PlayerInfo &local = g_session.players[g_session.local_slot];
         local.connected = true;
         local.slot = g_session.local_slot;
         local.name = g_session.config.player_name;
         g_session.message = "Connected to host";
-        g_session.last_host_seen=now;
-        std::fprintf(stderr,"[RR64-NET] welcome accepted slot=%u attempts=%llu\n",g_session.local_slot,static_cast<unsigned long long>(g_session.hello_attempts));std::fflush(stderr);
+        g_session.last_host_seen = now;
+        std::fprintf(stderr, "[RR64-NET] welcome accepted slot=%u attempts=%llu\n",
+                     g_session.local_slot,
+                     static_cast<unsigned long long>(g_session.hello_attempts));
+        std::fflush(stderr);
         send_client_state_locked(now);
         return;
     }
     if (g_session.token == 0 || header.session != g_session.token) {
         return;
     }
-    g_session.last_host_seen=now;
+    g_session.last_host_seen = now;
 
     if (header.type == PacketType::LobbySnapshot && size == sizeof(LobbySnapshotPacket)) {
-        const auto& snapshot = *reinterpret_cast<const LobbySnapshotPacket*>(bytes);
+        const auto &snapshot = *reinterpret_cast<const LobbySnapshotPacket *>(bytes);
         if (snapshot.phase > static_cast<std::uint8_t>(Phase::Race)) {
             return;
         }
@@ -846,17 +923,16 @@ void handle_client_packet_locked(const std::uint8_t* bytes, int size, const sock
         }
         g_session.phase = incoming_phase;
         g_session.replicated_riders = snapshot.replicated_riders != 0;
-        g_session.config.maximum_players=static_cast<std::uint8_t>(std::clamp<unsigned>(snapshot.reserved,2u,kMaximumPlayers));
+        g_session.config.maximum_players =
+            static_cast<std::uint8_t>(std::clamp<unsigned>(snapshot.reserved, 2u, kMaximumPlayers));
         g_session.game_setup.valid = snapshot.game_setup.valid != 0;
         g_session.game_setup.revision = snapshot.game_setup.revision;
         g_session.game_setup.transition_buttons = snapshot.game_setup.transition_buttons;
-        std::copy(
-            std::begin(snapshot.game_setup.words),
-            std::end(snapshot.game_setup.words),
-            g_session.game_setup.words.begin());
+        std::copy(std::begin(snapshot.game_setup.words), std::end(snapshot.game_setup.words),
+                  g_session.game_setup.words.begin());
         for (std::uint8_t slot = 0; slot < kMaximumPlayers; ++slot) {
-            const WirePlayer& wire = snapshot.players[slot];
-            PlayerInfo& player = g_session.players[slot];
+            const WirePlayer &wire = snapshot.players[slot];
+            PlayerInfo &player = g_session.players[slot];
             player.connected = wire.connected != 0;
             player.ready = wire.ready != 0;
             player.slot = player.connected ? slot : kInvalidSlot;
@@ -869,13 +945,13 @@ void handle_client_packet_locked(const std::uint8_t* bytes, int size, const sock
             g_session.inputs[slot].stick_y = static_cast<float>(wire.stick_y) / 127.0f;
         }
         g_session.message = "Connected - " + std::to_string(snapshot.connected_players) + " / " +
-            std::to_string(kMaximumPlayers) + " riders";
-    }
-    else if (header.type == PacketType::RaceSnapshot && size == sizeof(RaceSnapshotPacket)) {
-        if (g_session.phase != Phase::Race || header.sequence <= g_session.last_race_snapshot_sequence) {
+                            std::to_string(kMaximumPlayers) + " riders";
+    } else if (header.type == PacketType::RaceSnapshot && size == sizeof(RaceSnapshotPacket)) {
+        if (g_session.phase != Phase::Race ||
+            header.sequence <= g_session.last_race_snapshot_sequence) {
             return;
         }
-        const auto& snapshot = *reinterpret_cast<const RaceSnapshotPacket*>(bytes);
+        const auto &snapshot = *reinterpret_cast<const RaceSnapshotPacket *>(bytes);
         std::array<RiderState, kMaximumPlayers> incoming{};
         for (std::uint8_t slot = 0; slot < kMaximumPlayers; ++slot) {
             incoming[slot] = from_wire(snapshot.riders[slot]);
@@ -890,33 +966,31 @@ void handle_client_packet_locked(const std::uint8_t* bytes, int size, const sock
                 g_session.riders[slot] = incoming[slot];
             }
         }
-    }
-    else if (header.type == PacketType::Voice &&
-             size >= static_cast<int>(offsetof(VoicePacket, payload))) {
-        const auto& packet = *reinterpret_cast<const VoicePacket*>(bytes);
+    } else if (header.type == PacketType::Voice &&
+               size >= static_cast<int>(offsetof(VoicePacket, payload))) {
+        const auto &packet = *reinterpret_cast<const VoicePacket *>(bytes);
         if (g_session.phase != Phase::Race || !valid_voice_packet(packet, size) ||
-            packet.speaker_slot >= kMaximumPlayers ||
-            packet.speaker_slot == g_session.local_slot ||
+            packet.speaker_slot >= kMaximumPlayers || packet.speaker_slot == g_session.local_slot ||
             packet.voice_sequence <= g_session.last_voice_sequences[packet.speaker_slot]) {
             return;
         }
         g_session.last_voice_sequences[packet.speaker_slot] = packet.voice_sequence;
         enqueue_voice_frame_locked(packet);
-    }
-    else if (header.type == PacketType::Ping && size == sizeof(PingPacket)) {
-        PingPacket pong = *reinterpret_cast<const PingPacket*>(bytes);
+    } else if (header.type == PacketType::Ping && size == sizeof(PingPacket)) {
+        PingPacket pong = *reinterpret_cast<const PingPacket *>(bytes);
         pong.header.type = PacketType::Pong;
         pong.header.sequence = g_session.sequence++;
         send_packet_locked(pong, g_session.host_endpoint);
-    }
-    else if (header.type == PacketType::Pong && size == sizeof(PingPacket)) {
-        const auto& pong = *reinterpret_cast<const PingPacket*>(bytes);
+    } else if (header.type == PacketType::Pong && size == sizeof(PingPacket)) {
+        const auto &pong = *reinterpret_cast<const PingPacket *>(bytes);
         if (pong.nonce == g_session.client_ping_nonce && g_session.local_slot < kMaximumPlayers) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_session.client_ping_sent).count();
-            g_session.players[g_session.local_slot].ping_ms = static_cast<std::uint16_t>(std::clamp<std::int64_t>(elapsed, 0, 999));
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     now - g_session.client_ping_sent)
+                                     .count();
+            g_session.players[g_session.local_slot].ping_ms =
+                static_cast<std::uint16_t>(std::clamp<std::int64_t>(elapsed, 0, 999));
         }
-    }
-    else if (header.type == PacketType::Disconnect) {
+    } else if (header.type == PacketType::Disconnect) {
         g_session.message = "Host ended the session";
         g_session.phase = Phase::Connecting;
         g_session.token = 0;
@@ -931,20 +1005,16 @@ void pump_receive_locked(const Clock::time_point now) {
         return;
     }
     std::array<std::uint8_t, 2048> buffer{};
-    for(unsigned packets=0;packets<256;++packets) {
+    for (unsigned packets = 0; packets < 256; ++packets) {
         sockaddr_in endpoint{};
-        int endpoint_size = sizeof(endpoint);
-        const int received = recvfrom(
-            g_session.socket,
-            reinterpret_cast<char*>(buffer.data()),
-            static_cast<int>(buffer.size()),
-            0,
-            reinterpret_cast<sockaddr*>(&endpoint),
-            &endpoint_size);
+        socklen_type endpoint_size = sizeof(endpoint);
+        const int received = recvfrom(g_session.socket, reinterpret_cast<char *>(buffer.data()),
+                                      static_cast<int>(buffer.size()), 0,
+                                      reinterpret_cast<sockaddr *>(&endpoint), &endpoint_size);
         if (received == SOCKET_ERROR) {
             const int error = WSAGetLastError();
             if (error != WSAEWOULDBLOCK) {
-                record_socket_error_locked("receive",error);
+                record_socket_error_locked("receive", error);
                 g_session.message = "UDP receive error " + std::to_string(error);
             }
             break;
@@ -952,12 +1022,18 @@ void pump_receive_locked(const Clock::time_point now) {
         if (received < static_cast<int>(sizeof(PacketHeader))) {
             continue;
         }
-        const auto& header = *reinterpret_cast<const PacketHeader*>(buffer.data());
+        const auto &header = *reinterpret_cast<const PacketHeader *>(buffer.data());
         ++g_session.received_packets;
-        if(header.magic==kProtocolMagic && header.size==received && header.version!=kProtocolVersion){
-            if(is_host_locked() && header.type==PacketType::Hello && received==sizeof(HelloPacket))send_reject_locked(endpoint,RejectReason::Version);
-            else if(is_client_locked() && g_session.phase==Phase::Connecting && endpoint_equal(endpoint,g_session.host_endpoint)){
-                connection_failure_locked("Online versions differ. Run the same build on both PCs.");return;
+        if (header.magic == kProtocolMagic && header.size == received &&
+            header.version != kProtocolVersion) {
+            if (is_host_locked() && header.type == PacketType::Hello &&
+                received == sizeof(HelloPacket))
+                send_reject_locked(endpoint, RejectReason::Version);
+            else if (is_client_locked() && g_session.phase == Phase::Connecting &&
+                     endpoint_equal(endpoint, g_session.host_endpoint)) {
+                connection_failure_locked(
+                    "Online versions differ. Run the same build on both PCs.");
+                return;
             }
             continue;
         }
@@ -966,11 +1042,11 @@ void pump_receive_locked(const Clock::time_point now) {
         }
         if (is_host_locked()) {
             handle_host_packet_locked(buffer.data(), received, endpoint, now);
-        }
-        else if (is_client_locked()) {
+        } else if (is_client_locked()) {
             handle_client_packet_locked(buffer.data(), received, endpoint, now);
         }
-        if(g_session.socket==INVALID_SOCKET)return;
+        if (g_session.socket == INVALID_SOCKET)
+            return;
     }
 }
 
@@ -979,7 +1055,8 @@ void expire_peers_locked(const Clock::time_point now) {
         return;
     }
     for (std::uint8_t slot = 1; slot < kMaximumPlayers; ++slot) {
-        if (g_session.peers[slot].connected && now - g_session.peers[slot].last_seen > kPeerTimeout) {
+        if (g_session.peers[slot].connected &&
+            now - g_session.peers[slot].last_seen > kPeerTimeout) {
             g_session.peers[slot] = {};
             g_session.players[slot] = {};
             g_session.inputs[slot] = {};
@@ -994,20 +1071,27 @@ void service_locked(const Clock::time_point now) {
         return;
     }
     pump_receive_locked(now);
-    if(g_session.socket==INVALID_SOCKET)return;
+    if (g_session.socket == INVALID_SOCKET)
+        return;
     expire_peers_locked(now);
 
     if (is_client_locked()) {
-        if(g_session.local_slot==kInvalidSlot && now-g_session.connect_started>=kConnectTimeout){
-            connection_failure_locked("No host handshake after 15 seconds. Check the host address, UDP port and Windows firewall for this build.");return;
+        if (g_session.local_slot == kInvalidSlot &&
+            now - g_session.connect_started >= kConnectTimeout) {
+            connection_failure_locked(
+                "No host handshake after 15 seconds. Check the host address, UDP port and Windows firewall for this build.");
+            return;
         }
-        if(g_session.local_slot!=kInvalidSlot && now-g_session.last_host_seen>=kPeerTimeout){
-            connection_failure_locked("Connection to host lost. Return to Host / Join to reconnect.");return;
+        if (g_session.local_slot != kInvalidSlot &&
+            now - g_session.last_host_seen >= kPeerTimeout) {
+            connection_failure_locked(
+                "Connection to host lost. Return to Host / Join to reconnect.");
+            return;
         }
         if (g_session.local_slot == kInvalidSlot && now - g_session.last_hello >= kHelloInterval) {
             send_hello_locked(now);
-        }
-        else if (g_session.local_slot != kInvalidSlot && now - g_session.last_state >= kStateInterval) {
+        } else if (g_session.local_slot != kInvalidSlot &&
+                   now - g_session.last_state >= kStateInterval) {
             send_client_state_locked(now);
         }
         if (g_session.local_slot != kInvalidSlot && g_session.phase == Phase::Race &&
@@ -1018,12 +1102,12 @@ void service_locked(const Clock::time_point now) {
             send_ping_locked(g_session.local_slot, g_session.host_endpoint, now);
             g_session.last_ping = now;
         }
-    }
-    else {
+    } else {
         if (now - g_session.last_snapshot >= kSnapshotInterval) {
             send_snapshot_locked(now);
         }
-        if (g_session.phase == Phase::Race && now - g_session.last_race_snapshot >= kRaceSnapshotInterval) {
+        if (g_session.phase == Phase::Race &&
+            now - g_session.last_race_snapshot >= kRaceSnapshotInterval) {
             send_race_snapshot_locked(now);
         }
         if (now - g_session.last_ping >= kPingInterval) {
@@ -1039,7 +1123,7 @@ void service_locked(const Clock::time_point now) {
 
 } // namespace
 
-void configure(const Config& requested) {
+void configure(const Config &requested) {
     std::lock_guard lock(g_mutex);
     close_socket_locked();
     g_session = {};
@@ -1056,12 +1140,18 @@ void configure(const Config& requested) {
         g_session.message = "Offline";
         return;
     }
-    if(requested.mode==Mode::Join){
-        std::string host,error;
-        if(!parse_connection_address(requested.host_address,g_session.config.port,host,error)){connection_failure_locked(error);return;}
-        g_session.config.host_address=host;
+    if (requested.mode == Mode::Join) {
+        std::string host, error;
+        if (!parse_connection_address(requested.host_address, g_session.config.port, host, error)) {
+            connection_failure_locked(error);
+            return;
+        }
+        g_session.config.host_address = host;
     }
-    if(!g_session.config.port){connection_failure_locked("Enter a UDP port from 1 to 65535.");return;}
+    if (!g_session.config.port) {
+        connection_failure_locked("Enter a UDP port from 1 to 65535.");
+        return;
+    }
 
     const bool host = requested.mode == Mode::Host;
     if (!create_socket_locked(host, g_session.config.port)) {
@@ -1071,7 +1161,7 @@ void configure(const Config& requested) {
     }
 
     const Clock::time_point now = Clock::now();
-    g_session.connect_started=now;
+    g_session.connect_started = now;
     g_session.last_hello = now - kHelloInterval;
     g_session.last_state = now - kStateInterval;
     g_session.last_snapshot = now - kSnapshotInterval;
@@ -1087,9 +1177,9 @@ void configure(const Config& requested) {
         g_session.players[0].slot = 0;
         g_session.players[0].name = g_session.config.player_name;
         g_session.message = "Lobby open on UDP port " + std::to_string(g_session.config.port);
-    }
-    else {
-        if (!resolve_host(g_session.config.host_address, g_session.config.port, g_session.host_endpoint)) {
+    } else {
+        if (!resolve_host(g_session.config.host_address, g_session.config.port,
+                          g_session.host_endpoint)) {
             close_socket_locked();
             g_session.config.mode = Mode::Offline;
             g_session.phase = Phase::Offline;
@@ -1097,8 +1187,12 @@ void configure(const Config& requested) {
             return;
         }
         g_session.phase = Phase::Connecting;
-        g_session.message = "Connecting to " + g_session.config.host_address + ":" + std::to_string(g_session.config.port);
-        std::fprintf(stderr,"[RR64-NET] destination=%s:%u protocol=%u\n",inet_ntoa(g_session.host_endpoint.sin_addr),ntohs(g_session.host_endpoint.sin_port),kProtocolVersion);std::fflush(stderr);
+        g_session.message = "Connecting to " + g_session.config.host_address + ":" +
+                            std::to_string(g_session.config.port);
+        std::fprintf(stderr, "[RR64-NET] destination=%s:%u protocol=%u\n",
+                     inet_ntoa(g_session.host_endpoint.sin_addr),
+                     ntohs(g_session.host_endpoint.sin_port), kProtocolVersion);
+        std::fflush(stderr);
     }
 }
 
@@ -1116,8 +1210,7 @@ void shutdown() {
                     send_packet_locked(packet, g_session.peers[slot].endpoint);
                 }
             }
-        }
-        else if (is_client_locked()) {
+        } else if (is_client_locked()) {
             send_packet_locked(packet, g_session.host_endpoint);
         }
     }
@@ -1133,7 +1226,7 @@ void update() {
 Status get_status() {
     std::lock_guard lock(g_mutex);
     Status status{};
-    status.maximum_players=g_session.config.maximum_players;
+    status.maximum_players = g_session.config.maximum_players;
     status.active = g_session.config.mode != Mode::Offline && g_session.socket != INVALID_SOCKET;
     status.connected = is_host_locked() || g_session.local_slot != kInvalidSlot;
     status.is_host = is_host_locked();
@@ -1149,7 +1242,8 @@ Status get_status() {
 
 bool set_ready(bool ready) {
     std::lock_guard lock(g_mutex);
-    if (g_session.local_slot >= kMaximumPlayers || !g_session.players[g_session.local_slot].connected) {
+    if (g_session.local_slot >= kMaximumPlayers ||
+        !g_session.players[g_session.local_slot].connected) {
         return false;
     }
     g_session.players[g_session.local_slot].ready = ready;
@@ -1158,7 +1252,8 @@ bool set_ready(bool ready) {
 
 bool set_character(std::uint8_t character) {
     std::lock_guard lock(g_mutex);
-    if (g_session.local_slot >= kMaximumPlayers || !g_session.players[g_session.local_slot].connected) {
+    if (g_session.local_slot >= kMaximumPlayers ||
+        !g_session.players[g_session.local_slot].connected) {
         return false;
     }
     g_session.players[g_session.local_slot].character = character;
@@ -1167,7 +1262,8 @@ bool set_character(std::uint8_t character) {
 
 bool set_track(std::uint8_t track) {
     std::lock_guard lock(g_mutex);
-    if (g_session.local_slot >= kMaximumPlayers || !g_session.players[g_session.local_slot].connected) {
+    if (g_session.local_slot >= kMaximumPlayers ||
+        !g_session.players[g_session.local_slot].connected) {
         return false;
     }
     g_session.players[g_session.local_slot].track = track;
@@ -1177,9 +1273,9 @@ bool set_track(std::uint8_t track) {
 bool all_connected_players_ready() {
     std::lock_guard lock(g_mutex);
     const std::uint8_t count = connected_count_locked();
-    return count > 0 && std::all_of(
-        g_session.players.begin(), g_session.players.end(),
-        [](const PlayerInfo& player) { return !player.connected || player.ready; });
+    return count > 0 &&
+           std::all_of(g_session.players.begin(), g_session.players.end(),
+                       [](const PlayerInfo &player) { return !player.connected || player.ready; });
 }
 
 bool host_set_phase(Phase phase) {
@@ -1190,8 +1286,7 @@ bool host_set_phase(Phase phase) {
     if (phase == Phase::Lobby) {
         g_session.replicated_riders = false;
         g_session.game_setup = {};
-    }
-    else if (phase == Phase::GameSetup) {
+    } else if (phase == Phase::GameSetup) {
         g_session.replicated_riders = connected_count_locked() > kMaximumLocalControllers;
         g_session.game_setup = {};
     }
@@ -1201,7 +1296,7 @@ bool host_set_phase(Phase phase) {
         g_session.local_voice_sequence = 0;
     }
     g_session.phase = phase;
-    for (PlayerInfo& player : g_session.players) {
+    for (PlayerInfo &player : g_session.players) {
         if (player.connected) {
             player.ready = false;
         }
@@ -1213,7 +1308,7 @@ bool host_set_phase(Phase phase) {
     return true;
 }
 
-bool host_commit_game_setup(const GameSetupState& setup) {
+bool host_commit_game_setup(const GameSetupState &setup) {
     std::lock_guard lock(g_mutex);
     if (!is_host_locked() || g_session.phase != Phase::GameSetup) {
         return false;
@@ -1222,9 +1317,7 @@ bool host_commit_game_setup(const GameSetupState& setup) {
     const std::uint32_t previous_revision = g_session.game_setup.revision;
     g_session.game_setup = setup;
     g_session.game_setup.valid = true;
-    g_session.game_setup.revision = std::max(
-        setup.revision,
-        previous_revision + 1);
+    g_session.game_setup.revision = std::max(setup.revision, previous_revision + 1);
     g_session.phase = Phase::CharacterSelect;
     g_session.message = "Host settings locked - choose your rider and bike";
     send_snapshot_locked(Clock::now());
@@ -1236,13 +1329,13 @@ void set_local_input(std::uint16_t buttons, float stick_x, float stick_y) {
     if (g_session.local_slot >= kMaximumPlayers) {
         return;
     }
-    InputState& input = g_session.inputs[g_session.local_slot];
+    InputState &input = g_session.inputs[g_session.local_slot];
     input.buttons = buttons;
     input.stick_x = std::clamp(stick_x, -1.0f, 1.0f);
     input.stick_y = std::clamp(stick_y, -1.0f, 1.0f);
 }
 
-bool get_player_input(std::uint8_t slot, std::uint16_t& buttons, float& stick_x, float& stick_y) {
+bool get_player_input(std::uint8_t slot, std::uint16_t &buttons, float &stick_x, float &stick_y) {
     std::lock_guard lock(g_mutex);
     if (slot >= kMaximumPlayers || !g_session.players[slot].connected) {
         buttons = 0;
@@ -1250,14 +1343,14 @@ bool get_player_input(std::uint8_t slot, std::uint16_t& buttons, float& stick_x,
         stick_y = 0.0f;
         return false;
     }
-    const InputState& input = g_session.inputs[slot];
+    const InputState &input = g_session.inputs[slot];
     buttons = input.buttons;
     stick_x = input.stick_x;
     stick_y = input.stick_y;
     return true;
 }
 
-void set_local_rider_state(const RiderState& state) {
+void set_local_rider_state(const RiderState &state) {
     std::lock_guard lock(g_mutex);
     if (g_session.local_slot >= kMaximumPlayers || !finite_rider_state(state)) {
         return;
@@ -1272,9 +1365,10 @@ void set_local_rider_state(const RiderState& state) {
     g_session.riders[g_session.local_slot] = canonical;
 }
 
-bool get_rider_state(std::uint8_t slot, RiderState& state) {
+bool get_rider_state(std::uint8_t slot, RiderState &state) {
     std::lock_guard lock(g_mutex);
-    if (slot >= kMaximumPlayers || !g_session.players[slot].connected || !g_session.riders[slot].active) {
+    if (slot >= kMaximumPlayers || !g_session.players[slot].connected ||
+        !g_session.riders[slot].active) {
         state = {};
         return false;
     }
@@ -1282,16 +1376,15 @@ bool get_rider_state(std::uint8_t slot, RiderState& state) {
     return true;
 }
 
-bool get_interpolated_rider_state(std::uint8_t slot, float alpha, RiderState& state) {
+bool get_interpolated_rider_state(std::uint8_t slot, float alpha, RiderState &state) {
     std::lock_guard lock(g_mutex);
-    if (slot >= kMaximumPlayers || !g_session.players[slot].connected || !g_session.riders[slot].active) {
+    if (slot >= kMaximumPlayers || !g_session.players[slot].connected ||
+        !g_session.riders[slot].active) {
         state = {};
         return false;
     }
-    state = interpolate(
-        g_session.previous_riders[slot],
-        g_session.riders[slot],
-        std::clamp(alpha, 0.0f, 1.0f));
+    state = interpolate(g_session.previous_riders[slot], g_session.riders[slot],
+                        std::clamp(alpha, 0.0f, 1.0f));
     return true;
 }
 
@@ -1316,11 +1409,9 @@ bool submit_local_voice(std::span<const std::uint8_t> encoded_frame) {
                 send_voice_packet_locked(packet, g_session.peers[slot].endpoint);
             }
         }
-    }
-    else if (is_client_locked() && g_session.token != 0) {
+    } else if (is_client_locked() && g_session.token != 0) {
         send_voice_packet_locked(packet, g_session.host_endpoint);
-    }
-    else {
+    } else {
         return false;
     }
     return true;

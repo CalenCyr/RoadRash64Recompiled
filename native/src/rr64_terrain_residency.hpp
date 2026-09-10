@@ -39,37 +39,26 @@ inline constexpr std::uint32_t kTerrainPresentationReservedSlots =
 // outside the stock candidate rectangle. Residency and rendering share this
 // predicate so the renderer cannot submit a transitional cell that the
 // retention policy did not explicitly validate.
-bool terrain_cell_in_presentation_ring(
-    std::uint32_t map_width,
-    std::uint32_t cell_row,
-    std::uint32_t cell_column,
-    const TerrainCandidateBounds& candidate) noexcept;
+bool terrain_cell_in_presentation_ring(std::uint32_t map_width, std::uint32_t cell_row,
+                                       std::uint32_t cell_column,
+                                       const TerrainCandidateBounds &candidate) noexcept;
 
 // Determines whether a fully prepared cell that the stock streamer wants to
 // retire may remain in a bounded presentation cache around the active
 // candidate. The cache never promotes an unloaded cell or changes collision.
-bool should_retain_terrain_presentation_cell(
-    bool maximum_view_distance,
-    bool stock_unload,
-    std::uint8_t cell_state,
-    std::uint32_t map_width,
-    std::uint32_t cell_row,
-    std::uint32_t cell_column,
-    const TerrainCandidateBounds& candidate,
-    std::uint32_t occupied_or_inflight_resources) noexcept;
+bool should_retain_terrain_presentation_cell(bool maximum_view_distance, bool stock_unload,
+                                             std::uint8_t cell_state, std::uint32_t map_width,
+                                             std::uint32_t cell_row, std::uint32_t cell_column,
+                                             const TerrainCandidateBounds &candidate,
+                                             std::uint32_t occupied_or_inflight_resources) noexcept;
 
 // Builds a read-only one-cell ring around the stock rectangular candidate.
 // The planner never mutates guest state or starts transfers. Its resource
 // budget deliberately leaves caller-selected headroom in the 96-slot pool.
 bool build_terrain_prefetch_plan(
-    std::uint32_t map_width,
-    std::uint32_t candidate_min_row,
-    std::uint32_t candidate_max_row,
-    std::uint32_t candidate_min_column,
-    std::uint32_t candidate_max_column,
-    std::span<const std::uint8_t> cell_states,
-    std::uint32_t occupied_or_inflight_resources,
-    std::uint32_t reserved_resource_slots,
-    TerrainPrefetchPlan& plan) noexcept;
+    std::uint32_t map_width, std::uint32_t candidate_min_row, std::uint32_t candidate_max_row,
+    std::uint32_t candidate_min_column, std::uint32_t candidate_max_column,
+    std::span<const std::uint8_t> cell_states, std::uint32_t occupied_or_inflight_resources,
+    std::uint32_t reserved_resource_slots, TerrainPrefetchPlan &plan) noexcept;
 
 } // namespace rr64::engine

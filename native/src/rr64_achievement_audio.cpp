@@ -37,12 +37,12 @@ std::atomic_bool g_sting_cancel_requested{false};
 GuitarStingSynth g_sting{};
 
 std::int16_t mix_sample(std::int16_t original, float addition) noexcept {
-    const int mixed = static_cast<int>(original) +
+    const int mixed =
+        static_cast<int>(original) +
         static_cast<int>(addition * static_cast<float>(std::numeric_limits<std::int16_t>::max()));
-    return static_cast<std::int16_t>(std::clamp(
-        mixed,
-        static_cast<int>(std::numeric_limits<std::int16_t>::min()),
-        static_cast<int>(std::numeric_limits<std::int16_t>::max())));
+    return static_cast<std::int16_t>(
+        std::clamp(mixed, static_cast<int>(std::numeric_limits<std::int16_t>::min()),
+                   static_cast<int>(std::numeric_limits<std::int16_t>::max())));
 }
 
 } // namespace
@@ -70,25 +70,26 @@ void GuitarStingSynth::initialize_strings(std::uint32_t sample_rate) noexcept {
     auto next_noise = [this]() noexcept {
         noise_state_ = (noise_state_ * 1664525u) + 1013904223u;
         const float normalized = static_cast<float>((noise_state_ >> 8u) & 0x00FFFFFFu) /
-            static_cast<float>(0x00800000u);
+                                 static_cast<float>(0x00800000u);
         return normalized - 1.0f;
     };
 
-    for (const ChordHit& chord : kRiff) {
+    for (const ChordHit &chord : kRiff) {
         for (std::size_t track = 0; track < 2; ++track) {
             const float detune = track == 0 ? 0.9962f : 1.0038f;
             const float pan = track == 0 ? 0.20f : 0.80f;
-            for (std::size_t string_index = 0; string_index < kPowerChordRatios.size(); ++string_index) {
-                StringVoice& voice = voices_[voice_index++];
-                const float frequency = chord.root_frequency * kPowerChordRatios[string_index] * detune;
-                voice.delay_length = static_cast<std::uint32_t>(std::clamp(
-                    std::lround(static_cast<float>(sample_rate) / frequency),
-                    8l,
-                    static_cast<long>(kMaximumDelaySamples)));
+            for (std::size_t string_index = 0; string_index < kPowerChordRatios.size();
+                 ++string_index) {
+                StringVoice &voice = voices_[voice_index++];
+                const float frequency =
+                    chord.root_frequency * kPowerChordRatios[string_index] * detune;
+                voice.delay_length = static_cast<std::uint32_t>(
+                    std::clamp(std::lround(static_cast<float>(sample_rate) / frequency), 8l,
+                               static_cast<long>(kMaximumDelaySamples)));
                 voice.delay_cursor = 0;
                 voice.start_frame = static_cast<std::uint64_t>(chord.start * sample_rate);
-                voice.stop_frame = static_cast<std::uint64_t>(
-                    (chord.start + chord.duration) * sample_rate);
+                voice.stop_frame =
+                    static_cast<std::uint64_t>((chord.start + chord.duration) * sample_rate);
                 voice.gain = kStringGains[string_index] * (track == 0 ? 0.96f : 0.92f);
                 voice.pan = pan;
                 voice.damping = chord.damping - (0.0007f * static_cast<float>(string_index));
@@ -99,10 +100,10 @@ void GuitarStingSynth::initialize_strings(std::uint32_t sample_rate) noexcept {
                     smoothed_noise = (0.64f * noise) + (0.36f * smoothed_noise);
                     // A virtual pick-position notch prevents the excitation
                     // from sounding like undifferentiated white noise.
-                    const float position = static_cast<float>(sample) /
-                        static_cast<float>(voice.delay_length);
-                    const float pick_shape = 0.72f +
-                        (0.28f * std::sin(kPi * std::clamp(position * 3.1f, 0.0f, 1.0f)));
+                    const float position =
+                        static_cast<float>(sample) / static_cast<float>(voice.delay_length);
+                    const float pick_shape =
+                        0.72f + (0.28f * std::sin(kPi * std::clamp(position * 3.1f, 0.0f, 1.0f)));
                     voice.delay[sample] = smoothed_noise * pick_shape;
                 }
             }
@@ -112,7 +113,7 @@ void GuitarStingSynth::initialize_strings(std::uint32_t sample_rate) noexcept {
 
 std::array<float, 2> GuitarStingSynth::render_frame(std::uint32_t sample_rate) noexcept {
     std::array<float, 2> strings{};
-    for (StringVoice& voice : voices_) {
+    for (StringVoice &voice : voices_) {
         if (frame_cursor_ < voice.start_frame || frame_cursor_ >= voice.stop_frame ||
             voice.delay_length < 2u) {
             continue;
@@ -126,14 +127,11 @@ std::array<float, 2> GuitarStingSynth::render_frame(std::uint32_t sample_rate) n
 
         const std::uint64_t local_frame = frame_cursor_ - voice.start_frame;
         const std::uint64_t remaining = voice.stop_frame - frame_cursor_;
-        const float attack = std::clamp(
-            static_cast<float>(local_frame) / (0.0025f * static_cast<float>(sample_rate)),
-            0.0f,
-            1.0f);
+        const float attack = std::clamp(static_cast<float>(local_frame) /
+                                            (0.0025f * static_cast<float>(sample_rate)),
+                                        0.0f, 1.0f);
         const float release = std::clamp(
-            static_cast<float>(remaining) / (0.038f * static_cast<float>(sample_rate)),
-            0.0f,
-            1.0f);
+            static_cast<float>(remaining) / (0.038f * static_cast<float>(sample_rate)), 0.0f, 1.0f);
         const float sample = current * voice.gain * attack * release;
         strings[0] += sample * (1.0f - voice.pan);
         strings[1] += sample * voice.pan;
@@ -148,22 +146,20 @@ std::array<float, 2> GuitarStingSynth::render_frame(std::uint32_t sample_rate) n
         // turn the plucked strings into a compact high-gain guitar recording.
         const float biased = (coupled * 5.8f) + 0.10f;
         const float saturated = std::tanh(biased) - std::tanh(0.10f);
-        const float blocked = saturated - previous_amp_input_[channel] +
-            (0.994f * dc_blocker_state_[channel]);
+        const float blocked =
+            saturated - previous_amp_input_[channel] + (0.994f * dc_blocker_state_[channel]);
         previous_amp_input_[channel] = saturated;
         dc_blocker_state_[channel] = blocked;
         cabinet_high_[channel] += high_cut * (blocked - cabinet_high_[channel]);
         cabinet_low_[channel] += low_cut * (cabinet_high_[channel] - cabinet_low_[channel]);
-        output[channel] = ((0.62f * cabinet_high_[channel]) +
-            (0.38f * cabinet_low_[channel])) * 0.31f;
+        output[channel] =
+            ((0.62f * cabinet_high_[channel]) + (0.38f * cabinet_low_[channel])) * 0.31f;
     }
     return output;
 }
 
-bool GuitarStingSynth::mix(
-    std::span<std::int16_t> interleaved_stereo,
-    std::uint32_t sample_rate) noexcept
-{
+bool GuitarStingSynth::mix(std::span<std::int16_t> interleaved_stereo,
+                           std::uint32_t sample_rate) noexcept {
     if (!active_ || sample_rate == 0u || interleaved_stereo.size() < 2u) {
         return false;
     }
@@ -203,10 +199,8 @@ void cancel_guitar_sting() noexcept {
     g_sting_cancel_requested.store(true, std::memory_order_release);
 }
 
-bool mix_requested_guitar_sting(
-    std::span<std::int16_t> interleaved_stereo,
-    std::uint32_t sample_rate) noexcept
-{
+bool mix_requested_guitar_sting(std::span<std::int16_t> interleaved_stereo,
+                                std::uint32_t sample_rate) noexcept {
     if (g_sting_cancel_requested.exchange(false, std::memory_order_acq_rel)) {
         g_sting_requested.store(false, std::memory_order_release);
         g_sting.stop();

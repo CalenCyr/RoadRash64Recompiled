@@ -11,6 +11,7 @@
 #include <chrono>
 #include "rr64_local_world_window.hpp"
 bool testLocalWindow=true;
+double testDistancePercent=100.0;
 
 extern "C" void func_8007D814(std::uint8_t*, recomp_context*);
 extern "C" void guMtxF2L(std::uint8_t*, recomp_context*);
@@ -203,6 +204,18 @@ void driver_checks() {
         rr64_world_terrain_begin(memory.data());rr64_world_terrain_draw(memory.data());
         check(rr64::world::terrain_statistics().frames==priorFrames+camera+1,"local window admits nearby terrain for each of four split screens");
     }
+    // Returning from full range must not retain the larger radial window.
+    unsigned reducedCells = 0;
+    for (unsigned step = 0; step < 3; ++step) {
+        testDistancePercent = step == 1 ? 100.0 : 10.0;
+        setup(0, 60 + step); memory_word(memory, globals::active_viewport, 0u);
+        rr64_world_terrain_begin(memory.data()); rr64_world_terrain_draw(memory.data());
+        const auto visible = rr64::world::terrain_statistics().visible_cells;
+        if (step == 0) reducedCells = visible;
+        if (step == 1) check(visible >= reducedCells, "full distance preserves visible cells");
+        if (step == 2) check(visible == reducedCells, "reducing full distance clears prior range");
+    }
+    testDistancePercent = 100.0;
     testLocalWindow=true;
     memory_word(memory,rr64::lod::test::Fixture::race_player_count,1u);memory_word(memory,0x8009DB88u,1u);
     if(diagnostics){
@@ -385,4 +398,4 @@ int main() {
 }
 
 extern "C" bool rr64_draw_distance_enabled(){return testLocalWindow;}
-extern "C" double rr64_draw_distance_percent(){return 100.0;}
+extern "C" double rr64_draw_distance_percent(){return testDistancePercent;}

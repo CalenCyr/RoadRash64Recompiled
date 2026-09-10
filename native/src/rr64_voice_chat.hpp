@@ -29,9 +29,7 @@ inline float proximity_gain(float distance) {
         return 1.0f;
     }
     const float t = std::clamp(
-        (distance - full_volume_distance) / (silent_distance - full_volume_distance),
-        0.0f,
-        1.0f);
+        (distance - full_volume_distance) / (silent_distance - full_volume_distance), 0.0f, 1.0f);
     const float smooth = t * t * (3.0f - 2.0f * t);
     return 1.0f - smooth;
 }

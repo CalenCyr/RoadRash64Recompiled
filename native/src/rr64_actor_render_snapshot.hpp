@@ -42,14 +42,14 @@ struct RootRenderPlan {
     std::uint16_t render_source = 0;
     bool normalized = false;
 
-    bool operator==(const RootRenderPlan&) const = default;
+    bool operator==(const RootRenderPlan &) const = default;
 };
 
-bool capture_root_render_plan(unsigned char* rdram, std::uint32_t node,
-    std::uint32_t viewport, RootRenderPlan& plan) noexcept;
-bool root_render_bank_ready(unsigned char* rdram, const RootRenderPlan& plan,
-    std::uint32_t viewport, std::uint32_t slot) noexcept;
-bool rider_in_stock_view(unsigned char* rdram, std::uint32_t entity) noexcept;
+bool capture_root_render_plan(unsigned char *rdram, std::uint32_t node, std::uint32_t viewport,
+                              RootRenderPlan &plan) noexcept;
+bool root_render_bank_ready(unsigned char *rdram, const RootRenderPlan &plan,
+                            std::uint32_t viewport, std::uint32_t slot) noexcept;
+bool rider_in_stock_view(unsigned char *rdram, std::uint32_t entity) noexcept;
 
 struct ActorSnapshot {
     std::uint32_t node = 0;
@@ -88,13 +88,11 @@ struct PairSnapshot {
 
 // The runtime checks these before executing any original helper on its private
 // mapping. It repeats the checks when publishing and consuming a snapshot.
-bool mounted_pair(unsigned char* rdram, std::uint32_t bike_node,
-    std::uint32_t rider_node) noexcept;
+bool mounted_pair(unsigned char *rdram, std::uint32_t bike_node, std::uint32_t rider_node) noexcept;
 // Visual ownership survives a crash/ejection. Each actor retains its own
 // current root and animation; attachment is not needed to validate the links.
-bool visual_pair(unsigned char* rdram, std::uint32_t bike_node,
-    std::uint32_t rider_node) noexcept;
-bool supported_scene(unsigned char* rdram) noexcept;
+bool visual_pair(unsigned char *rdram, std::uint32_t bike_node, std::uint32_t rider_node) noexcept;
+bool supported_scene(unsigned char *rdram) noexcept;
 
 enum class FindFailure : std::size_t {
     None = 0,
@@ -115,43 +113,50 @@ enum class FindFailure : std::size_t {
 };
 
 class SnapshotStore {
-public:
+  public:
     // Call on a new guest mapping and before each guest simulation update or
     // actor-preparation pass. Allocations survive frame invalidation, snapshots
     // do not. Starting allocation viewport zero replaces a node's old record.
-    void reset(unsigned char* rdram) noexcept;
+    void reset(unsigned char *rdram) noexcept;
     void invalidate() noexcept;
     // A previous pose may seed an original partial animation only in the next
     // actor-preparation epoch. It is never an independently drawable snapshot.
-    void begin_pose_epoch(unsigned char* rdram) noexcept;
-    bool observe_allocation(unsigned char* rdram, std::uint32_t node,
-        std::uint32_t viewport, std::uint32_t bytes) noexcept;
-    bool forget_allocation(unsigned char* rdram, std::uint32_t node) noexcept;
+    void begin_pose_epoch(unsigned char *rdram) noexcept;
+    bool observe_allocation(unsigned char *rdram, std::uint32_t node, std::uint32_t viewport,
+                            std::uint32_t bytes) noexcept;
+    bool forget_allocation(unsigned char *rdram, std::uint32_t node) noexcept;
 
-    bool can_prepare(unsigned char* rdram, std::uint32_t bike_node,
-        std::uint32_t rider_node, std::uint32_t viewport,
-        std::uint32_t buffer_slot) const noexcept;
+    bool can_prepare(unsigned char *rdram, std::uint32_t bike_node, std::uint32_t rider_node,
+                     std::uint32_t viewport, std::uint32_t buffer_slot) const noexcept;
 
     // live and prepared must be distinct mappings. This operation is read-only
     // for BOTH mappings; it deep-copies every pose into renderer-owned storage.
-    bool publish(unsigned char* live, unsigned char* prepared,
-        std::uint32_t bike_node, std::uint32_t rider_node,
-        std::uint32_t viewport, std::uint32_t buffer_slot) noexcept;
+    bool publish(unsigned char *live, unsigned char *prepared, std::uint32_t bike_node,
+                 std::uint32_t rider_node, std::uint32_t viewport,
+                 std::uint32_t buffer_slot) noexcept;
 
-    bool seed_previous_rider_children(unsigned char* live, unsigned char* prepared,
-        std::uint32_t rider_node, std::uint32_t viewport,
-        std::uint32_t buffer_slot, bool frozen_pair = false,
-        bool* missing_history = nullptr) const noexcept;
+    bool seed_previous_rider_children(unsigned char *live, unsigned char *prepared,
+                                      std::uint32_t rider_node, std::uint32_t viewport,
+                                      std::uint32_t buffer_slot, bool frozen_pair = false,
+                                      bool *missing_history = nullptr) const noexcept;
 
     // Returns an immutable pair only when both halves still match their exact
     // generation, graph, resource, ownership and allocation certificates.
-    const PairSnapshot* find(unsigned char* rdram, std::uint32_t node,
-        std::uint32_t viewport, std::uint32_t buffer_slot,
-        FindFailure* failure = nullptr) const noexcept;
+    const PairSnapshot *find(unsigned char *rdram, std::uint32_t node, std::uint32_t viewport,
+                             std::uint32_t buffer_slot,
+                             FindFailure *failure = nullptr) const noexcept;
 
-    std::uint64_t generation() const noexcept { return generation_; }
+    std::uint64_t generation() const noexcept {
+        return generation_;
+    }
 
-private:
+    // Copy only the current certified rider root, in its authored source units.
+    // Weapons draw after the temporary detailed-model binding is restored.
+    bool weapon_root(unsigned char *rdram, std::uint32_t node, std::uint32_t view,
+                     std::uint32_t slot, std::array<std::uint32_t, 7> &words,
+                     std::uint32_t &source) const noexcept;
+
+  private:
     struct Allocation {
         std::uint32_t node = 0;
         std::uint32_t entity = 0;
@@ -161,14 +166,13 @@ private:
         std::array<std::uint32_t, 8> bytes{};
     };
 
-    const Allocation* allocation(unsigned char* rdram,
-        std::uint32_t node) const noexcept;
-    bool capture_actor(unsigned char* live, unsigned char* poses,
-        std::uint32_t node, std::uint32_t viewport, std::uint32_t slot,
-        bool require_prepared, ActorSnapshot& output) const noexcept;
-    bool isolated_pose_ranges(const PairSnapshot& pair) const noexcept;
+    const Allocation *allocation(unsigned char *rdram, std::uint32_t node) const noexcept;
+    bool capture_actor(unsigned char *live, unsigned char *poses, std::uint32_t node,
+                       std::uint32_t viewport, std::uint32_t slot, bool require_prepared,
+                       ActorSnapshot &output) const noexcept;
+    bool isolated_pose_ranges(const PairSnapshot &pair) const noexcept;
 
-    unsigned char* rdram_ = nullptr;
+    unsigned char *rdram_ = nullptr;
     std::uint64_t generation_ = 1;
     std::array<Allocation, maximum_actors> allocations_{};
     std::array<PairSnapshot, maximum_pairs> pairs_{};
@@ -188,20 +192,24 @@ private:
 // renderer's bounded matrix loop may borrow the immutable pose values. Every
 // overwritten word is restored, even on repeated closure or failed re-entry.
 class PoseBinding {
-public:
-    bool begin(unsigned char* rdram, const ActorSnapshot& snapshot) noexcept;
+  public:
+    bool begin(unsigned char *rdram, const ActorSnapshot &snapshot) noexcept;
     void end() noexcept;
-    bool active() const noexcept { return rdram_ != nullptr; }
-    ~PoseBinding() { end(); }
+    bool active() const noexcept {
+        return rdram_ != nullptr;
+    }
+    ~PoseBinding() {
+        end();
+    }
 
-private:
-    unsigned char* rdram_ = nullptr;
+  private:
+    unsigned char *rdram_ = nullptr;
     std::uint16_t count_ = 0;
     std::array<Pose, maximum_poses> saved_{};
 };
 
 } // namespace rr64::lod
 
-
-
-namespace rr64::lod { bool racer_in_extended_view(unsigned char*, std::uint32_t, unsigned) noexcept; }
+namespace rr64::lod {
+bool racer_in_extended_view(unsigned char *, std::uint32_t, unsigned) noexcept;
+}

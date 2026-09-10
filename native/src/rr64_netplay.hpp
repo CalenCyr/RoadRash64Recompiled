@@ -45,7 +45,7 @@ struct GameSetupState {
     std::uint16_t transition_buttons = 0;
     std::array<std::uint32_t, kGameSetupWordCount> words{};
 
-    bool operator==(const GameSetupState&) const = default;
+    bool operator==(const GameSetupState &) const = default;
 };
 
 struct Config {
@@ -55,7 +55,7 @@ struct Config {
     std::string host_address = "127.0.0.1";
     std::uint16_t port = kDefaultPort;
 
-    bool operator==(const Config&) const = default;
+    bool operator==(const Config &) const = default;
 };
 
 struct PlayerInfo {
@@ -112,7 +112,7 @@ struct Status {
     std::array<PlayerInfo, kMaximumPlayers> players{};
 };
 
-void configure(const Config& config);
+void configure(const Config &config);
 void shutdown();
 void update();
 
@@ -121,18 +121,18 @@ bool set_ready(bool ready);
 bool set_character(std::uint8_t character);
 bool set_track(std::uint8_t track);
 bool host_set_phase(Phase phase);
-bool host_commit_game_setup(const GameSetupState& setup);
+bool host_commit_game_setup(const GameSetupState &setup);
 bool all_connected_players_ready();
 
 void set_local_input(std::uint16_t buttons, float stick_x, float stick_y);
-bool get_player_input(std::uint8_t slot, std::uint16_t& buttons, float& stick_x, float& stick_y);
+bool get_player_input(std::uint8_t slot, std::uint16_t &buttons, float &stick_x, float &stick_y);
 
 // The local machine publishes its controlled rider under its network slot.
 // The host turns proposals into the canonical snapshot distributed to every
 // peer. Consumers may request a blend between the two newest snapshots.
-void set_local_rider_state(const RiderState& state);
-bool get_rider_state(std::uint8_t slot, RiderState& state);
-bool get_interpolated_rider_state(std::uint8_t slot, float alpha, RiderState& state);
+void set_local_rider_state(const RiderState &state);
+bool get_rider_state(std::uint8_t slot, RiderState &state);
+bool get_interpolated_rider_state(std::uint8_t slot, float alpha, RiderState &state);
 
 // Encoded voice frames follow the same authenticated direct-connect topology:
 // clients send to the host, which relays a canonical speaker slot to the other

@@ -1,6 +1,8 @@
 # Release candidate: where to edit
 
-This guide describes the retained HUD-Rollback behavior. Edit source modules,
+This guide describes the retained HUD policy. For the subsequently accepted traffic,
+menu border and local input fixes, see [the current editing guide](TRAFFIC_AND_PRESENTATION_EDITING.md).
+Edit source modules,
 not generated files in build/RecompiledFuncs. Game hooks are declared in
 config/roadrash64.us.toml; their native entry points are in rr64_native.hpp.
 

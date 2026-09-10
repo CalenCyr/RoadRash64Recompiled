@@ -3,6 +3,7 @@
 // make the current frame eligible for interpolation.
 #pragma once
 #include "rt64_workload_queue.h"
+#include "rt64_rr64_static_world_motion.h"
 #include <unordered_map>
 #include <cmath>
 namespace RT64::RR64TranslationRejection {
@@ -89,6 +90,8 @@ inline bool reject(bool eligible,const GameFrame &cur,const GameFrame &prev,cons
                     RigidBody body;
                     if(history){if(prior>=history->transforms.size())return false;body=history->transforms[prior].rigidBody;}
                     body.updateLinear(pd.worldTransforms[prior],cd.worldTransforms[world],group.positionInterpolation);
+                    // The early rejection proof must agree with the full matcher.
+                    if(RR64StaticWorldMotion::smallTranslation(group,pd.worldTransforms[prior],cd.worldTransforms[world]))body.lerpTranslation=true;
                     if(!body.lerpTranslation){held[world]=2;return true;}
                 }
             }

@@ -23,17 +23,17 @@ std::uint32_t g_local_tick = 0;
 thread_local ViewportRenderPlan g_viewport_render_plan{};
 std::atomic_bool g_render_race{false};
 
-float read_float(unsigned char* rdram, std::uint32_t address) {
+float read_float(unsigned char *rdram, std::uint32_t address) {
     float value = 0.0f;
     engine::read_float(rdram, address, value);
     return value;
 }
 
-void write_float(unsigned char* rdram, std::uint32_t address, float value) {
+void write_float(unsigned char *rdram, std::uint32_t address, float value) {
     engine::write_float(rdram, address, value);
 }
 
-bool read_vector(unsigned char* rdram, std::uint32_t address, float& x, float& y, float& z) {
+bool read_vector(unsigned char *rdram, std::uint32_t address, float &x, float &y, float &z) {
     if (!engine::valid_guest_range(address, 12)) {
         return false;
     }
@@ -43,8 +43,9 @@ bool read_vector(unsigned char* rdram, std::uint32_t address, float& x, float& y
     return std::isfinite(x) && std::isfinite(y) && std::isfinite(z);
 }
 
-void write_vector(unsigned char* rdram, std::uint32_t address, float x, float y, float z) {
-    if (!engine::valid_guest_range(address, 12) || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+void write_vector(unsigned char *rdram, std::uint32_t address, float x, float y, float z) {
+    if (!engine::valid_guest_range(address, 12) || !std::isfinite(x) || !std::isfinite(y) ||
+        !std::isfinite(z)) {
         return;
     }
     write_float(rdram, address + 0, x);
@@ -52,7 +53,7 @@ void write_vector(unsigned char* rdram, std::uint32_t address, float x, float y,
     write_float(rdram, address + 8, z);
 }
 
-std::uint32_t bike_pool(unsigned char* rdram) {
+std::uint32_t bike_pool(unsigned char *rdram) {
     if (rdram == nullptr) {
         return 0;
     }
@@ -61,7 +62,7 @@ std::uint32_t bike_pool(unsigned char* rdram) {
     return pool;
 }
 
-std::uint32_t active_racers(unsigned char* rdram) {
+std::uint32_t active_racers(unsigned char *rdram) {
     if (rdram == nullptr) {
         return 0;
     }
@@ -87,11 +88,8 @@ std::uint8_t guest_index_for_slot(std::uint8_t network_slot, std::uint8_t local_
     return network_slot;
 }
 
-std::uint8_t network_slot_for_guest_index(
-    std::uint8_t guest_index,
-    std::uint8_t local_slot,
-    bool replicated_riders)
-{
+std::uint8_t network_slot_for_guest_index(std::uint8_t guest_index, std::uint8_t local_slot,
+                                          bool replicated_riders) {
     if (!replicated_riders) {
         return guest_index;
     }
@@ -104,7 +102,7 @@ std::uint8_t network_slot_for_guest_index(
     return guest_index;
 }
 
-std::string safe_display_name(const netplay::Status& status, std::uint8_t slot) {
+std::string safe_display_name(const netplay::Status &status, std::uint8_t slot) {
     std::string result;
     if (slot < netplay::kMaximumPlayers) {
         result = status.players[slot].name;
@@ -112,26 +110,25 @@ std::string safe_display_name(const netplay::Status& status, std::uint8_t slot) 
     if (result.empty()) {
         result = "Rider " + std::to_string(static_cast<unsigned>(slot) + 1u);
     }
-    for (char& character : result) {
+    for (char &character : result) {
         const unsigned char value = static_cast<unsigned char>(character);
         if (value < 0x20u || value > 0x7Eu) {
             character = '_';
         }
     }
-    result.resize(std::min<std::size_t>(
-        result.size(),
-        engine::globals::multiplayer_display_name_stride - 1u));
+    result.resize(std::min<std::size_t>(result.size(),
+                                        engine::globals::multiplayer_display_name_stride - 1u));
     return result;
 }
 
-void apply_online_display_names(unsigned char* rdram) {
+void apply_online_display_names(unsigned char *rdram) {
     const netplay::Status status = netplay::get_status();
     if (!status.active && rdram && local_players::active.load(std::memory_order_acquire)) {
         static_assert(engine::globals::multiplayer_display_name_stride == 12);
         const auto names = local_players::snapshot();
         for (unsigned slot = 0; slot < names.size(); ++slot) {
             const auto address = engine::globals::multiplayer_display_names +
-                slot * engine::globals::multiplayer_display_name_stride;
+                                 slot * engine::globals::multiplayer_display_name_stride;
             for (unsigned i = 0; i < engine::globals::multiplayer_display_name_stride; ++i) {
                 engine::write_s8(rdram, address + i, i < names[slot].size() ? names[slot][i] : 0);
             }
@@ -143,16 +140,14 @@ void apply_online_display_names(unsigned char* rdram) {
         return;
     }
 
-    for (std::uint8_t guest = 0;
-         guest < engine::globals::multiplayer_display_name_count;
-         ++guest) {
-        const std::uint8_t slot = network_slot_for_guest_index(
-            guest, status.local_slot, status.replicated_riders);
+    for (std::uint8_t guest = 0; guest < engine::globals::multiplayer_display_name_count; ++guest) {
+        const std::uint8_t slot =
+            network_slot_for_guest_index(guest, status.local_slot, status.replicated_riders);
         const std::string name = safe_display_name(status, slot);
-        const std::uint32_t address = engine::globals::multiplayer_display_names +
+        const std::uint32_t address =
+            engine::globals::multiplayer_display_names +
             static_cast<std::uint32_t>(guest) * engine::globals::multiplayer_display_name_stride;
-        for (std::uint32_t index = 0;
-             index < engine::globals::multiplayer_display_name_stride;
+        for (std::uint32_t index = 0; index < engine::globals::multiplayer_display_name_stride;
              ++index) {
             const char character = index < name.size() ? name[index] : '\0';
             engine::write_s8(rdram, address + index, static_cast<std::int8_t>(character));
@@ -160,40 +155,31 @@ void apply_online_display_names(unsigned char* rdram) {
     }
 }
 
-bool capture_bike(unsigned char* rdram, std::uint32_t bike, netplay::RiderState& state) {
+bool capture_bike(unsigned char *rdram, std::uint32_t bike, netplay::RiderState &state) {
     if (!engine::valid_guest_range(bike, engine::bike::stride)) {
         return false;
     }
-    return read_vector(
-               rdram,
-               bike + engine::bike::body_position,
-               state.position_x,
-               state.position_y,
-               state.position_z) &&
-        read_vector(
-               rdram,
-               bike + engine::bike::front_wheel_position,
-               state.front_wheel_x,
-               state.front_wheel_y,
-               state.front_wheel_z) &&
-        read_vector(
-               rdram,
-               bike + engine::bike::rear_wheel_position,
-               state.rear_wheel_x,
-               state.rear_wheel_y,
-               state.rear_wheel_z);
+    return read_vector(rdram, bike + engine::bike::body_position, state.position_x,
+                       state.position_y, state.position_z) &&
+           read_vector(rdram, bike + engine::bike::front_wheel_position, state.front_wheel_x,
+                       state.front_wheel_y, state.front_wheel_z) &&
+           read_vector(rdram, bike + engine::bike::rear_wheel_position, state.rear_wheel_x,
+                       state.rear_wheel_y, state.rear_wheel_z);
 }
 
-void apply_bike(unsigned char* rdram, std::uint32_t bike, const netplay::RiderState& state) {
+void apply_bike(unsigned char *rdram, std::uint32_t bike, const netplay::RiderState &state) {
     if (!engine::valid_guest_range(bike, engine::bike::stride)) {
         return;
     }
-    write_vector(rdram, bike + engine::bike::body_position, state.position_x, state.position_y, state.position_z);
-    write_vector(rdram, bike + engine::bike::front_wheel_position, state.front_wheel_x, state.front_wheel_y, state.front_wheel_z);
-    write_vector(rdram, bike + engine::bike::rear_wheel_position, state.rear_wheel_x, state.rear_wheel_y, state.rear_wheel_z);
+    write_vector(rdram, bike + engine::bike::body_position, state.position_x, state.position_y,
+                 state.position_z);
+    write_vector(rdram, bike + engine::bike::front_wheel_position, state.front_wheel_x,
+                 state.front_wheel_y, state.front_wheel_z);
+    write_vector(rdram, bike + engine::bike::rear_wheel_position, state.rear_wheel_x,
+                 state.rear_wheel_y, state.rear_wheel_z);
 }
 
-void apply_remote_riders(unsigned char* rdram) {
+void apply_remote_riders(unsigned char *rdram) {
     const netplay::Status status = netplay::get_status();
     if (!status.active || !status.connected || !status.replicated_riders ||
         status.phase != netplay::Phase::Race || status.local_slot >= netplay::kMaximumPlayers) {
@@ -216,15 +202,16 @@ void apply_remote_riders(unsigned char* rdram) {
         }
         netplay::RiderState state{};
         if (netplay::get_interpolated_rider_state(slot, 0.5f, state)) {
-            apply_bike(rdram, pool + static_cast<std::uint32_t>(guest_index) * engine::bike::stride, state);
+            apply_bike(rdram, pool + static_cast<std::uint32_t>(guest_index) * engine::bike::stride,
+                       state);
         }
     }
 }
 
-void capture_local_rider(unsigned char* rdram) {
+void capture_local_rider(unsigned char *rdram) {
     const netplay::Status status = netplay::get_status();
-    if (!status.active || !status.connected ||
-        status.phase != netplay::Phase::Race || status.local_slot >= netplay::kMaximumPlayers) {
+    if (!status.active || !status.connected || status.phase != netplay::Phase::Race ||
+        status.local_slot >= netplay::kMaximumPlayers) {
         return;
     }
     const std::uint32_t pool = bike_pool(rdram);
@@ -234,10 +221,8 @@ void capture_local_rider(unsigned char* rdram) {
         return;
     }
     netplay::RiderState state{};
-    if (!capture_bike(
-            rdram,
-            pool + static_cast<std::uint32_t>(guest_index) * engine::bike::stride,
-            state)) {
+    if (!capture_bike(rdram, pool + static_cast<std::uint32_t>(guest_index) * engine::bike::stride,
+                      state)) {
         return;
     }
     state.active = true;
@@ -250,39 +235,33 @@ void capture_local_rider(unsigned char* rdram) {
 
 std::uint32_t requested_racer_count(std::uint32_t original_count) {
     const netplay::Status status = netplay::get_status();
-    if (!status.active || !status.connected ||
-        status.phase < netplay::Phase::GameSetup) {
+    if (!status.active || !status.connected || status.phase < netplay::Phase::GameSetup) {
         return original_count;
     }
     // This hook is in the controller-count chooser, not the racer pool.
-    return status.replicated_riders ? 1u : std::clamp<unsigned>(status.connected_players,1u,4u);
+    return status.replicated_riders ? 1u : std::clamp<unsigned>(status.connected_players, 1u, 4u);
 }
 
 std::uint32_t prepare_render_layout(std::uint32_t stock_layout) {
     const netplay::Status status = netplay::get_status();
-    g_viewport_render_plan = make_viewport_render_plan(
-        stock_layout,
-        status.active,
-        status.connected,
-        status.phase == netplay::Phase::Race && g_render_race.load(),
-        status.replicated_riders,
-        status.local_slot);
+    g_viewport_render_plan =
+        make_viewport_render_plan(stock_layout, status.active, status.connected,
+                                  status.phase == netplay::Phase::Race && g_render_race.load(),
+                                  status.replicated_riders, status.local_slot);
     return g_viewport_render_plan.layout;
 }
 
 std::uint32_t first_render_viewport(std::uint32_t stock_viewport) {
-    return g_viewport_render_plan.peer_fullscreen
-        ? g_viewport_render_plan.first_viewport
-        : stock_viewport;
+    return g_viewport_render_plan.peer_fullscreen ? g_viewport_render_plan.first_viewport
+                                                  : stock_viewport;
 }
 
 std::uint32_t geometry_render_viewport(std::uint32_t stock_viewport) {
-    return g_viewport_render_plan.peer_fullscreen
-        ? g_viewport_render_plan.geometry_viewport
-        : stock_viewport;
+    return g_viewport_render_plan.peer_fullscreen ? g_viewport_render_plan.geometry_viewport
+                                                  : stock_viewport;
 }
 
-void restore_active_render_viewport(unsigned char* rdram, std::uint32_t stock_viewport) {
+void restore_active_render_viewport(unsigned char *rdram, std::uint32_t stock_viewport) {
     if (!g_viewport_render_plan.peer_fullscreen) {
         return;
     }
@@ -292,18 +271,26 @@ void restore_active_render_viewport(unsigned char* rdram, std::uint32_t stock_vi
     }
 }
 
-void before_guest_update(unsigned char* rdram, std::uint32_t mode) {
-    std::uint32_t pending=0;
-    engine::read_u32(rdram,engine::globals::pending_mode,pending);
-    g_render_race.store(engine::is_live_race_transition(mode,pending));
-    const auto status=netplay::get_status();
-    static std::array<std::uint32_t,5> previous{};
-    const std::array<std::uint32_t,5> key{mode,pending,unsigned(status.phase),status.local_slot,status.connected_players};
-    if(status.active&&status.connected&&key!=previous){
-        previous=key;
-        std::fprintf(stderr,"[RR64-ONLINE-BOUNDARY] host=%u slot=%u peers=%u replicated=%u mode=%u pending=%u phase=%u setup-revision=%u\n",
-            status.is_host,status.local_slot,status.connected_players,status.replicated_riders,mode,pending,unsigned(status.phase),status.game_setup.revision);
-        for(const auto address:engine::globals::multiplayer_game_setup_words){std::uint32_t value=0;engine::read_u32(rdram,address,value);std::fprintf(stderr,"[RR64-ONLINE-SETUP] %08X=%08X\n",address,value);}
+void before_guest_update(unsigned char *rdram, std::uint32_t mode) {
+    std::uint32_t pending = 0;
+    engine::read_u32(rdram, engine::globals::pending_mode, pending);
+    g_render_race.store(engine::is_live_race_transition(mode, pending));
+    const auto status = netplay::get_status();
+    static std::array<std::uint32_t, 5> previous{};
+    const std::array<std::uint32_t, 5> key{mode, pending, unsigned(status.phase), status.local_slot,
+                                           status.connected_players};
+    if (status.active && status.connected && key != previous) {
+        previous = key;
+        std::fprintf(
+            stderr,
+            "[RR64-ONLINE-BOUNDARY] host=%u slot=%u peers=%u replicated=%u mode=%u pending=%u phase=%u setup-revision=%u\n",
+            status.is_host, status.local_slot, status.connected_players, status.replicated_riders,
+            mode, pending, unsigned(status.phase), status.game_setup.revision);
+        for (const auto address : engine::globals::multiplayer_game_setup_words) {
+            std::uint32_t value = 0;
+            engine::read_u32(rdram, address, value);
+            std::fprintf(stderr, "[RR64-ONLINE-SETUP] %08X=%08X\n", address, value);
+        }
         std::fflush(stderr);
     }
     if (rr64_is_live_race_mode(mode) != 0) {
@@ -312,9 +299,10 @@ void before_guest_update(unsigned char* rdram, std::uint32_t mode) {
     }
 }
 
-void after_guest_update(unsigned char* rdram, std::uint32_t mode) {
-    std::uint32_t pending=0;engine::read_u32(rdram,engine::globals::pending_mode,pending);
-    g_render_race.store(engine::is_live_race_transition(mode,pending));
+void after_guest_update(unsigned char *rdram, std::uint32_t mode) {
+    std::uint32_t pending = 0;
+    engine::read_u32(rdram, engine::globals::pending_mode, pending);
+    g_render_race.store(engine::is_live_race_transition(mode, pending));
     if (rr64_is_live_race_mode(mode) == 0) {
         return;
     }
@@ -350,21 +338,19 @@ extern "C" unsigned int rr64_online_render_geometry_viewport(unsigned int stock_
     return rr64::online_race_sync::geometry_render_viewport(stock_viewport);
 }
 
-extern "C" void rr64_online_restore_active_viewport(
-    unsigned char* rdram,
-    unsigned int stock_viewport)
-{
+extern "C" void rr64_online_restore_active_viewport(unsigned char *rdram,
+                                                    unsigned int stock_viewport) {
     rr64::online_race_sync::restore_active_render_viewport(rdram, stock_viewport);
 }
 
-extern "C" void rr64_online_apply_display_names(unsigned char* rdram) {
+extern "C" void rr64_online_apply_display_names(unsigned char *rdram) {
     rr64::online_race_sync::apply_online_display_names(rdram);
 }
 
-extern "C" void rr64_online_race_sync_before_update(unsigned char* rdram, unsigned int mode) {
+extern "C" void rr64_online_race_sync_before_update(unsigned char *rdram, unsigned int mode) {
     rr64::online_race_sync::before_guest_update(rdram, mode);
 }
 
-extern "C" void rr64_online_race_sync_after_update(unsigned char* rdram, unsigned int mode) {
+extern "C" void rr64_online_race_sync_after_update(unsigned char *rdram, unsigned int mode) {
     rr64::online_race_sync::after_guest_update(rdram, mode);
 }

@@ -48,6 +48,24 @@ renamed = []
 # by the native helper, allowing a black-screen run to identify the exact guest
 # initialization call that did not return.
 hook = [
+    { func = "func_8003FE48", text = "rr64_restore_manual_eject_health(rdram, ctx->r4); if (rr64_local_player_roaming(rdram, ctx->r4) || rr64_custom_cop_roaming(rdram, ctx->r4)) return;" },
+    { func = "func_8003FE48", before_vram = 0x80040278, text = "if (rr64_custom_cop_can_recover(rdram, ctx->r17)) ctx->r2 = 1;" },
+    # Preserve the selected bike's normal health in custom rules, not stock cop-mode health.
+    { func = "func_8003EF78", before_vram = 0x8003F024, text = "if (rr64_custom_cop_active()) { ctx->f0.u32l = MEM_W(0x4FC, ctx->r16); goto L_8003F054; }" },
+    { func = "func_800645E4", before_vram = 0x80064AB8, text = "if (rr64_custom_cop_trick(rdram, ctx->r23)) ctx->r3 = 0;" },
+    { func = "func_800576D4", before_vram = 0x8005778C, text = "if (rr64_custom_cop_siren(rdram, ctx->r16) == 1) MEM_W(0x18, ctx->r29) = 0x42FE0000;" },
+    { func = "func_8004090C", text = "rr64_custom_cop_control(rdram, ctx);" },
+    { func = "func_80030220", before_vram = 0x800342C4, text = "rr64_custom_cop_hud(rdram, ctx);" },
+    # Human police reuse roadside placement and stock sound paths, not AI input.
+    { func = "func_8006CF60", before_vram = 0x8006D890, text = "rr64_custom_cop_post(rdram, ctx, ctx->r21);" },
+    { func = "func_800576D4", text = "if (rr64_custom_cop_siren(rdram, ctx->r4) == 0) return;" },
+    { func = "func_800576D4", before_vram = 0x80057720, text = "if (rr64_custom_cop_siren(rdram, ctx->r16) == 1) ctx->r4 = 1;" },
+    { func = "func_80057860", text = "if (rr64_custom_cop_pursuit(rdram, ctx->r4) >= 0) return;" },
+
+    # Hide off-route/wrong-way HUD guidance in every mode, preserving the
+    # normal upcoming-turn branch and all underlying route state.
+    { func = "func_8006A460", before_vram = 0x8006A4D4, text = "goto L_8006A5E4;" },
+    { func = "func_8006A460", before_vram = 0x8006A4F8, text = "goto L_8006A5E4;" },
     # Catch-up warning predicates for all stock split-screen HUD layouts.
     # Compare the threshold with itself to skip only this notification, keeping
     # crash/status messages and their backing rectangles on the original path.
@@ -182,6 +200,12 @@ hook = [
     # R18 optional world presentation; all producers retain their stock work.
     { func = "func_8005ED6C", before_vram = 0x8005EF48, text = "rr64_world_observe_roots(rdram, 3);" },
     { func = "func_8005EF74", before_vram = 0x8005F050, text = "rr64_world_observe_roots(rdram, 4);" },
+    # Extend active traffic at its freshly prepared per-view root, before the
+    # original frustum pass. Leave spawning, recycling and inactive cars alone.
+    { func = "func_8005EF74", before_vram = 0x8005F020, text = "c1cs = rr64_traffic_within_draw_distance(rdram, ctx->r16, ctx->f0.u32l, ctx->f20.u32l, c1cs);" },
+    # User-authorized farther traffic placement; stock allocation, random
+    # selection, speed and collision paths remain in control.
+    { func = "func_8006BFF4", text = "ctx->f12.u32l = rr64_traffic_spawn_distance(rdram, ctx->f12.u32l);" },
     { func = "func_8005F070", before_vram = 0x8005F13C, text = "rr64_world_observe_roots(rdram, 5);" },
     { func = "func_8000A550", before_vram = 0x8000A7AC, text = "ctx->r3 = S32(rr64_combined_video_callback(rdram, ctx->r3));" },
     { func = "func_800167BC", before_vram = 0x80016888, text = "rr64_world_camera_far(rdram, ctx);" },
@@ -246,7 +270,7 @@ hook = [
     { func = "func_80037554", before_vram = 0x800377EC, text = "rr64_engine_capture_dynamics_boundary(rdram, 27, 1, 0);" },
 
     # Achievement events use the game's local notification dispatcher.
-    { func = "func_800636B0", text = "rr64_achievement_game_event(rdram, ctx->r5, ctx->r6, ctx->r7);" },
+    { func = "func_800636B0", text = "unsigned rr64_stats = ctx->r4, rr64_event = ctx->r5, rr64_name = ctx->r6; rr64_achievement_game_event(rdram, ctx->r5, ctx->r6, ctx->r7);" },
 
     # Name entry uses a free-moving analog cursor in the original game. Snap
     # each fresh D-pad/stick direction to exactly one grid cell, then apply a
@@ -286,7 +310,63 @@ hook = [
     { func = "func_80058DBC", before_vram = 0x80058F60, text = "ctx->r17 = rr64_music_volume_update(ctx->r17, ctx->r16);" },
     { func = "func_80058DBC", before_vram = 0x80058F80, text = "ctx->r5 = rr64_music_stock_volume(ctx->r5);" },
     { func = "func_8005AEE0", before_vram = 0x8005B290, text = "if (ctx->f2.fl >= ctx->f0.fl) rr64_lod_shadow_finish_hold(rdram, ctx);" },
-    { func = "func_80027A90", text = "rr64_online_game_setup_before_update(rdram);" },
+    { func = "func_80027A90", text = "rr64_online_game_setup_before_update(rdram); rr64_local_options_menu_begin(rdram);" },
+    # Local race options use the original menu records and renderer. A private
+    # nine-row table adds Bike Level without overwriting the stock sentinel.
+    # Navigation skips each mode's hidden rows; online retains the stock path.
+    { func = "func_80027A90", before_vram = 0x800285C4, text = "if (rr64_local_options_input(rdram)) goto L_8002883C;" },
+    { func = "func_80027A90", before_vram = 0x80028F0C, text = "{ int row = rr64_local_options_navigation(rdram); if (row >= 0) { ctx->r2 = row; goto rr64_local_navigation_done; } }" },
+    { func = "func_80027A90", before_vram = 0x80029044, text = "rr64_local_navigation_done:;" },
+    { func = "func_80027A90", before_vram = 0x80029074, text = "ctx->r3 = rr64_local_options_visible(4, ctx->r3);" },
+    { func = "func_80027A90", before_vram = 0x800290B0, text = "ctx->r3 = rr64_local_options_visible(ctx->r17, ctx->r3);" },
+    { func = "func_80027A90", before_vram = 0x800290CC, text = "ctx->r3 = (int32_t)rr64_local_options_table(ctx->r3);" },
+    { func = "func_80027A90", before_vram = 0x80029448, text = "ctx->r2 = (int32_t)rr64_local_options_table(ctx->r2);" },
+    { func = "func_80027A90", before_vram = 0x80029370, text = "rr64_local_options_text(rdram, ctx->r17, ctx->r29 + 0x50);" },
+    { func = "func_80027A90", before_vram = 0x80029D74, text = "rr64_local_options_finish(rdram);" },
+    { func = "func_8006C88C", text = "rr64_local_options_race(rdram);" },
+    # Custom Cop Mode: local-only selection, pair roles and shared arrest rules.
+    { func = "func_800636B0", before_vram = 0x80063AFC, text = "rr64_custom_cop_notification(rdram, rr64_stats, rr64_event, rr64_name);" },
+    { func = "func_8006CF60", before_vram = 0x8006D704, text = "rr64_custom_cop_equipment(rdram, 0x800D8570u + (unsigned)ctx->r21 * 0x118u);" },
+    { func = "func_8006CF60", before_vram = 0x8006D7C0, text = "rr64_custom_cop_spawn(rdram, ctx->r21, ctx->r29 + 0x48);" },
+    { func = "func_80027A90", before_vram = 0x8002998C, text = "ctx->r3 = rr64_custom_cop_rider(rdram, ctx->r17, ctx->r3); MEM_W(0, (int32_t)(0x8009F670u + (unsigned)ctx->r17 * 4u)) = ctx->r3;" },
+    { func = "func_80064168", text = "unsigned rr64_attacker = ctx->r4, rr64_victim = ctx->r5;" },
+    { func = "func_800642A8", text = "unsigned rr64_attacker = ctx->r4, rr64_victim = ctx->r5;" },
+    { func = "func_80064168", before_vram = 0x80064250, text = "rr64_custom_cop_bust_message(rdram, rr64_attacker, rr64_victim);" },
+    { func = "func_800642A8", before_vram = 0x80064390, text = "rr64_custom_cop_bust_message(rdram, rr64_attacker, rr64_victim);" },
+    { func = "func_80027A90", before_vram = 0x80029D00, text = "rr64_custom_cop_selection_hint(rdram, ctx);" },
+    { func = "func_80027A90", before_vram = 0x80029D4C, text = "if (!rr64_custom_cop_confirm(rdram)) goto L_80029D74;" },
+    { func = "func_80027A90", before_vram = 0x80029860, text = "ctx->r6 = rr64_custom_cop_bike_count(ctx->r6);" },
+    { func = "func_80027A90", before_vram = 0x800298C8, text = "ctx->r6 = rr64_custom_cop_bike_count(ctx->r6);" },
+    { func = "func_80027A90", before_vram = 0x80029878, text = "if (rr64_custom_cop_enabled()) ctx->r3 = 1;" },
+    { func = "func_80027A90", before_vram = 0x800298E0, text = "if (rr64_custom_cop_enabled()) ctx->r3 = 1;" },
+    { func = "func_80027A90", before_vram = 0x80029890, text = "ctx->r2 = rr64_custom_cop_rider(rdram, ctx->r17, ctx->r2);" },
+    { func = "func_80027A90", before_vram = 0x8002990C, text = "ctx->r2 = rr64_custom_cop_rider(rdram, ctx->r17, ctx->r2);" },
+    { func = "func_80027A90", before_vram = 0x80029948, text = "ctx->r2 = (int32_t)rr64_custom_cop_bike_entry(rdram, ctx->r17, ctx->r2);" },
+    { func = "func_80027A90", before_vram = 0x80029974, text = "ctx->r3 = rr64_custom_cop_rider(rdram, ctx->r17, ctx->r3);" },
+    { func = "func_8006C88C", before_vram = 0x8006CAF8, text = "if (rr64_custom_cop_active()) MEM_W(0, (int32_t)0x800D8524) = 8;" },
+    { func = "func_8006CF60", before_vram = 0x8006D100, text = "if (rr64_custom_cop_active()) goto L_8006D148;" },
+    { func = "func_8006CF60", before_vram = 0x8006D148, text = "rr64_custom_cop_roles(rdram);" },
+    { func = "func_8006CF60", before_vram = 0x8006D3D4, text = "if (rr64_custom_cop_active()) ctx->r23 = MEM_W(0, (int32_t)0x800A656C) - 1;" },
+    { func = "func_8006E25C", before_vram = 0x8006E2CC, text = "if (rr64_custom_cop_active()) { ctx->r2 = (int32_t)0x800A0000; goto L_8006E2E0; }" },
+    { func = "func_80064168", before_vram = 0x800641B0, text = "if (rr64_custom_cop_active()) { if (rr64_custom_cop_arrest(rdram, ctx->r4, ctx->r6)) goto rr64_custom_arrest; goto L_800642A0; }" },
+    { func = "func_80064168", before_vram = 0x800641C8, text = "rr64_custom_arrest:;" },
+    { func = "func_800642A8", before_vram = 0x800642F0, text = "if (rr64_custom_cop_active()) { if (rr64_custom_cop_arrest(rdram, ctx->r4, ctx->r6)) goto rr64_custom_arrest; goto L_800643E0; }" },
+    { func = "func_800642A8", before_vram = 0x80064308, text = "rr64_custom_arrest:;" },
+    { func = "func_800740A0", text = "if (rr64_custom_cop_active()) { ctx->r2 = rr64_custom_cop_finished(rdram); return; }" },
+    { func = "func_8006C414", text = "rr64_local_options_reset_race();" },
+    # Override only bike-specific table selectors, never the selected map level.
+    # AI speed targets and braking/acceleration use the same selected bike tier.
+    { func = "func_800512C8", before_vram = 0x80051360, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
+    { func = "func_80052668", before_vram = 0x800526B4, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
+    { func = "func_80066AC8", before_vram = 0x80066B20, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
+    { func = "func_80066AC8", before_vram = 0x80066B58, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
+    # Original tier-specific AI profile pool and human bike profile resolution.
+    { func = "func_800516B8", before_vram = 0x80051970, text = "ctx->r11 = rr64_local_bike_level(ctx->r11 - 1) + 1;" },
+    { func = "func_80051F00", before_vram = 0x80051F5C, text = "ctx->r3 = (int32_t)rr64_local_bike_profile(rdram, ctx->r11, ctx->r3);" },
+    { func = "func_8003EF78", before_vram = 0x8003EFD0, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
+    { func = "func_8003EF78", before_vram = 0x8003F008, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
+    { func = "func_8003E924", before_vram = 0x8003E9F0, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
+    { func = "func_8003E924", before_vram = 0x8003EA34, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
     { func = "func_80027A90", before_vram = 0x80027F18, text = "MEM_W(-0X10A4, S32(0X800A << 16)) = rr64_online_requested_racer_count(MEM_W(-0X10A4, S32(0X800A << 16)));" },
     { func = "func_80027A90", before_vram = 0x80029D78, text = "rr64_online_game_setup_after_update(rdram);" },
     { func = "func_8006C6D4", before_vram = 0x8006C6D4, text = "rr64_online_apply_display_names(rdram);" },
@@ -321,11 +401,14 @@ hook = [
     # spawning, AI, physics, collision, audio, and removal remain stock.
     { func = "func_80011CC0", before_vram = 0x80011D80, text = "if (rr64_world_distance_enabled()) { if (MEM_W(0x50, ctx->r29) == 0) ctx->r3 = rr64_world_actor_hidden(rdram, ctx->r19, ctx->r3, ctx); } else ctx->r3 = rr64_traffic_render_visibility(rdram, ctx->r19, ctx->r3); if (MEM_W(0x50, ctx->r29) == 0) ctx->r3 = rr64_lod_actor_hidden(rdram, ctx->r19, ctx->r3);" },
 
-    # Intercept only the stock main-menu MULTIPLAYER transition. The in-game
-    # panel then offers Local (which resumes the untouched 0x23 path) or Online.
+    # Multiplayer resumes the original local path; the new Online row opens
+    # the existing Host/Join panel directly.
     # A queued Local/Online start is fed back through the game's own menu input
     # handler so original local setup remains unchanged.
-    { func = "func_80023860", before_vram = 0x80023BB0, text = "rr64_online_menu_apply_pending_guest_input(rdram);" },
+    # Extend the original main menu to five rows; Online is appended below Options.
+    { func = "func_80023860", before_vram = 0x80023CCC, text = "ctx->r2 = ((unsigned int)MEM_W(0, 0xFFFFFFFF8009E128ULL) < 5);" },
+    { func = "func_80023860", before_vram = 0x80023CC4, text = "ctx->r2 = 4;" },
+    { func = "func_80023860", before_vram = 0x80023BB0, text = "rr64_online_main_menu_draw(rdram, ctx); rr64_online_menu_apply_pending_guest_input(rdram);" },
     { func = "func_80023860", before_vram = 0x80023C38, text = "ctx->r4 = rr64_online_menu_route_mode(ctx->r4);" },
 ]
 

@@ -1,3 +1,4 @@
+#include "rr64_msvc_crt_compat.hpp"
 #include "rr64_achievements.hpp"
 
 #include <algorithm>
@@ -35,8 +36,8 @@ namespace {
 
 struct AchievementDefinition {
     std::uint32_t retro_id;
-    const char* title;
-    const char* description;
+    const char *title;
+    const char *description;
     std::uint16_t points;
 };
 
@@ -56,14 +57,17 @@ constexpr std::array<AchievementDefinition, 52> kAchievements{{
     {158003, "Taunting at the End - lvl 5", "Finish first while taunting on a level 5 track", 10},
     {158004, "One Point!", "Run over a pedestrian", 1},
     {158005, "Two Points! (Big Game)", "Run over a pedestrian while taunting", 2},
-    {158006, "Five Points! (Big Game)", "Run over a pedestrian while taunting and riding a wheelie", 5},
+    {158006, "Five Points! (Big Game)", "Run over a pedestrian while taunting and riding a wheelie",
+     5},
     {158007, "Airborne (Big Game)", "Finish a race while airborne", 10},
     {158008, "Deputize Me (Big Game)", "Have two stolen police batons at once", 5},
     {158009, "I'm the Law Now (Big Game)", "Have four stolen police batons at once", 10},
     {158010, "Not Playing Billiards (Big Game)", "Find a pool cue", 5},
     {158011, "Jammed (Big Game)", "Flip four riders in one race by jamming their wheels", 10},
-    {158012, "Quite the Rap Sheet (Big Game)", "KO two drivers, flip two drivers, and assault an officer three times in one race", 10},
-    {158013, "Super Powered KO (Big Game)", "Knock out three riders in one race while under the 4x buff", 25},
+    {158012, "Quite the Rap Sheet (Big Game)",
+     "KO two drivers, flip two drivers, and assault an officer three times in one race", 10},
+    {158013, "Super Powered KO (Big Game)",
+     "Knock out three riders in one race while under the 4x buff", 25},
     {158014, "Other Riders", "Switch between riders", 2},
     {158015, "Master Thief (Big Game)", "Steal three weapons and win the race", 10},
     {158016, "Unstoppable (Big Game)", "Crash three cops in one race", 25},
@@ -86,44 +90,56 @@ constexpr std::array<AchievementDefinition, 52> kAchievements{{
     {158033, "Airborne ShowStopper (Big Game)", "Finish a race airborne and taunting", 10},
     {158034, "Taunt the Other Racers", "Taunt the other racers a second time", 2},
     {158035, "Top Gear", "Purchase the Executioner or Hammerhead", 25},
-    {158036, "Level 1 Thrash", "Win the specified level 1 Thrash race after knocking out or crashing at least three riders", 10},
-    {158037, "Level 2 Thrash", "Win the specified level 2 Thrash race after knocking out at least three riders", 10},
-    {158038, "Level 3 Thrash", "Win the specified level 3 Thrash race after knocking out at least three riders", 10},
-    {158039, "Multiplayer - Level 1 Race 3", "Win the one-lap level 1 race 3 challenge against the toughest CPU", 5},
-    {158040, "Multiplayer - Level 2 Race 2", "Win the one-lap level 2 race 2 challenge against the toughest CPU", 10},
-    {158041, "Multiplayer - Level 3 Race 5", "Win the three-lap level 3 race 5 challenge against the toughest CPU", 10},
-    {158042, "Multiplayer Deathmatch", "Win the level 3 race 4 Deathmatch challenge against the toughest CPU", 25},
-    {158043, "Multiplayer Tag", "Win the level 2 race 1 Tag challenge against the toughest CPU", 25},
-    {158044, "Multiplayer PED Hunt", "Win the level 3 PED Hunt challenge against the toughest CPU", 5},
-    {158045, "Multiplayer PED Hunt - 10 Points", "Win the level 3 PED Hunt challenge with at least 10 points against the toughest CPU", 10},
+    {158036, "Level 1 Thrash",
+     "Win the specified level 1 Thrash race after knocking out or crashing at least three riders",
+     10},
+    {158037, "Level 2 Thrash",
+     "Win the specified level 2 Thrash race after knocking out at least three riders", 10},
+    {158038, "Level 3 Thrash",
+     "Win the specified level 3 Thrash race after knocking out at least three riders", 10},
+    {158039, "Multiplayer - Level 1 Race 3",
+     "Win the one-lap level 1 race 3 challenge against the toughest CPU", 5},
+    {158040, "Multiplayer - Level 2 Race 2",
+     "Win the one-lap level 2 race 2 challenge against the toughest CPU", 10},
+    {158041, "Multiplayer - Level 3 Race 5",
+     "Win the three-lap level 3 race 5 challenge against the toughest CPU", 10},
+    {158042, "Multiplayer Deathmatch",
+     "Win the level 3 race 4 Deathmatch challenge against the toughest CPU", 25},
+    {158043, "Multiplayer Tag", "Win the level 2 race 1 Tag challenge against the toughest CPU",
+     25},
+    {158044, "Multiplayer PED Hunt", "Win the level 3 PED Hunt challenge against the toughest CPU",
+     5},
+    {158045, "Multiplayer PED Hunt - 10 Points",
+     "Win the level 3 PED Hunt challenge with at least 10 points against the toughest CPU", 10},
 }};
 
 constexpr std::uint16_t kTotalPoints = 488;
 constexpr std::uint32_t achievement_point_total() {
     std::uint32_t total = 0;
-    for (const AchievementDefinition& achievement : kAchievements) {
+    for (const AchievementDefinition &achievement : kAchievements) {
         total += achievement.points;
     }
     return total;
 }
 
 static_assert(kAchievements.size() == 52, "Road Rash 64 Base Set entry count changed");
-static_assert(achievement_point_total() == kTotalPoints, "Road Rash 64 Base Set point total changed");
+static_assert(achievement_point_total() == kTotalPoints,
+              "Road Rash 64 Base Set point total changed");
 constexpr auto kToastEnterDuration = std::chrono::milliseconds(900);
 constexpr auto kToastHoldDuration = std::chrono::milliseconds(3900);
 constexpr auto kToastExitDuration = std::chrono::milliseconds(380);
 constexpr auto kToastDuration = kToastEnterDuration + kToastHoldDuration + kToastExitDuration;
-constexpr const char* kToastFrameResource = "rr64-achievement-toast-frame";
-constexpr const char* kToastFrameAsset = "achievement-toast-frame-v2.png";
+constexpr const char *kToastFrameResource = "rr64-achievement-toast-frame";
+constexpr const char *kToastFrameAsset = "achievement-toast-frame-v2.png";
 
 struct UiState {
     recompui::ContextId toast_context = recompui::ContextId::null();
-    recompui::Element* toast_container = nullptr;
-    recompui::Image* toast_frame = nullptr;
-    recompui::Image* toast_image = nullptr;
-    recompui::Label* toast_title = nullptr;
-    recompui::Label* toast_description = nullptr;
-    recompui::Label* toast_points = nullptr;
+    recompui::Element *toast_container = nullptr;
+    recompui::Image *toast_frame = nullptr;
+    recompui::Image *toast_image = nullptr;
+    recompui::Label *toast_title = nullptr;
+    recompui::Label *toast_description = nullptr;
+    recompui::Label *toast_points = nullptr;
     bool toast_initialized = false;
     std::optional<std::size_t> active_toast{};
     std::chrono::steady_clock::time_point toast_started{};
@@ -166,8 +182,7 @@ float ease_out_back(float progress) {
     constexpr float coefficient = overshoot + 1.0f;
     const float clamped = std::clamp(progress, 0.0f, 1.0f);
     const float shifted = clamped - 1.0f;
-    return 1.0f + (coefficient * shifted * shifted * shifted) +
-        (overshoot * shifted * shifted);
+    return 1.0f + (coefficient * shifted * shifted * shifted) + (overshoot * shifted * shifted);
 }
 
 void apply_toast_animation(std::chrono::steady_clock::time_point now) {
@@ -175,8 +190,8 @@ void apply_toast_animation(std::chrono::steady_clock::time_point now) {
         return;
     }
 
-    const float elapsed_ms = std::chrono::duration<float, std::milli>(
-        now - g_ui.toast_started).count();
+    const float elapsed_ms =
+        std::chrono::duration<float, std::milli>(now - g_ui.toast_started).count();
     const float total_ms = static_cast<float>(kToastDuration.count());
     const float enter_ms = static_cast<float>(kToastEnterDuration.count());
     const float exit_ms = static_cast<float>(kToastExitDuration.count());
@@ -200,22 +215,19 @@ void apply_toast_animation(std::chrono::steady_clock::time_point now) {
             rotation = lerp(-11.0f, 2.0f, phase);
             scale_x = lerp(0.92f, 1.06f, phase);
             scale_y = lerp(0.92f, 0.92f, phase);
-        }
-        else if (progress < 0.75f) {
+        } else if (progress < 0.75f) {
             const float phase = smoothstep((progress - 0.58f) / 0.17f);
             translate_y = lerp(18.0f, -12.0f, phase);
             rotation = lerp(2.0f, -1.2f, phase);
             scale_x = lerp(1.06f, 0.985f, phase);
             scale_y = lerp(0.92f, 1.04f, phase);
-        }
-        else if (progress < 0.89f) {
+        } else if (progress < 0.89f) {
             const float phase = smoothstep((progress - 0.75f) / 0.14f);
             translate_y = lerp(-12.0f, 5.0f, phase);
             rotation = lerp(-1.2f, 0.6f, phase);
             scale_x = lerp(0.985f, 1.025f, phase);
             scale_y = lerp(1.04f, 0.975f, phase);
-        }
-        else {
+        } else {
             const float phase = smoothstep((progress - 0.89f) / 0.11f);
             translate_y = lerp(5.0f, 0.0f, phase);
             rotation = lerp(0.6f, 0.0f, phase);
@@ -226,10 +238,9 @@ void apply_toast_animation(std::chrono::steady_clock::time_point now) {
 
         const float badge_progress = std::clamp((elapsed_ms - 150.0f) / 590.0f, 0.0f, 1.0f);
         badge_scale = 0.66f + (0.34f * ease_out_back(badge_progress));
-    }
-    else if (elapsed_ms > total_ms - exit_ms) {
-        const float progress = std::clamp(
-            (elapsed_ms - (total_ms - exit_ms)) / exit_ms, 0.0f, 1.0f);
+    } else if (elapsed_ms > total_ms - exit_ms) {
+        const float progress =
+            std::clamp((elapsed_ms - (total_ms - exit_ms)) / exit_ms, 0.0f, 1.0f);
         const float fade = smoothstep(progress);
         const float accelerate = progress * progress * progress;
         opacity = 1.0f - fade;
@@ -248,17 +259,16 @@ void apply_toast_animation(std::chrono::steady_clock::time_point now) {
     g_ui.toast_container->set_opacity(opacity);
     if (g_ui.toast_image != nullptr) {
         g_ui.toast_image->set_scale_2D(badge_scale, badge_scale);
-        const float badge_rotation = elapsed_ms < enter_ms
-            ? -8.0f * (1.0f - std::clamp(elapsed_ms / enter_ms, 0.0f, 1.0f))
-            : 0.0f;
+        const float badge_rotation =
+            elapsed_ms < enter_ms ? -8.0f * (1.0f - std::clamp(elapsed_ms / enter_ms, 0.0f, 1.0f))
+                                  : 0.0f;
         g_ui.toast_image->set_rotation(badge_rotation);
     }
 }
 
 void queue_badge_resources() {
     {
-        const std::filesystem::path frame_path =
-            recompui::file::get_asset_path(kToastFrameAsset);
+        const std::filesystem::path frame_path = recompui::file::get_asset_path(kToastFrameAsset);
         std::ifstream frame_file(frame_path, std::ios::binary | std::ios::ate);
         if (frame_file) {
             const std::streamsize frame_size = frame_file.tellg();
@@ -275,23 +285,27 @@ void queue_badge_resources() {
     for (std::size_t i = 0; i < kAchievements.size(); ++i) {
         const std::string filename = std::to_string(kAchievements[i].retro_id) + ".png";
         const std::string relative_path = "achievements/" + filename;
-        const std::filesystem::path badge_path = recompui::file::get_asset_path(relative_path.c_str());
+        const std::filesystem::path badge_path =
+            recompui::file::get_asset_path(relative_path.c_str());
         std::ifstream badge_file(badge_path, std::ios::binary | std::ios::ate);
         if (!badge_file) {
-            std::fprintf(stderr, "[RR64-ACH] Missing RetroAchievements badge: %ls\n", badge_path.c_str());
+            std::fprintf(stderr, "[RR64-ACH] Missing RetroAchievements badge: " RR64_PATH_FORMAT "\n",
+                         badge_path.c_str());
             continue;
         }
 
         const std::streamsize badge_size = badge_file.tellg();
         if (badge_size <= 0) {
-            std::fprintf(stderr, "[RR64-ACH] Empty RetroAchievements badge: %ls\n", badge_path.c_str());
+            std::fprintf(stderr, "[RR64-ACH] Empty RetroAchievements badge: " RR64_PATH_FORMAT "\n",
+                         badge_path.c_str());
             continue;
         }
 
         std::vector<char> badge_bytes(static_cast<std::size_t>(badge_size));
         badge_file.seekg(0, std::ios::beg);
         if (!badge_file.read(badge_bytes.data(), badge_size)) {
-            std::fprintf(stderr, "[RR64-ACH] Could not read RetroAchievements badge: %ls\n", badge_path.c_str());
+            std::fprintf(stderr, "[RR64-ACH] Could not read RetroAchievements badge: " RR64_PATH_FORMAT "\n",
+                         badge_path.c_str());
             continue;
         }
 
@@ -309,7 +323,7 @@ std::size_t find_by_retro_id(std::uint32_t retro_id) {
     return kAchievements.size();
 }
 
-void save_progress(const std::array<bool, kAchievements.size()>& unlocked) {
+void save_progress(const std::array<bool, kAchievements.size()> &unlocked) {
     std::error_code ec;
     std::filesystem::create_directories(progress_path().parent_path(), ec);
     std::ofstream output(progress_path(), std::ios::trunc);
@@ -338,8 +352,7 @@ void load_progress() {
             if (index < kAchievements.size()) {
                 g_unlocked[index] = true;
             }
-        }
-        catch (...) {
+        } catch (...) {
             std::fprintf(stderr, "[RR64-ACH] Ignoring malformed progress entry.\n");
         }
     }
@@ -358,16 +371,12 @@ void queue_unlock(std::size_t index) {
     g_toast_queue.push_back(index);
     g_persist_dirty = true;
     rr64::achievement_audio::request_guitar_sting();
-    std::fprintf(
-        stderr,
-        "[RR64-ACH] Unlocked %u: %s (%u points).\n",
-        kAchievements[index].retro_id,
-        kAchievements[index].title,
-        kAchievements[index].points);
+    std::fprintf(stderr, "[RR64-ACH] Unlocked %u: %s (%u points).\n", kAchievements[index].retro_id,
+                 kAchievements[index].title, kAchievements[index].points);
 }
 
-std::pair<unsigned, unsigned> progress_totals(
-    const std::array<bool, kAchievements.size()>& unlocked) {
+std::pair<unsigned, unsigned>
+progress_totals(const std::array<bool, kAchievements.size()> &unlocked) {
     unsigned unlocked_count = 0;
     unsigned unlocked_points = 0;
     for (std::size_t i = 0; i < kAchievements.size(); ++i) {
@@ -379,7 +388,7 @@ std::pair<unsigned, unsigned> progress_totals(
     return {unlocked_count, unlocked_points};
 }
 
-void create_achievements_tab(recompui::ContextId context, recompui::Element* parent) {
+void create_achievements_tab(recompui::ContextId context, recompui::Element *parent) {
     // Config pages are destroyed when the Escape menu closes. Build every
     // label from a fresh progress snapshot and never retain pointers to this
     // page; otherwise a later unlock could dereference a destroyed RmlUi node.
@@ -390,49 +399,55 @@ void create_achievements_tab(recompui::ContextId context, recompui::Element* par
     }
     const auto [unlocked_count, unlocked_points] = progress_totals(unlocked);
 
-    auto* page = context.create_element<recompui::ConfigPage>(parent);
-    auto* left = page->get_body()->get_left();
-    auto* right = page->get_body()->get_right();
+    auto *page = context.create_element<recompui::ConfigPage>(parent);
+    auto *left = page->get_body()->get_left();
+    auto *right = page->get_body()->get_right();
     right->set_display(recompui::Display::None);
     left->set_display(recompui::Display::Flex);
     left->set_flex_direction(recompui::FlexDirection::Column);
     left->set_width(100.0f, recompui::Unit::Percent);
     left->set_gap(10.0f, recompui::Unit::Dp);
 
-    context.create_element<recompui::Label>(left, "ROAD RASH 64 ACHIEVEMENTS", recompui::LabelStyle::Large);
+    context.create_element<recompui::Label>(left, "ROAD RASH 64 ACHIEVEMENTS",
+                                            recompui::LabelStyle::Large);
     if (!g_enabled.load(std::memory_order_acquire)) {
-        auto* disabled = context.create_element<recompui::Label>(
+        auto *disabled = context.create_element<recompui::Label>(
             left,
             "Achievement tracking, popups, and unlock sounds are currently disabled in Gameplay settings.",
             recompui::LabelStyle::Normal);
         disabled->set_color(recompui::Color{238, 137, 35, 255});
     }
-    context.create_element<recompui::Label>(
-        left,
-        std::to_string(unlocked_count) + " / " + std::to_string(kAchievements.size()) +
-            " unlocked    " + std::to_string(unlocked_points) + " / " +
-            std::to_string(kTotalPoints) + " points",
-        recompui::LabelStyle::Normal);
-    auto* attribution = context.create_element<recompui::Label>(
+    context.create_element<recompui::Label>(left,
+                                            std::to_string(unlocked_count) + " / " +
+                                                std::to_string(kAchievements.size()) +
+                                                " unlocked    " + std::to_string(unlocked_points) +
+                                                " / " + std::to_string(kTotalPoints) + " points",
+                                            recompui::LabelStyle::Normal);
+    auto *attribution = context.create_element<recompui::Label>(
         left,
         "Achievement names and badge artwork from the published RetroAchievements Road Rash 64 Base Set. Progress is stored locally by this recompilation.",
         recompui::LabelStyle::Small);
     attribution->set_color(recompui::theme::color::TextDim);
     attribution->set_margin_bottom(6.0f, recompui::Unit::Dp);
 
-    auto* scroll = context.create_element<recompui::ScrollContainer>(left, recompui::ScrollDirection::Vertical);
+    auto *scroll = context.create_element<recompui::ScrollContainer>(
+        left, recompui::ScrollDirection::Vertical);
     scroll->set_display(recompui::Display::Flex);
     scroll->set_flex_direction(recompui::FlexDirection::Column);
     scroll->set_gap(8.0f, recompui::Unit::Dp);
     scroll->set_padding_right(12.0f, recompui::Unit::Dp);
 
     // Bound initial layout and synchronous badge uploads to one page.
-    struct Row { recompui::Element* card; recompui::Image* badge;
-        recompui::Label* status; recompui::Label* description; };
+    struct Row {
+        recompui::Element *card;
+        recompui::Image *badge;
+        recompui::Label *status;
+        recompui::Label *description;
+    };
     auto rows = std::make_shared<std::array<Row, 8>>();
     auto page_index = std::make_shared<std::size_t>(0);
     for (std::size_t i = 0; i < 8; ++i) {
-        auto* card = context.create_element<recompui::Element>(scroll);
+        auto *card = context.create_element<recompui::Element>(scroll);
         card->set_display(recompui::Display::Flex);
         card->set_flex_direction(recompui::FlexDirection::Row);
         card->set_align_items(recompui::AlignItems::Center);
@@ -441,15 +456,15 @@ void create_achievements_tab(recompui::ContextId context, recompui::Element* par
         card->set_padding(10.0f, recompui::Unit::Dp);
         card->set_background_color(recompui::theme::color::BGOverlay);
         card->set_border_left_width(4.0f, recompui::Unit::Dp);
-        card->set_border_left_color(
-            unlocked[i] ? recompui::Color{107, 187, 58, 255}
-                        : recompui::Color{96, 96, 96, 255});
+        card->set_border_left_color(unlocked[i] ? recompui::Color{107, 187, 58, 255}
+                                                : recompui::Color{96, 96, 96, 255});
         card->set_border_radius(recompui::theme::border::radius_sm, recompui::Unit::Dp);
 
-        recompui::Image* badge = nullptr;
+        recompui::Image *badge = nullptr;
         if (g_badge_loaded[i]) {
             badge = context.create_element<recompui::Image>(card, badge_resource_name(i));
-            badge->set_display(g_badge_loaded[i] ? recompui::Display::Block : recompui::Display::None);
+            badge->set_display(g_badge_loaded[i] ? recompui::Display::Block
+                                                 : recompui::Display::None);
             badge->set_width(76.0f, recompui::Unit::Dp);
             badge->set_height(76.0f, recompui::Unit::Dp);
             badge->set_flex_shrink(0.0f);
@@ -457,7 +472,7 @@ void create_achievements_tab(recompui::ContextId context, recompui::Element* par
             badge->set_border_radius(recompui::theme::border::radius_sm, recompui::Unit::Dp);
         }
 
-        auto* copy = context.create_element<recompui::Element>(card);
+        auto *copy = context.create_element<recompui::Element>(card);
         copy->set_display(recompui::Display::Flex);
         copy->set_flex_direction(recompui::FlexDirection::Column);
         copy->set_flex_grow(1.0f);
@@ -465,49 +480,64 @@ void create_achievements_tab(recompui::ContextId context, recompui::Element* par
         copy->set_gap(3.0f, recompui::Unit::Dp);
 
         const std::string state = unlocked[i] ? "UNLOCKED  " : "LOCKED  ";
-        auto* status = context.create_element<recompui::Label>(
+        auto *status = context.create_element<recompui::Label>(
             copy,
             state + std::string(kAchievements[i].title) + "  -  " +
                 std::to_string(kAchievements[i].points) + "G",
             recompui::LabelStyle::Normal);
-        status->set_color(
-            unlocked[i] ? recompui::Color{126, 211, 66, 255}
-                        : recompui::Color{164, 164, 164, 255});
-        auto* description = context.create_element<recompui::Label>(
+        status->set_color(unlocked[i] ? recompui::Color{126, 211, 66, 255}
+                                      : recompui::Color{164, 164, 164, 255});
+        auto *description = context.create_element<recompui::Label>(
             copy, kAchievements[i].description, recompui::LabelStyle::Small);
         description->set_color(recompui::theme::color::TextDim);
         (*rows)[i] = {card, badge, status, description};
     }
-    auto* navigation = context.create_element<recompui::Element>(left);
+    auto *navigation = context.create_element<recompui::Element>(left);
     navigation->set_display(recompui::Display::Flex);
     navigation->set_gap(16.0f, recompui::Unit::Dp);
     navigation->set_align_items(recompui::AlignItems::Center);
-    auto* previous = context.create_element<recompui::Button>(navigation, "Previous", recompui::ButtonStyle::Secondary, recompui::ButtonSize::Small);
-    auto* page_label = context.create_element<recompui::Label>(navigation, "1 / 7", recompui::LabelStyle::Normal);
-    auto* next = context.create_element<recompui::Button>(navigation, "Next", recompui::ButtonStyle::Secondary, recompui::ButtonSize::Small);
+    auto *previous = context.create_element<recompui::Button>(
+        navigation, "Previous", recompui::ButtonStyle::Secondary, recompui::ButtonSize::Small);
+    auto *page_label =
+        context.create_element<recompui::Label>(navigation, "1 / 7", recompui::LabelStyle::Normal);
+    auto *next = context.create_element<recompui::Button>(
+        navigation, "Next", recompui::ButtonStyle::Secondary, recompui::ButtonSize::Small);
     // These pointers belong exclusively to the page; its buttons own the callbacks.
     // Switching tabs destroys the callbacks and rows together, with no globals.
     auto refresh = [rows, page_index, page_label, unlocked]() {
         page_label->set_text(std::to_string(*page_index + 1) + " / 7");
         for (std::size_t slot = 0; slot < rows->size(); ++slot) {
-            auto& row = (*rows)[slot];
+            auto &row = (*rows)[slot];
             const auto i = *page_index * rows->size() + slot;
-            row.card->set_display(i < kAchievements.size() ? recompui::Display::Flex : recompui::Display::None);
-            if (i >= kAchievements.size()) { continue; }
-            row.card->set_border_left_color(unlocked[i] ? recompui::Color{107,187,58,255} : recompui::Color{96,96,96,255});
+            row.card->set_display(i < kAchievements.size() ? recompui::Display::Flex
+                                                           : recompui::Display::None);
+            if (i >= kAchievements.size()) {
+                continue;
+            }
+            row.card->set_border_left_color(unlocked[i] ? recompui::Color{107, 187, 58, 255}
+                                                        : recompui::Color{96, 96, 96, 255});
             if (row.badge) {
-                row.badge->set_display(g_badge_loaded[i] ? recompui::Display::Block : recompui::Display::None);
+                row.badge->set_display(g_badge_loaded[i] ? recompui::Display::Block
+                                                         : recompui::Display::None);
                 row.badge->set_src(badge_resource_name(i));
                 row.badge->set_opacity(unlocked[i] ? 1.0f : 0.38f);
             }
-            row.status->set_text(std::string(unlocked[i] ? "UNLOCKED  " : "LOCKED  ") + kAchievements[i].title + "  -  " + std::to_string(kAchievements[i].points) + "G");
-            row.status->set_color(unlocked[i] ? recompui::Color{126,211,66,255} : recompui::Color{164,164,164,255});
+            row.status->set_text(std::string(unlocked[i] ? "UNLOCKED  " : "LOCKED  ") +
+                                 kAchievements[i].title + "  -  " +
+                                 std::to_string(kAchievements[i].points) + "G");
+            row.status->set_color(unlocked[i] ? recompui::Color{126, 211, 66, 255}
+                                              : recompui::Color{164, 164, 164, 255});
             row.description->set_text(kAchievements[i].description);
         }
     };
-    previous->add_pressed_callback([page_index, refresh]() { *page_index = (*page_index + 6) % 7; refresh(); });
-    next->add_pressed_callback([page_index, refresh]() { *page_index = (*page_index + 1) % 7; refresh(); });
-
+    previous->add_pressed_callback([page_index, refresh]() {
+        *page_index = (*page_index + 6) % 7;
+        refresh();
+    });
+    next->add_pressed_callback([page_index, refresh]() {
+        *page_index = (*page_index + 1) % 7;
+        refresh();
+    });
 }
 
 } // namespace
@@ -541,12 +571,10 @@ bool enabled() {
 }
 
 void register_config_tab() {
-    recompui::config::create_tab(
-        "Achievements",
-        "rr64_achievements",
-        [](recompui::ContextId context, recompui::Element* parent) {
-            create_achievements_tab(context, parent);
-        });
+    recompui::config::create_tab("Achievements", "rr64_achievements",
+                                 [](recompui::ContextId context, recompui::Element *parent) {
+                                     create_achievements_tab(context, parent);
+                                 });
 }
 
 void initialize_toast_ui() {
@@ -562,7 +590,8 @@ void initialize_toast_ui() {
     g_ui.toast_context.set_captures_input(false);
     g_ui.toast_context.set_captures_mouse(false);
 
-    auto* root = g_ui.toast_context.create_element<recompui::Element>(g_ui.toast_context.get_root_element());
+    auto *root =
+        g_ui.toast_context.create_element<recompui::Element>(g_ui.toast_context.get_root_element());
     root->set_display(recompui::Display::Flex);
     root->set_position(recompui::Position::Absolute);
     root->set_top(0);
@@ -574,7 +603,7 @@ void initialize_toast_ui() {
     root->set_padding_top(38.0f, recompui::Unit::Dp);
     root->set_padding_right(34.0f, recompui::Unit::Dp);
 
-    auto* toast = g_ui.toast_context.create_element<recompui::Element>(root);
+    auto *toast = g_ui.toast_context.create_element<recompui::Element>(root);
     g_ui.toast_container = toast;
     toast->set_display(recompui::Display::Flex);
     toast->set_flex_direction(recompui::FlexDirection::Column);
@@ -589,14 +618,14 @@ void initialize_toast_ui() {
     toast->set_scale_2D(0.92f, 0.92f);
     toast->set_rotation(-11.0f);
 
-    g_ui.toast_frame = g_ui.toast_context.create_element<recompui::Image>(
-        toast, kToastFrameResource);
+    g_ui.toast_frame =
+        g_ui.toast_context.create_element<recompui::Image>(toast, kToastFrameResource);
     g_ui.toast_frame->set_position(recompui::Position::Absolute);
     g_ui.toast_frame->set_inset(0.0f, recompui::Unit::Dp);
     g_ui.toast_frame->set_width(100.0f, recompui::Unit::Percent);
     g_ui.toast_frame->set_height(100.0f, recompui::Unit::Percent);
 
-    auto* toast_content = g_ui.toast_context.create_element<recompui::Element>(toast);
+    auto *toast_content = g_ui.toast_context.create_element<recompui::Element>(toast);
     toast_content->set_display(recompui::Display::Flex);
     toast_content->set_position(recompui::Position::Relative);
     toast_content->set_flex_direction(recompui::FlexDirection::Row);
@@ -609,8 +638,8 @@ void initialize_toast_ui() {
     toast_content->set_padding_bottom(35.0f, recompui::Unit::Dp);
     toast_content->set_gap(17.0f, recompui::Unit::Dp);
 
-    g_ui.toast_image = g_ui.toast_context.create_element<recompui::Image>(
-        toast_content, badge_resource_name(0));
+    g_ui.toast_image =
+        g_ui.toast_context.create_element<recompui::Image>(toast_content, badge_resource_name(0));
     g_ui.toast_image->set_width(100.0f, recompui::Unit::Dp);
     g_ui.toast_image->set_height(100.0f, recompui::Unit::Dp);
     g_ui.toast_image->set_flex_shrink(0.0f);
@@ -622,7 +651,7 @@ void initialize_toast_ui() {
     g_ui.toast_image->set_border_bottom_color(recompui::Color{148, 39, 21, 255});
     g_ui.toast_image->set_border_radius(1.0f, recompui::Unit::Dp);
 
-    auto* toast_copy = g_ui.toast_context.create_element<recompui::Element>(toast_content);
+    auto *toast_copy = g_ui.toast_context.create_element<recompui::Element>(toast_content);
     toast_copy->set_display(recompui::Display::Flex);
     toast_copy->set_flex_direction(recompui::FlexDirection::Column);
     toast_copy->set_flex_grow(1.0f);
@@ -630,7 +659,7 @@ void initialize_toast_ui() {
     toast_copy->set_align_items(recompui::AlignItems::FlexStart);
     toast_copy->set_gap(3.0f, recompui::Unit::Dp);
 
-    auto* kicker = g_ui.toast_context.create_element<recompui::Label>(
+    auto *kicker = g_ui.toast_context.create_element<recompui::Label>(
         toast_copy, "ROAD RASH 64  //  ACHIEVEMENT WRECKED", recompui::LabelStyle::Small);
     kicker->set_color(recompui::Color{255, 173, 28, 255});
     kicker->set_font_weight(800);
@@ -817,24 +846,19 @@ void handle_campaign_completed() {
 
 } // namespace rr64::achievements
 
-extern "C" void rr64_achievement_observe_frame(unsigned char*) {
+extern "C" void rr64_achievement_observe_frame(unsigned char *) {
     rr64::achievements::observe_frame(rr64_is_race_mode_active() != 0);
 }
 
-extern "C" void rr64_achievement_game_event(
-    unsigned char*,
-    unsigned int event_id,
-    unsigned int,
-    unsigned int) {
+extern "C" void rr64_achievement_game_event(unsigned char *, unsigned int event_id, unsigned int,
+                                            unsigned int) {
     rr64::achievements::handle_game_event(event_id);
 }
 
-extern "C" void rr64_achievement_campaign_level_advanced(
-    unsigned char*,
-    unsigned int new_level) {
+extern "C" void rr64_achievement_campaign_level_advanced(unsigned char *, unsigned int new_level) {
     rr64::achievements::handle_campaign_level_advanced(new_level);
 }
 
-extern "C" void rr64_achievement_campaign_completed(unsigned char*) {
+extern "C" void rr64_achievement_campaign_completed(unsigned char *) {
     rr64::achievements::handle_campaign_completed();
 }

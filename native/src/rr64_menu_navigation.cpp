@@ -20,19 +20,15 @@ struct Direction {
     std::int8_t x = 0;
     std::int8_t y = 0;
 
-    bool operator==(const Direction&) const = default;
+    bool operator==(const Direction &) const = default;
 };
 
 std::int8_t sign_of(float value) {
     return value < 0.0f ? -1 : 1;
 }
 
-Direction requested_direction(
-    const State& state,
-    std::uint16_t buttons,
-    float stick_x,
-    float stick_y)
-{
+Direction requested_direction(const State &state, std::uint16_t buttons, float stick_x,
+                              float stick_y) {
     const bool left = (buttons & kDpadLeft) != 0;
     const bool right = (buttons & kDpadRight) != 0;
     const bool up = (buttons & kDpadUp) != 0;
@@ -73,17 +69,12 @@ Direction requested_direction(
 
 } // namespace
 
-void reset(State& state) {
+void reset(State &state) {
     state = {};
 }
 
-void filter(
-    State& state,
-    std::uint16_t buttons,
-    float& stick_x,
-    float& stick_y,
-    std::uint64_t now_ms)
-{
+void filter(State &state, std::uint16_t buttons, float &stick_x, float &stick_y,
+            std::uint64_t now_ms) {
     if (state.has_last_update && now_ms - state.last_update_ms > kScreenReentryResetMs) {
         state.held_x = 0;
         state.held_y = 0;
@@ -110,8 +101,7 @@ void filter(
         state.held_x = direction.x;
         state.held_y = direction.y;
         state.next_repeat_ms = now_ms + kInitialRepeatDelayMs;
-    }
-    else if (now_ms >= state.next_repeat_ms) {
+    } else if (now_ms >= state.next_repeat_ms) {
         emit = true;
         state.next_repeat_ms = now_ms + kRepeatIntervalMs;
     }

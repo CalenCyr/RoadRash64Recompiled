@@ -18,6 +18,10 @@ bool check_visual_attachment() {
     auto fixture = std::make_unique<Fixture>();
     auto store = std::make_unique<SnapshotStore>();
     auto& f = *fixture;
+    // Exercise the weapon's supported camera-source bank rather than the
+    // generic fixture's source-zero transform path.
+    for(unsigned tier=0;tier<3;++tier)
+        write_u16(f.live.data(),f.rider_source+tier*0x100u+0x12u,2u);
     const auto original = f.live;
     f.register_allocations(*store);
     bool passed = true;
@@ -46,6 +50,17 @@ bool check_visual_attachment() {
                 const auto* pair = store->find(f.live.data(), f.bike_node, 0u, slot);
                 passed &= check(pair && store->find(f.live.data(), f.rider_node, 0u, slot) == pair,
                     "both finish-wait actors retain the same detailed snapshot in either renderer slot");
+                std::array<std::uint32_t,7> root{};
+                std::uint32_t source=0;
+                passed &= check(store->weapon_root(f.live.data(),f.rider_node,0u,slot,root,source),
+                    "weapon can borrow the certified rider root after model restoration");
+                if(pair) for(unsigned i=0;i<root.size();++i)
+                    passed &= check(root[i]==pair->actors[1].poses[0].words[i],"weapon receives authored root words");
+                const auto savedRoot=root;
+                const auto savedSource=source;
+                passed &= check(!store->weapon_root(f.live.data(),f.rider_node,1u,slot,root,source) &&
+                    !store->weapon_root(f.live.data(),f.bike_node,0u,slot,root,source) &&
+                    root==savedRoot && source==savedSource,"wrong view or bike cannot supply a weapon root");
             }
             passed &= check(f.live == visually_linked && f.shadow == prepared,
                 "finish-wait eligibility preserves both guest mappings");

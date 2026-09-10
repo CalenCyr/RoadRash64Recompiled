@@ -18,16 +18,31 @@ inline constexpr std::uint32_t kMaximumRacers = 14u;
 inline constexpr std::uint32_t kModeRecordCount = 0x3Au;
 inline constexpr std::uint32_t kModeRecordSize = 0x18u;
 
+// Stock multiplayer options and race construction, USA v1.0. The menu count
+// and the human/racer counts have different consumers and must stay separate.
+namespace local_race {
+inline constexpr std::uint32_t menu_humans = 0x8009EF5Cu;
+inline constexpr std::uint32_t menu_table = 0x8009ED94u;
+inline constexpr std::uint32_t menu_cursor = 0x8009E128u;
+inline constexpr std::uint32_t menu_buttons = 0x8009E238u;
+inline constexpr std::uint32_t menu_dirty = 0x8009ECA4u;
+inline constexpr std::uint32_t visibility = 0x8009EF60u;
+inline constexpr std::uint32_t ai_choice = 0x8009EAD4u;
+inline constexpr std::uint32_t pedestrian_choice = 0x8009EAE0u;
+inline constexpr std::uint32_t humans = 0x800A6578u;
+inline constexpr std::uint32_t racers = 0x800A6574u;
+}
+
 constexpr gpr guest_address(std::uint32_t address) {
     return static_cast<gpr>(static_cast<std::int64_t>(static_cast<std::int32_t>(address)));
 }
 
 constexpr bool valid_guest_range(std::uint32_t address, std::uint32_t size) {
     return address >= kRdramBegin && size <= kRdramSize &&
-        (address - kRdramBegin) <= (kRdramSize - size);
+           (address - kRdramBegin) <= (kRdramSize - size);
 }
 
-inline bool read_u32(unsigned char* rdram, std::uint32_t address, std::uint32_t& value) {
+inline bool read_u32(unsigned char *rdram, std::uint32_t address, std::uint32_t &value) {
     if (rdram == nullptr || !valid_guest_range(address, sizeof(value))) {
         return false;
     }
@@ -35,7 +50,7 @@ inline bool read_u32(unsigned char* rdram, std::uint32_t address, std::uint32_t&
     return true;
 }
 
-inline bool read_u16(unsigned char* rdram, std::uint32_t address, std::uint16_t& value) {
+inline bool read_u16(unsigned char *rdram, std::uint32_t address, std::uint16_t &value) {
     if (rdram == nullptr || !valid_guest_range(address, sizeof(value))) {
         return false;
     }
@@ -43,7 +58,7 @@ inline bool read_u16(unsigned char* rdram, std::uint32_t address, std::uint16_t&
     return true;
 }
 
-inline bool read_s8(unsigned char* rdram, std::uint32_t address, std::int8_t& value) {
+inline bool read_s8(unsigned char *rdram, std::uint32_t address, std::int8_t &value) {
     if (rdram == nullptr || !valid_guest_range(address, sizeof(value))) {
         return false;
     }
@@ -51,7 +66,7 @@ inline bool read_s8(unsigned char* rdram, std::uint32_t address, std::int8_t& va
     return true;
 }
 
-inline bool read_u8(unsigned char* rdram, std::uint32_t address, std::uint8_t& value) {
+inline bool read_u8(unsigned char *rdram, std::uint32_t address, std::uint8_t &value) {
     if (rdram == nullptr || !valid_guest_range(address, sizeof(value))) {
         return false;
     }
@@ -59,7 +74,7 @@ inline bool read_u8(unsigned char* rdram, std::uint32_t address, std::uint8_t& v
     return true;
 }
 
-inline bool write_u32(unsigned char* rdram, std::uint32_t address, std::uint32_t value) {
+inline bool write_u32(unsigned char *rdram, std::uint32_t address, std::uint32_t value) {
     if (rdram == nullptr || !valid_guest_range(address, sizeof(value))) {
         return false;
     }
@@ -67,7 +82,7 @@ inline bool write_u32(unsigned char* rdram, std::uint32_t address, std::uint32_t
     return true;
 }
 
-inline bool write_u16(unsigned char* rdram, std::uint32_t address, std::uint16_t value) {
+inline bool write_u16(unsigned char *rdram, std::uint32_t address, std::uint16_t value) {
     if (rdram == nullptr || !valid_guest_range(address, sizeof(value))) {
         return false;
     }
@@ -75,7 +90,7 @@ inline bool write_u16(unsigned char* rdram, std::uint32_t address, std::uint16_t
     return true;
 }
 
-inline bool write_s8(unsigned char* rdram, std::uint32_t address, std::int8_t value) {
+inline bool write_s8(unsigned char *rdram, std::uint32_t address, std::int8_t value) {
     if (rdram == nullptr || !valid_guest_range(address, sizeof(value))) {
         return false;
     }
@@ -83,7 +98,7 @@ inline bool write_s8(unsigned char* rdram, std::uint32_t address, std::int8_t va
     return true;
 }
 
-inline bool read_float(unsigned char* rdram, std::uint32_t address, float& value) {
+inline bool read_float(unsigned char *rdram, std::uint32_t address, float &value) {
     std::uint32_t bits = 0;
     if (!read_u32(rdram, address, bits)) {
         return false;
@@ -93,7 +108,7 @@ inline bool read_float(unsigned char* rdram, std::uint32_t address, float& value
     return true;
 }
 
-inline bool write_float(unsigned char* rdram, std::uint32_t address, float value) {
+inline bool write_float(unsigned char *rdram, std::uint32_t address, float value) {
     std::uint32_t bits = 0;
     static_assert(sizeof(value) == sizeof(bits));
     std::memcpy(&bits, &value, sizeof(bits));
@@ -157,10 +172,9 @@ inline constexpr std::uint32_t terrain_camera_position = 0x800DDE80u;
 inline constexpr std::uint32_t terrain_request_epoch = 0x800A1830u;
 
 inline constexpr std::array<std::uint32_t, 17> multiplayer_game_setup_words = {
-    0x8009EAC0u, 0x8009EAC4u, 0x8009EAC8u, 0x8009EACCu, 0x8009EAD0u,
-    0x8009EAD4u, 0x8009EAD8u, 0x8009EADCu, 0x8009EAE0u, 0x8009EAE4u,
-    0x8009EAE8u, 0x8009EF5Cu, 0x800A6574u, 0x800A6578u, 0x800A65F8u,
-    0x800A6680u, 0x800A6690u,
+    0x8009EAC0u, 0x8009EAC4u, 0x8009EAC8u, 0x8009EACCu, 0x8009EAD0u, 0x8009EAD4u,
+    0x8009EAD8u, 0x8009EADCu, 0x8009EAE0u, 0x8009EAE4u, 0x8009EAE8u, 0x8009EF5Cu,
+    0x800A6574u, 0x800A6578u, 0x800A65F8u, 0x800A6680u, 0x800A6690u,
 };
 } // namespace globals
 
@@ -277,7 +291,7 @@ inline constexpr std::uint32_t pose_owner_rider_node = 0x008u;
 } // namespace actor_scene
 
 // func_80047668 creates traffic presentation nodes in the fourth scene list.
-// The renderer's stock visibility test uses a single point at entity +0x18,
+// The renderer's stock visibility test uses a single point at entity +0xA8,
 // which can cull a large car while part of it is still visible at a wide-screen
 // edge. Keep these offsets separate from the bike/rider contract: traffic uses
 // a smaller 0x35C-byte entity and has its own active lifecycle flag.
@@ -286,22 +300,18 @@ inline constexpr std::uint32_t maximum_entities = 20u;
 inline constexpr std::uint32_t node_type = 4u;
 inline constexpr std::uint32_t entity_minimum_size = 0x338u;
 inline constexpr std::uint32_t entity_type = 0x000u;
-inline constexpr std::uint32_t entity_position = 0x018u;
+inline constexpr std::uint32_t entity_position = 0x0A8u;
 inline constexpr std::uint32_t entity_active = 0x334u;
 inline constexpr std::uint32_t first_entity_type = 1u;
 inline constexpr std::uint32_t last_entity_type = 5u;
 inline constexpr float maximum_presentation_radius = 3400.0f;
 } // namespace traffic_scene
 
-constexpr bool should_keep_active_traffic_visible(
-    bool maximum_view_distance,
-    bool live_race,
-    bool traffic_list_member,
-    bool active,
-    bool within_presentation_radius)
-{
+constexpr bool should_keep_active_traffic_visible(bool maximum_view_distance, bool live_race,
+                                                  bool traffic_list_member, bool active,
+                                                  bool within_presentation_radius) {
     return maximum_view_distance && live_race && traffic_list_member && active &&
-        within_presentation_radius;
+           within_presentation_radius;
 }
 
 constexpr bool is_valid_mode(std::uint32_t mode) {
@@ -347,10 +357,7 @@ constexpr bool is_race_results_mode(std::uint32_t mode) {
     }
 }
 
-constexpr bool is_race_shortcut_scene_transition(
-    std::uint32_t mode,
-    std::uint32_t pending_mode)
-{
+constexpr bool is_race_shortcut_scene_transition(std::uint32_t mode, std::uint32_t pending_mode) {
     if (is_live_race_transition(mode, pending_mode)) {
         return true;
     }
@@ -358,10 +365,9 @@ constexpr bool is_race_shortcut_scene_transition(
     // During the handoff to or from standings, accept only a result/result or
     // result/live pair. This prevents the shortcuts from leaking into the menu
     // selected by A Continue.
-    return
-        (is_race_results_mode(mode) &&
+    return (is_race_results_mode(mode) &&
             (is_race_results_mode(pending_mode) || is_live_race_mode(pending_mode))) ||
-        (is_race_results_mode(pending_mode) &&
+           (is_race_results_mode(pending_mode) &&
             (is_race_results_mode(mode) || is_live_race_mode(mode)));
 }
 
@@ -369,34 +375,25 @@ constexpr bool is_race_shortcut_scene_transition(
 // halfword becomes nonzero while simulation and audio are suspended, so host
 // feedback must include it rather than treating every rendered race frame as
 // active gameplay.
-constexpr bool is_gameplay_feedback_active(
-    std::uint32_t mode,
-    std::uint32_t pending_mode,
-    std::uint32_t pause_state)
-{
+constexpr bool is_gameplay_feedback_active(std::uint32_t mode, std::uint32_t pending_mode,
+                                           std::uint32_t pause_state) {
     return is_live_race_transition(mode, pending_mode) && pause_state == 0u;
 }
 
-constexpr bool are_gameplay_shortcuts_active(
-    std::uint32_t mode,
-    std::uint32_t pending_mode,
-    std::uint16_t pause_menu_state)
-{
+constexpr bool are_gameplay_shortcuts_active(std::uint32_t mode, std::uint32_t pending_mode,
+                                             std::uint16_t pause_menu_state) {
     // L3/R3 remain available both during the finish wait and on the final
     // standings screen, but never over the real pause menu or a normal menu.
-    return is_race_shortcut_scene_transition(mode, pending_mode) &&
-        pause_menu_state == 0u;
+    return is_race_shortcut_scene_transition(mode, pending_mode) && pause_menu_state == 0u;
 }
 
 constexpr bool bike_accepts_drive_control(std::uint16_t drive_control_lockout) {
     return drive_control_lockout == 0u;
 }
 
-constexpr bool rider_can_manual_eject(
-    std::uint16_t bike_rider_attached,
-    std::uint16_t /* rider_bike_attached */,
-    std::uint16_t rider_ejected)
-{
+constexpr bool rider_can_manual_eject(std::uint16_t bike_rider_attached,
+                                      std::uint16_t /* rider_bike_attached */,
+                                      std::uint16_t rider_ejected) {
     // Deliberately do not inspect drive_control_lockout here. The finish-line
     // wait disables driving while the rider is still mounted, and L3 should
     // remain available during that wait. The finish transition also clears
@@ -404,8 +401,7 @@ constexpr bool rider_can_manual_eject(
     // that reciprocal flag cannot be required here. func_8003F0E8 itself uses
     // the bike-side link to reach the rider, while rider_ejected prevents a
     // duplicate transition during crash/recovery.
-    return bike_rider_attached != 0u &&
-        rider_ejected == 0u;
+    return bike_rider_attached != 0u && rider_ejected == 0u;
 }
 
 constexpr bool horizontal_motion_allows_road_rumble(float delta_x, float delta_z) {
@@ -415,16 +411,13 @@ constexpr bool horizontal_motion_allows_road_rumble(float delta_x, float delta_z
     return (delta_x * delta_x) + (delta_z * delta_z) >= minimum_displacement_squared;
 }
 
-constexpr bool drive_rumble_allowed(
-    std::uint16_t drive_control_lockout,
-    bool moving,
-    bool has_moved_since_race_start)
-{
+constexpr bool drive_rumble_allowed(std::uint16_t drive_control_lockout, bool moving,
+                                    bool has_moved_since_race_start) {
     // Before the starting signal the stationary bike may be revved. Once the
     // bike has moved, require real motion so throttle cannot vibrate through
     // result waits, crashes, knockdowns, or recovery.
     return bike_accepts_drive_control(drive_control_lockout) &&
-        (moving || !has_moved_since_race_start);
+           (moving || !has_moved_since_race_start);
 }
 
 constexpr bool rider_has_fists_selected(std::uint32_t selected_weapon) {
@@ -433,10 +426,10 @@ constexpr bool rider_has_fists_selected(std::uint32_t selected_weapon) {
 
 static_assert(valid_guest_range(globals::main_mode, sizeof(std::uint32_t)));
 static_assert(valid_guest_range(globals::pending_mode, sizeof(std::uint32_t)));
-static_assert(valid_guest_range(globals::mode_records, kModeRecordCount * kModeRecordSize));
+static_assert(valid_guest_range(globals::mode_records, kModeRecordCount *kModeRecordSize));
 static_assert(valid_guest_range(
     globals::multiplayer_display_names,
-    globals::multiplayer_display_name_count * globals::multiplayer_display_name_stride));
+    globals::multiplayer_display_name_count *globals::multiplayer_display_name_stride));
 static_assert(valid_guest_range(globals::gameplay_pause_state, sizeof(std::uint16_t)));
 static_assert(valid_guest_range(globals::pause_menu_state, sizeof(std::uint16_t)));
 static_assert(valid_guest_range(globals::terrain_current_record, sizeof(std::uint32_t)));

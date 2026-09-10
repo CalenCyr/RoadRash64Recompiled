@@ -10,6 +10,7 @@
 
 #include "render/rt64_render_target.h"
 #include "rt64_rr64_frame_metadata.h"
+#include "rt64_rr64_frame_pacing.h"
 
 namespace RT64::RR64FramePacing {
     struct OwnedFrameBatch {
@@ -244,12 +245,10 @@ namespace RT64::RR64FramePacing {
                 return false;
             }
             // A native image is valid at equal/lower display rates and during
-            // timing warm-up. Multiple images require a proved integral rate.
+            // timing warm-up. Rational targets allow the accumulator floor/ceil count.
             if ((batch->images.size() > 1) &&
-                ((batch->metadata.sourceRate == 0) ||
-                    (batch->metadata.targetRate <= batch->metadata.sourceRate) ||
-                    ((batch->metadata.targetRate % batch->metadata.sourceRate) != 0) ||
-                    (batch->images.size() != batch->metadata.targetRate / batch->metadata.sourceRate))) {
+                !validGeneratedFrameCount(batch->metadata.targetRate, batch->metadata.sourceRate,
+                    uint32_t(batch->images.size()))) {
                 return false;
             }
 

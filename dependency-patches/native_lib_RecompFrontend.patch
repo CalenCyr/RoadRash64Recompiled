@@ -55,17 +55,22 @@ index 1961e29..7796c1d 100644
      SDL_GameController *get_controller_from_joystick_id(SDL_JoystickID joystick_id);
      void add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller);
 diff --git a/recompinput/include/recompinput/input_types.h b/recompinput/include/recompinput/input_types.h
-index f5ed6c0..4787bfb 100644
+index f5ed6c0..19cb3ba 100644
 --- a/recompinput/include/recompinput/input_types.h
 +++ b/recompinput/include/recompinput/input_types.h
-@@ -40,7 +40,9 @@ namespace recompinput {
+@@ -37,10 +37,14 @@ namespace recompinput {
+         DEFINE_INPUT(TAB_LEFT_MENU, 0, "Tab Left (Menu)") \
+         DEFINE_INPUT(TAB_RIGHT_MENU, 0, "Tab Right (Menu)")
+ 
++    // Append new actions to preserve established numeric IDs; saves use enum names.
      #define DEFINE_ALL_INPUTS() \
          DEFINE_N64_AXIS_INPUTS() \
          DEFINE_N64_BUTTON_INPUTS() \
 -        DEFINE_RECOMP_UI_INPUTS()
 +        DEFINE_RECOMP_UI_INPUTS() \
 +        DEFINE_INPUT(RR64_EJECT, 0, "Eject from Bike") \
-+        DEFINE_INPUT(RR64_SPOKE_JAM, 0, "Spoke Jam Attack")
++        DEFINE_INPUT(RR64_SPOKE_JAM, 0, "Spoke Jam Attack") \
++        DEFINE_INPUT(RR64_WEAPON_TRICK, 0, "Weapon Trick")
  
      #define DEFINE_INPUT(name, value, readable) name,
      // - Enum containing every recomp input.
@@ -93,17 +98,75 @@ index 45bedd1..7fefa74 100644
          bool get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out);
  
          bool load_controls_config(const std::filesystem::path& path);
+diff --git a/recompinput/include/recompinput/recompinput.h b/recompinput/include/recompinput/recompinput.h
+index 855ec2e..9a70053 100644
+--- a/recompinput/include/recompinput/recompinput.h
++++ b/recompinput/include/recompinput/recompinput.h
+@@ -2,6 +2,7 @@
+ 
+ #include "SDL.h"
+ #include "chrono"
++#include "string"
+ 
+ namespace recompinput {
+     constexpr size_t max_num_players_supported = 128;
 diff --git a/recompinput/src/input_events.cpp b/recompinput/src/input_events.cpp
-index c76a1dc..2bfd7fc 100644
+index c76a1dc..9faa929 100644
 --- a/recompinput/src/input_events.cpp
 +++ b/recompinput/src/input_events.cpp
-@@ -1,3 +1,5 @@
+@@ -1,3 +1,8 @@
 +#include <cstdio>
++#include <chrono>
++#include <cstdlib>
++#include <cstring>
 +
  #include "recompinput/recompinput.h"
  #include "recompinput/input_binding.h"
  #include "recompinput/input_events.h"
-@@ -43,6 +45,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -11,6 +16,42 @@ static struct {
+ 
+ namespace recompinput {
+ 
++namespace {
++bool hotplug_diagnostics() {
++    static const bool enabled = [] {
++        const char* value = std::getenv("RR64_DIAGNOSTICS");
++        return value && std::strcmp(value, "1") == 0;
++    }();
++    return enabled;
++}
++// Only device changes are recorded. No file flush or per-input-event trace.
++struct HotplugTiming {
++    const char* phase;
++    bool enabled = hotplug_diagnostics();
++    std::chrono::steady_clock::time_point begin = enabled ?
++        std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
++    ~HotplugTiming() {
++        if (enabled) std::fprintf(stderr, "[RR64-HOTPLUG] phase=%s duration-ms=%.3f tick-ms=%llu\n", phase,
++            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-begin).count(),
++            static_cast<unsigned long long>(SDL_GetTicks64()));
++    }
++};
++int poll_event_with_timing(SDL_Event* event) {
++    if (!hotplug_diagnostics()) return SDL_PollEvent(event);
++    const auto begin = std::chrono::steady_clock::now();
++    const int result = SDL_PollEvent(event);
++    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-begin).count();
++    static unsigned reports = 0;
++    // SDL/OS device discovery may block before an ADDED event reaches us.
++    if (ms >= 20.0 && reports < 32) {
++        ++reports;
++        std::fprintf(stderr, "[RR64-HOTPLUG] phase=event-pump duration-ms=%.3f event=%u tick-ms=%llu\n",
++            ms, result ? unsigned(event->type) : 0u, static_cast<unsigned long long>(SDL_GetTicks64()));
++    }
++    return result;
++}
++}
++
+ void queue_if_enabled(SDL_Event* event) {
+     if (!recompinput::all_input_disabled() && !binding::should_skip_events()) {
+         recompui::queue_event(*event);
+@@ -43,6 +84,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
      case SDL_EventType::SDL_KEYDOWN:
      {
          SDL_KeyboardEvent* keyevent = &event->key;
@@ -111,17 +174,28 @@ index c76a1dc..2bfd7fc 100644
  
          // Skip repeated events when not in the menu
          if (!recompui::is_context_capturing_input() &&
-@@ -74,10 +77,18 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -72,38 +114,73 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+     break;
+     case SDL_EventType::SDL_CONTROLLERDEVICEADDED:
      {
++        HotplugTiming total{"add-total"};
          SDL_ControllerDeviceEvent* controller_event = &event->cdevice;
-         SDL_GameController* controller = SDL_GameControllerOpen(controller_event->which);
+-        SDL_GameController* controller = SDL_GameControllerOpen(controller_event->which);
 -        printf("Controller added: %d\n", controller_event->which);
-+        std::fprintf(stderr, "[RR64-CONTROLLER] Added device index %d.\n", controller_event->which);
++        SDL_GameController* controller = nullptr;
++        {
++            HotplugTiming open{"open-device"};
++            controller = SDL_GameControllerOpen(controller_event->which);
++        }
++        // Rapid unplug/replug can invalidate the pending device index. Never
++        // create a profile for a failed open (the empty GUID is not a device).
++        if (!controller) break;
++        if (hotplug_diagnostics()) std::fprintf(stderr, "[RR64-CONTROLLER] Added device index %d.\n", controller_event->which);
          if (controller != nullptr) {
 -            printf("  Instance ID: %d\n", SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)));
 -            printf("  Path: %s\n", SDL_JoystickPath(SDL_GameControllerGetJoystick(controller)));
 +            SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
-+            std::fprintf(
++            if (hotplug_diagnostics()) std::fprintf(
 +                stderr,
 +                "[RR64-CONTROLLER] name=%s instance=%d player=%d rumble=%d path=%s\n",
 +                SDL_GameControllerName(controller),
@@ -129,12 +203,16 @@ index c76a1dc..2bfd7fc 100644
 +                SDL_GameControllerGetPlayerIndex(controller),
 +                static_cast<int>(SDL_JoystickHasRumble(joystick)),
 +                SDL_JoystickPath(joystick));
-+            std::fflush(stderr);
              recompinput::add_controller_state(SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)), controller);
  
++            HotplugTiming sensors{"enable-sensors"};
              if (SDL_GameControllerHasSensor(controller, SDL_SensorType::SDL_SENSOR_GYRO) && SDL_GameControllerHasSensor(controller, SDL_SensorType::SDL_SENSOR_ACCEL)) {
-@@ -88,22 +99,40 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+                 SDL_GameControllerSetSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_GYRO, SDL_TRUE);
+                 SDL_GameControllerSetSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_ACCEL, SDL_TRUE);
+             }
+         }
          
++        HotplugTiming profile{"register-profile"};
          ControllerGUID guid = profiles::get_guid_from_sdl_controller(controller);
          if (profiles::get_controller_by_guid(guid) < 0) {
 -            if (players::is_single_player_mode()) {
@@ -152,13 +230,13 @@ index c76a1dc..2bfd7fc 100644
      break;
      case SDL_EventType::SDL_CONTROLLERDEVICEREMOVED:
      {
++        HotplugTiming total{"remove-state"};
          SDL_ControllerDeviceEvent* controller_event = &event->cdevice;
 -        printf("Controller removed: %d\n", controller_event->which);
-+        std::fprintf(
++        if (hotplug_diagnostics()) std::fprintf(
 +            stderr,
 +            "[RR64-CONTROLLER] Removed instance %d.\n",
 +            controller_event->which);
-+        std::fflush(stderr);
          recompinput::remove_controller_state(controller_event->which);
      }
      break;
@@ -181,7 +259,7 @@ index c76a1dc..2bfd7fc 100644
      case SDL_EventType::SDL_QUIT: {
          if (!ultramodern::is_game_started()) {
              ultramodern::quit();
-@@ -122,6 +151,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -122,6 +199,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
      queue_if_enabled(event);
      break;
      case SDL_EventType::SDL_CONTROLLERBUTTONDOWN:
@@ -189,7 +267,7 @@ index c76a1dc..2bfd7fc 100644
          if (binding::is_binding() && binding::is_controller_being_bound(event->cbutton.which)) {
              // TODO: Needs the controller profile index.
              auto menuToggleBinding0 = profiles::get_input_binding(0, GameInput::TOGGLE_MENU, 0);
-@@ -152,6 +182,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -152,6 +230,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
          }
          break;
      case SDL_EventType::SDL_CONTROLLERAXISMOTION:
@@ -199,7 +277,16 @@ index c76a1dc..2bfd7fc 100644
          if (binding::is_controller_being_bound(event->caxis.which)) {
              GameInput scanning_game_input = binding::get_scanning_game_input();
              if (scanning_game_input == GameInput::TOGGLE_MENU ||
-@@ -270,6 +303,10 @@ void handle_events() {
+@@ -250,7 +331,7 @@ void handle_events() {
+     SDL_Event cur_event;
+     static bool started = false;
+     static bool exited = false;
+-    while (SDL_PollEvent(&cur_event) && !exited) {
++    while (poll_event_with_timing(&cur_event) && !exited) {
+         exited = sdl_event_filter(nullptr, &cur_event);
+ 
+         bool has_mouse_sensitivity = recompui::config::general::has_mouse_sensitivity_option();
+@@ -270,6 +351,10 @@ void handle_events() {
  
      binding::stop_skipping_events();
  
@@ -211,20 +298,30 @@ index c76a1dc..2bfd7fc 100644
          started = true;
          recompui::process_game_started();
 diff --git a/recompinput/src/input_mapping.cpp b/recompinput/src/input_mapping.cpp
-index bfcfef4..22d9dd9 100644
+index bfcfef4..e77566e 100644
 --- a/recompinput/src/input_mapping.cpp
 +++ b/recompinput/src/input_mapping.cpp
-@@ -35,6 +35,8 @@ namespace recompinput {
+@@ -35,6 +35,9 @@ namespace recompinput {
      };
  
      default_game_input_device_mapping default_n64_mappings_controller = {
++        { GameInput::RR64_WEAPON_TRICK, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) } },
 +        { GameInput::RR64_EJECT, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSTICK) } },
 +        { GameInput::RR64_SPOKE_JAM, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK) } },
          { GameInput::A,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_SOUTH) } },
          { GameInput::B,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_WEST) } },
          { GameInput::L,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) } },
+@@ -44,7 +47,7 @@ namespace recompinput {
+         { GameInput::C_LEFT,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_NORTH) } },
+         { GameInput::C_RIGHT,        { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, true),  InputField::controller_digital(SDL_CONTROLLER_BUTTON_EAST) } },
+         { GameInput::C_UP,           { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK) } },
+-        { GameInput::C_DOWN,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, true),  InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) } },
++        { GameInput::C_DOWN,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, true) } },
+         { GameInput::DPAD_LEFT,      { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_LEFT) } },
+         { GameInput::DPAD_RIGHT,     { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) } },
+         { GameInput::DPAD_UP,        { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_UP) } },
 diff --git a/recompinput/src/input_state.cpp b/recompinput/src/input_state.cpp
-index 03ed871..6098b91 100644
+index 03ed871..d8badb0 100644
 --- a/recompinput/src/input_state.cpp
 +++ b/recompinput/src/input_state.cpp
 @@ -1,7 +1,8 @@
@@ -560,7 +657,7 @@ index 03ed871..6098b91 100644
  ControllerState &recompinput::get_controller_state(SDL_JoystickID joystick_id) {
      std::lock_guard lock{ InputState.controllers_mutex };
      return InputState.controller_states[joystick_id];
-@@ -392,11 +616,35 @@ void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameContr
+@@ -392,11 +616,38 @@ void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameContr
      std::lock_guard lock{ InputState.controllers_mutex };
      ControllerState& state = InputState.controller_states[SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))];
      state.controller = controller;
@@ -584,7 +681,10 @@ index 03ed871..6098b91 100644
 +    if (state_it != InputState.controller_states.end()) {
 +        SDL_GameController* controller = state_it->second.controller;
 +        if (controller != nullptr) {
-+            SDL_JoystickRumble(SDL_GameControllerGetJoystick(controller), 0, 0, 0);
++            // SDL has already reported this device disconnected. Do not issue
++            // driver I/O to a vanished device while holding the input lock.
++            // Existing rumble commands self-expire; live pause/focus stops keep
++            // their separate explicit stop path.
 +            std::erase(InputState.detected_controllers, controller);
 +        }
 +        InputState.controller_states.erase(state_it);
@@ -598,13 +698,23 @@ index 03ed871..6098b91 100644
  
  void recompinput::add_rotation_deltas(SDL_JoystickID joystick_id, float rot_x, float rot_y) {
 diff --git a/recompinput/src/input_types.cpp b/recompinput/src/input_types.cpp
-index c6786e6..0eb5bb8 100644
+index c6786e6..241103f 100644
 --- a/recompinput/src/input_types.cpp
 +++ b/recompinput/src/input_types.cpp
-@@ -17,6 +17,8 @@ constexpr std::array<std::string, num_game_inputs> get_default_game_input_descri
+@@ -12,11 +12,17 @@ static std::array<std::string, num_game_inputs> game_input_names = {
+ };
+ #undef DEFINE_INPUT
+ 
+-constexpr std::array<std::string, num_game_inputs> get_default_game_input_descriptions() {
++#ifdef _WIN32
++constexpr
++#endif
++std::array<std::string, num_game_inputs> get_default_game_input_descriptions() {
+ #define DEFINE_INPUT(name, value, readable) "",
      std::array<std::string, num_game_inputs> descriptions = {
          DEFINE_ALL_INPUTS()
      };
++    descriptions[static_cast<size_t>(GameInput::RR64_WEAPON_TRICK)] = "Perform the original weapon flourish. Default: right bumper. Menu tab switching is unchanged.";
 +    descriptions[static_cast<size_t>(GameInput::RR64_EJECT)] = "Eject your rider from the bike during gameplay. Default: left-stick click. Uses the existing local-rider shortcut.";
 +    descriptions[static_cast<size_t>(GameInput::RR64_SPOKE_JAM)] = "Hold to attempt a spoke jam with a weapon. With fists selected, press to punch or steal a weapon. Default: right-stick click. Opponent range and timing rules still apply.";
      descriptions[static_cast<size_t>(GameInput::TOGGLE_MENU)] = "Open or close this configuration menu from in game.";
@@ -938,15 +1048,16 @@ index eb8833e..5204422 100644
          Element *get_menu_container() { return menu_container; }
      };
 diff --git a/recompui/src/base/ui_state.cpp b/recompui/src/base/ui_state.cpp
-index 277a421..649c534 100644
+index 277a421..2c3f923 100644
 --- a/recompui/src/base/ui_state.cpp
 +++ b/recompui/src/base/ui_state.cpp
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
++#include "recompui/startup_diagnostics.h"
 +#include "rr64_popup_input.hpp"
  #ifdef _WIN32
  #define WIN32_LEAN_AND_MEAN
  #include <SDL_video.h>
-@@ -5,6 +6,8 @@
+@@ -5,6 +7,8 @@
  #include <SDL2/SDL_video.h>
  #endif
  #include <chrono>
@@ -955,7 +1066,7 @@ index 277a421..649c534 100644
  
  #include "rt64_render_hooks.h"
  
-@@ -34,6 +37,11 @@
+@@ -34,6 +38,11 @@
  #include "util/file.h"
  
  static std::atomic_bool cursor_enabled = true;
@@ -967,7 +1078,7 @@ index 277a421..649c534 100644
  
  void recompui::open_quit_game_prompt() {
      recompui::open_choice_prompt(
-@@ -241,7 +249,7 @@ public:
+@@ -241,7 +250,7 @@ public:
  
          int width, height;
          SDL_GetWindowSizeInPixels(window, &width, &height);
@@ -976,7 +1087,37 @@ index 277a421..649c534 100644
          context = Rml::CreateContext("main", Rml::Vector2i(width, height));
  
          Rml::Debugger::Initialise(context);
-@@ -419,6 +427,12 @@ public:
+@@ -255,6 +264,7 @@ public:
+                 {"promptfont/promptfont.ttf", false},
+             };
+ 
++            recompui::startup_checkpoint("fonts-begin");
+             for (const FontFace& face : font_faces) {
+                 auto font = recompui::file::get_asset_path(face.filename);
+                 Rml::LoadFontFace(font.string(), face.fallback_face);
+@@ -267,6 +277,7 @@ public:
+             auto primary_font_path = recompui::file::get_asset_path(primary_font.c_str());
+             Rml::LoadFontFace(primary_font_path.string(), false);
+ 
++            recompui::startup_checkpoint("primary-fonts-end");
+             for (const auto& extra_font : extra_fonts) {
+                 auto extra_font_path = recompui::file::get_asset_path(extra_font.c_str());
+                 Rml::LoadFontFace(extra_font_path.string(), false);
+@@ -275,11 +286,13 @@ public:
+     }
+ 
+     void create_menus() {
++        recompui::startup_checkpoint("menus-begin");
+         recompui::init_styling(recompui::file::get_asset_path("recomp.rcss"));
+         recompui::init_launcher_menu();
+         recompui::init_prompt_context();
+         recompui::AssignPlayersModal::init();
+         recompui::config::init_modal();
++        recompui::startup_checkpoint("menus-end");
+     }
+ 
+     void unload() {
+@@ -419,6 +432,12 @@ public:
      }
  
      void hide_context(recompui::ContextId context) {
@@ -989,7 +1130,7 @@ index 277a421..649c534 100644
          auto remove_it = std::remove_if(shown_contexts.begin(), shown_contexts.end(), [context](auto& c) { return c.context == context; });
          if (remove_it == shown_contexts.end()) {
              recompui::message_box("Attemped to hide a context that isn't shown");
-@@ -431,6 +445,9 @@ public:
+@@ -431,6 +450,9 @@ public:
      
      void hide_all_contexts() {
          for (auto& context : shown_contexts) {
@@ -999,7 +1140,7 @@ index 277a421..649c534 100644
              context.document->Hide();
          }
  
-@@ -513,8 +530,18 @@ void init_hook(plume::RenderInterface* interface, plume::RenderDevice* device) {
+@@ -513,8 +535,18 @@ void init_hook(plume::RenderInterface* interface, plume::RenderDevice* device) {
  #if defined(__linux__)
      std::locale::global(std::locale::classic());
  #endif
@@ -1020,7 +1161,7 @@ index 277a421..649c534 100644
  }
  
  moodycamel::ConcurrentQueue<SDL_Event> ui_event_queue{};
-@@ -571,17 +598,23 @@ Rml::Input::KeyIdentifier convert_sdl_to_rml(int sdl_key) {
+@@ -571,17 +603,23 @@ Rml::Input::KeyIdentifier convert_sdl_to_rml(int sdl_key) {
  }
  
  bool check_menu_button_pressed(int profile_index, recompinput::GameInput input, int32_t event_button) {
@@ -1047,7 +1188,7 @@ index 277a421..649c534 100644
  
      for (const auto& mapping_pair : recompui::menu_action_mapping::rml_key_to_action) {
          const auto& mapping = mapping_pair.second;
-@@ -859,6 +892,12 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+@@ -859,6 +897,12 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
      ui_state->update_primary_input(mouse_moved, non_mouse_interacted);
      ui_state->update_focus(mouse_moved, non_mouse_interacted);
  
@@ -1362,10 +1503,12 @@ index 52282a7..b1c7b2c 100644
          void add_text_changed_callback(std::function<void(const std::string &)> callback);
          void set_focus_callback(std::function<void(bool)> callback);
 diff --git a/recompui/src/renderer/rt64_render_context.cpp b/recompui/src/renderer/rt64_render_context.cpp
-index a7954c7..7d5d049 100644
+index a7954c7..c3b4b81 100644
 --- a/recompui/src/renderer/rt64_render_context.cpp
 +++ b/recompui/src/renderer/rt64_render_context.cpp
-@@ -2,6 +2,8 @@
+@@ -1,7 +1,10 @@
++#include "recompui/startup_diagnostics.h"
+ #include <memory>
  #include <cstring>
  #include <variant>
  #include <algorithm>
@@ -1374,22 +1517,24 @@ index a7954c7..7d5d049 100644
  
  #include "hle/rt64_application.h"
  #include "rt64_render_hooks.h"
-@@ -78,9 +80,13 @@ RT64::UserConfiguration::AspectRatio to_rt64(ultramodern::renderer::AspectRatio
+@@ -78,9 +81,14 @@ RT64::UserConfiguration::AspectRatio to_rt64(ultramodern::renderer::AspectRatio
          case ultramodern::renderer::AspectRatio::Original:
              return RT64::UserConfiguration::AspectRatio::Original;
          case ultramodern::renderer::AspectRatio::Expand:
 -            return RT64::UserConfiguration::AspectRatio::Expand;
-+            return RT64::UserConfiguration::AspectRatio::Manual;
+-        case ultramodern::renderer::AspectRatio::Manual:
+             return RT64::UserConfiguration::AspectRatio::Manual;
 +        case ultramodern::renderer::AspectRatio::WideHighRes:
 +            return RT64::UserConfiguration::AspectRatio::Manual;
-         case ultramodern::renderer::AspectRatio::Manual:
-             return RT64::UserConfiguration::AspectRatio::Manual;
++        case ultramodern::renderer::AspectRatio::Manual:
++            // Ultrawide uses the real output aspect (e.g. 3440/1440).
++            return RT64::UserConfiguration::AspectRatio::Expand;
 +        case ultramodern::renderer::AspectRatio::Stretch:
 +            return RT64::UserConfiguration::AspectRatio::Stretch;
          case ultramodern::renderer::AspectRatio::OptionCount:
              return RT64::UserConfiguration::AspectRatio::OptionCount;
      }
-@@ -172,6 +178,15 @@ void set_application_user_config(RT64::Application* application, const ultramode
+@@ -172,6 +180,15 @@ void set_application_user_config(RT64::Application* application, const ultramode
      }
  
      application->userConfig.aspectRatio = to_rt64(config.ar_option);
@@ -1401,11 +1546,11 @@ index a7954c7..7d5d049 100644
 +        // and multiplayer layout on ultrawide displays.
 +        application->userConfig.aspectTarget = 16.0 / 9.0;
 +    }
-+    if(config.ar_option == ultramodern::renderer::AspectRatio::Manual) application->userConfig.aspectTarget = 21.0 / 9.0;
++
      application->userConfig.antialiasing = to_rt64(config.msaa_option);
      application->userConfig.refreshRate = to_rt64(config.rr_option);
      application->userConfig.refreshRateTarget = config.rr_manual_value;
-@@ -219,7 +234,12 @@ ultramodern::renderer::GraphicsApi map_graphics_api(RT64::UserConfiguration::Gra
+@@ -219,7 +236,12 @@ ultramodern::renderer::GraphicsApi map_graphics_api(RT64::UserConfiguration::Gra
  
  renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::WindowHandle window_handle, ultramodern::renderer::PresentationMode presentation_mode, bool debug) {
      static unsigned char dummy_rom_header[0x40];
@@ -1419,7 +1564,7 @@ index a7954c7..7d5d049 100644
  
      // Set up the RT64 application core fields.
      RT64::Application::Core appCore{};
-@@ -267,8 +287,11 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+@@ -267,8 +289,11 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
      appCore.VI_Y_SCALE_REG = &vi_regs->VI_Y_SCALE_REG;
  
      // Set up the RT64 application configuration fields.
@@ -1432,7 +1577,7 @@ index a7954c7..7d5d049 100644
  
      // Create the RT64 application.
      app = std::make_unique<RT64::Application>(appCore, appConfig);
-@@ -277,7 +300,6 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+@@ -277,7 +302,6 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
      auto& cur_config = ultramodern::renderer::get_graphics_config();
      set_application_user_config(app.get(), cur_config);
      app->userConfig.developerMode = debug;
@@ -1440,7 +1585,17 @@ index a7954c7..7d5d049 100644
      app->enhancementConfig.f3dex.forceBranch = true;
      // Scale LODs based on the output resolution.
      app->enhancementConfig.textureLOD.scale = true;
-@@ -313,8 +335,13 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+@@ -305,7 +329,9 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+ #ifdef _WIN32
+     thread_id = window_handle.thread_id;
+ #endif
++    recompui::startup_checkpoint("rt64-setup-begin");
+     setup_result = map_setup_result(app->setup(thread_id));
++    recompui::startup_checkpoint("rt64-setup-end");
+     // Get the API that RT64 chose.
+     chosen_api = map_graphics_api(app->chosenGraphicsAPI);
+     if (setup_result != ultramodern::renderer::SetupResult::Success) {
+@@ -313,8 +339,13 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
          return;
      }
  
@@ -1456,7 +1611,7 @@ index a7954c7..7d5d049 100644
  
      // Check if the selected device actually supports MSAA sample positions and MSAA for for the formats that will be used
      // and downgrade the configuration accordingly.
-@@ -371,8 +398,19 @@ bool renderer::RT64Context::update_config(const ultramodern::renderer::GraphicsC
+@@ -371,8 +402,19 @@ bool renderer::RT64Context::update_config(const ultramodern::renderer::GraphicsC
          return false;
      }
  

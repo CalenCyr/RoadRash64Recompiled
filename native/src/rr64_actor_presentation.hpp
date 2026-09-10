@@ -38,32 +38,24 @@ struct ActorPresentationDecision {
 // resources required by the render-only presentation transaction. The caller
 // may temporarily expose those resources to the game's complete actor
 // preparation/render path, but must restore the stock node state afterwards.
-bool choose_actor_presentation_lod(
-    unsigned char* rdram,
-    std::uint32_t node,
-    std::uint16_t stock_lod,
-    bool high_detail_enabled,
-    ActorPresentationDecision& decision,
-    bool validated_actor_pair = false) noexcept;
+bool choose_actor_presentation_lod(unsigned char *rdram, std::uint32_t node,
+                                   std::uint16_t stock_lod, bool high_detail_enabled,
+                                   ActorPresentationDecision &decision,
+                                   bool validated_actor_pair = false) noexcept;
 
 // The stock actor-preparation loop supplies a bike node and the rider node
 // reached through that bike's model-state/pose-owner chain. This relationship
 // covers both the local player and AI racers; active_racer_count only describes
 // locally controlled racers in single-player and must not be used to exclude AI.
-bool valid_actor_presentation_pair(
-    unsigned char* rdram,
-    std::uint32_t bike_node,
-    std::uint32_t rider_node) noexcept;
+bool valid_actor_presentation_pair(unsigned char *rdram, std::uint32_t bike_node,
+                                   std::uint32_t rider_node) noexcept;
 
 // Retained as a pure selector for ROM-free validation and diagnostics. Runtime
 // rendering now uses the coherent preparation transaction instead of changing
 // only this late local model pointer.
-std::uint32_t choose_actor_transform_model(
-    unsigned char* rdram,
-    std::uint32_t node,
-    std::uint16_t stock_lod,
-    std::uint32_t stock_model,
-    bool high_detail_enabled,
-    ActorPresentationDecision& decision) noexcept;
+std::uint32_t choose_actor_transform_model(unsigned char *rdram, std::uint32_t node,
+                                           std::uint16_t stock_lod, std::uint32_t stock_model,
+                                           bool high_detail_enabled,
+                                           ActorPresentationDecision &decision) noexcept;
 
 } // namespace rr64::engine

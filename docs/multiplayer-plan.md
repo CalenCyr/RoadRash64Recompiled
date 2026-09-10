@@ -6,6 +6,10 @@ Replace the previously attempted online multiplayer implementation with one clea
 
 No multiplayer or game-code removal is part of this notes-only change.
 
+## Current menu-entry update (2026-09-08)
+
+The user explicitly requested separate original main-menu entries: **Multiplayer** for local play and **Online** for the existing Host/Join popup. This supersedes the nested Local/Online choice for this update. It does not authorize replacing the current network protocol as part of this menu change. The wider direct-connect redesign below remains future work.
+
 ## Required player flow
 
 **Main Menu → Multiplayer → Online → Host / Join → Lobby → Host Game/Race Setup → Per-Player Character/Bike Select → Race**

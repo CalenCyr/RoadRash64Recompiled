@@ -10,13 +10,13 @@ namespace rr64::achievement_audio {
 // existing host audio stream so an achievement cannot desynchronize or open a
 // second audio device.
 class GuitarStingSynth {
-public:
+  public:
     void trigger() noexcept;
     void stop() noexcept;
     bool mix(std::span<std::int16_t> interleaved_stereo, std::uint32_t sample_rate) noexcept;
     [[nodiscard]] bool active() const noexcept;
 
-private:
+  private:
     static constexpr std::size_t kVoiceCount = 30;
     static constexpr std::size_t kMaximumDelaySamples = 2048;
 
@@ -47,8 +47,7 @@ private:
 
 void request_guitar_sting() noexcept;
 void cancel_guitar_sting() noexcept;
-bool mix_requested_guitar_sting(
-    std::span<std::int16_t> interleaved_stereo,
-    std::uint32_t sample_rate) noexcept;
+bool mix_requested_guitar_sting(std::span<std::int16_t> interleaved_stereo,
+                                std::uint32_t sample_rate) noexcept;
 
 } // namespace rr64::achievement_audio

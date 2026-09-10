@@ -5,11 +5,13 @@ int main() {
     using namespace recompinput;
     static_assert(int(GameInput::RR64_EJECT)==int(GameInput::TAB_RIGHT_MENU)+1);
     static_assert(int(GameInput::RR64_SPOKE_JAM)==int(GameInput::RR64_EJECT)+1);
-    for(auto action:{GameInput::RR64_EJECT,GameInput::RR64_SPOKE_JAM}) {
+    static_assert(int(GameInput::RR64_WEAPON_TRICK)==int(GameInput::RR64_SPOKE_JAM)+1);
+    for(auto action:{GameInput::RR64_EJECT,GameInput::RR64_SPOKE_JAM,GameInput::RR64_WEAPON_TRICK}) {
         if(get_game_input_name(action).empty() || get_game_input_description(action).empty() ||
             get_game_input_is_menu(action) || !get_game_input_clearable(action))return 1;
         const auto& fields=get_default_mapping_for_input(InputDevice::Controller,action);
-        const auto button=action==GameInput::RR64_EJECT?SDL_CONTROLLER_BUTTON_LEFTSTICK:SDL_CONTROLLER_BUTTON_RIGHTSTICK;
+        const auto button=action==GameInput::RR64_WEAPON_TRICK?SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+            action==GameInput::RR64_EJECT?SDL_CONTROLLER_BUTTON_LEFTSTICK:SDL_CONTROLLER_BUTTON_RIGHTSTICK;
         if(fields.size()!=1 || fields[0]!=InputField::controller_digital(button))return 2;
         if(!get_default_mapping_for_input(InputDevice::Keyboard,action).empty())return 3;
         nlohmann::json saved;

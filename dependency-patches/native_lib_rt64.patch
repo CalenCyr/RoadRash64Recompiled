@@ -511,16 +511,20 @@ index 785de27..cf5d869 100644
          }
  
 diff --git a/src/hle/rt64_game_frame.cpp b/src/hle/rt64_game_frame.cpp
-index 87392d0..536281d 100644
+index 87392d0..f9766e8 100644
 --- a/src/hle/rt64_game_frame.cpp
 +++ b/src/hle/rt64_game_frame.cpp
-@@ -6,10 +6,347 @@
+@@ -5,11 +5,468 @@
+ #include "common/rt64_math.h"
  
  #include "rt64_game_frame.h"
++#include "rt64_rr64_pipeline_diagnostics.h"
  #include "rt64_workload_queue.h"
 +#include "rt64_rr64_geometry_match.h"
 +#include "rt64_rr64_coordinate_consistency.h"
 +#include "rt64_rr64_translation_rejection.h"
++#include "rt64_rr64_matching_evidence.h"
++#include "rt64_rr64_static_world_motion.h"
 +
 +#include <array>
 +#include <cmath>
@@ -537,8 +541,8 @@ index 87392d0..536281d 100644
 +        bool used = false;
 +        bool skipCertification = false;
 +        bool valid = true;
-+        uint32_t geometryToken = 0;
-+        uint32_t topologyToken = 0;
++        uint64_t topologyHash = 0;
++        uint64_t geometryHash = 0;
 +
 +        RR64GeometryMatch::GeometryView view() const {
 +            return { { positions, positionCount }, { topology.data(), topology.size() }, 0 };
@@ -551,10 +555,32 @@ index 87392d0..536281d 100644
 +        bool valid = true;
 +    };
 +
-+    struct RR64GeometryMatchContext {
-+        std::unordered_map<uint32_t, RR64WorkloadGeometry> workloads;
++    // Only tokens are mutable during matching. The owner keeps topology and
++    // projection membership alive without copying them for each frame pair.
++    struct RR64TransformMatch {
++        const RR64TransformGeometry *evidence = nullptr;
++        bool valid = true;
++        uint32_t geometryToken = 0;
++        uint32_t topologyToken = 0;
++    };
 +
-+        const RR64TransformGeometry *get(uint32_t workload, uint32_t transform) const {
++    struct RR64WorkloadMatch {
++        std::shared_ptr<const RR64WorkloadGeometry> evidence;
++        std::vector<RR64TransformMatch> transforms;
++
++        explicit RR64WorkloadMatch(std::shared_ptr<const RR64WorkloadGeometry> source) : evidence(std::move(source)) {
++            RR64PipelineDiagnostics::Scope scope(RR64PipelineDiagnostics::Stage::GeometryReuse);
++            transforms.reserve(evidence->transforms.size());
++            for (const auto &mesh : evidence->transforms) {
++                transforms.push_back({ &mesh, mesh.valid, 0, 0 });
++            }
++        }
++    };
++
++    struct RR64GeometryMatchContext {
++        std::unordered_map<uint32_t, RR64WorkloadMatch> workloads;
++
++        const RR64TransformMatch *get(uint32_t workload, uint32_t transform) const {
 +            const auto it = workloads.find(workload);
 +            return ((it != workloads.end()) && (transform < it->second.transforms.size())) ?
 +                &it->second.transforms[transform] : nullptr;
@@ -566,6 +592,7 @@ index 87392d0..536281d 100644
 +    }
 +
 +    static RR64WorkloadGeometry rr64CollectGeometry(const Workload &workload, bool skipExplicitCertification) {
++        RR64PipelineDiagnostics::Scope diagnosticScope(RR64PipelineDiagnostics::Stage::GeometryCollect);
 +        RR64WorkloadGeometry result;
 +        const auto &data = workload.drawData;
 +        result.transforms.resize(data.worldTransforms.size());
@@ -671,48 +698,82 @@ index 87392d0..536281d 100644
 +        return result;
 +    }
 +
-+    static void rr64InternGeometry(RR64GeometryMatchContext &context) {
-+        std::unordered_map<uint64_t, std::vector<RR64TransformGeometry *>> geometryBuckets, topologyBuckets;
-+        uint32_t nextGeometry = 1, nextTopology = 1;
++    // Finish immutable evidence before assigning pair-local token IDs. The
++    // submitted position stream is read-only until Workload::resetDrawData.
++    static void rr64HashGeometry(RR64WorkloadGeometry &geometry) {
++        RR64PipelineDiagnostics::Scope scope(RR64PipelineDiagnostics::Stage::GeometryHash);
 +        std::vector<uint32_t> positionBits;
++        for (auto &mesh : geometry.transforms) {
++            if (!mesh.used || mesh.skipCertification) { continue; }
++            mesh.valid = mesh.valid && mesh.positions && mesh.positionCount &&
++                mesh.positionCount % 3 == 0 && !mesh.topology.empty() &&
++                mesh.topology.size() % 3 == 0 &&
++                uint64_t(mesh.positionCount / 3) <= uint64_t(UINT32_MAX) + 1;
++            if (!mesh.valid) { continue; }
++            mesh.topologyHash = XXH3_64bits(mesh.topology.data(), mesh.topology.size() * sizeof(uint32_t));
++            positionBits.resize(mesh.positionCount);
++            for (size_t i = 0; i < mesh.positionCount; i++) {
++                if (!std::isfinite(mesh.positions[i])) { mesh.valid = false; break; }
++                uint32_t bits = 0;
++                if (mesh.positions[i] != 0.0f) { std::memcpy(&bits, &mesh.positions[i], sizeof(bits)); }
++                positionBits[i] = bits;
++            }
++            if (mesh.valid) {
++                mesh.geometryHash = XXH3_64bits_withSeed(positionBits.data(), positionBits.size() * sizeof(uint32_t), mesh.topologyHash);
++            }
++        }
++    }
++
++    static std::shared_ptr<const RR64WorkloadGeometry> rr64SubmittedGeometry(Workload &workload, bool skipExplicitCertification) {
++        auto &cached = workload.rr64GeometryCache[skipExplicitCertification ? 1 : 0];
++        // Debugger-paused workloads may be edited without a new submission.
++        if (workload.paused) {
++            for (auto &certificate : workload.rr64GeometryCache) { certificate.reset(); }
++            auto evidence = rr64CollectGeometry(workload, skipExplicitCertification);
++            rr64HashGeometry(evidence);
++            return std::make_shared<const RR64WorkloadGeometry>(std::move(evidence));
++        }
++        if (!cached) {
++            auto evidence = rr64CollectGeometry(workload, skipExplicitCertification);
++            rr64HashGeometry(evidence);
++            cached = std::make_shared<const RR64WorkloadGeometry>(std::move(evidence));
++        }
++        return cached;
++    }
++
++    static void rr64InternGeometry(RR64GeometryMatchContext &context) {
++        RR64PipelineDiagnostics::Scope diagnosticScope(RR64PipelineDiagnostics::Stage::GeometryIntern);
++        std::unordered_map<uint64_t, std::vector<RR64TransformMatch *>> geometryBuckets, topologyBuckets;
++        uint32_t nextGeometry = 1, nextTopology = 1;
 +        for (auto &entry : context.workloads) {
-+            for (auto &mesh : entry.second.transforms) {
-+                if (!mesh.used || mesh.skipCertification) { continue; }
-+                mesh.valid = mesh.valid && RR64GeometryMatch::validGeometry(mesh.view());
-+                if (!mesh.valid) { continue; }
-+                // Hash each shape only once; exact comparison resolves collisions
-+                // during interning. Candidate matching then compares token ids.
-+                const uint64_t topologyHash = XXH3_64bits(mesh.topology.data(), mesh.topology.size() * sizeof(uint32_t));
-+                // Numeric equality treats both signed zeros as equal. Normalize
-+                // that representation before hashing; finite validation above
-+                // remains mandatory and bucket matches remain exact below.
-+                positionBits.resize(mesh.positionCount);
-+                for (size_t i = 0; i < mesh.positionCount; i++) {
-+                    uint32_t bits = 0;
-+                    if (mesh.positions[i] != 0.0f) { std::memcpy(&bits, &mesh.positions[i], sizeof(bits)); }
-+                    positionBits[i] = bits;
-+                }
-+                const uint64_t geometryHash = XXH3_64bits_withSeed(positionBits.data(), positionBits.size() * sizeof(uint32_t), topologyHash);
++            for (auto &match : entry.second.transforms) {
++                const auto &mesh = *match.evidence;
++                if (!mesh.used || mesh.skipCertification || !mesh.valid) { continue; }
++                const uint64_t topologyHash = mesh.topologyHash;
++                const uint64_t geometryHash = mesh.geometryHash;
++                // Cached hashes only select buckets; exact equality remains
++                // mandatory, including signed-zero numeric equality.
 +                for (const auto *other : topologyBuckets[topologyHash]) {
-+                    if ((mesh.positionCount == other->positionCount) && (mesh.topology == other->topology)) {
-+                        mesh.topologyToken = other->topologyToken;
++                    if ((mesh.positionCount == other->evidence->positionCount) && (mesh.topology == other->evidence->topology)) {
++                        match.topologyToken = other->topologyToken;
 +                        break;
 +                    }
 +                }
-+                if (mesh.topologyToken == 0) {
-+                    mesh.topologyToken = nextTopology++;
-+                    topologyBuckets[topologyHash].push_back(&mesh);
++                if (match.topologyToken == 0) {
++                    match.topologyToken = nextTopology++;
++                    topologyBuckets[topologyHash].push_back(&match);
 +                }
 +                for (const auto *other : geometryBuckets[geometryHash]) {
-+                    if ((mesh.positionCount == other->positionCount) && (mesh.topology == other->topology) &&
-+                        std::equal(mesh.positions, mesh.positions + mesh.positionCount, other->positions)) {
-+                        mesh.geometryToken = other->geometryToken;
++                    if ((match.topologyToken == other->topologyToken) &&
++                        (std::memcmp(mesh.positions, other->evidence->positions, mesh.positionCount * sizeof(float)) == 0 ||
++                         std::equal(mesh.positions, mesh.positions + mesh.positionCount, other->evidence->positions))) {
++                        match.geometryToken = other->geometryToken;
 +                        break;
 +                    }
 +                }
-+                if (mesh.geometryToken == 0) {
-+                    mesh.geometryToken = nextGeometry++;
-+                    geometryBuckets[geometryHash].push_back(&mesh);
++                if (match.geometryToken == 0) {
++                    match.geometryToken = nextGeometry++;
++                    geometryBuckets[geometryHash].push_back(&match);
 +                }
 +            }
 +        }
@@ -731,8 +792,8 @@ index 87392d0..536281d 100644
 +        std::set<uint32_t> used;
 +        for (const auto &projection : scene.projections) {
 +            const auto &workload = context.workloads.at(projection.workloadIndex);
-+            const auto found = workload.projectionTransforms.find(rr64ProjectionKey(projection.fbPairIndex, projection.projectionIndex));
-+            if (found != workload.projectionTransforms.end()) {
++            const auto found = workload.evidence->projectionTransforms.find(rr64ProjectionKey(projection.fbPairIndex, projection.projectionIndex));
++            if (found != workload.evidence->projectionTransforms.end()) {
 +                used.insert(found->second.begin(), found->second.end());
 +            }
 +        }
@@ -765,9 +826,64 @@ index 87392d0..536281d 100644
 +        return roles;
 +    }
 +
++    static void rr64ObserveMatch(unsigned category, const GameFrame &frame, const WorkloadQueue &queue,
++        const RR64GeometryMatchContext &context, const GameIndices::Projection &indices, uint32_t worldIndex) {
++        using namespace RR64MatchingEvidence;
++        if (!enabled()) { return; }
++        const int slot = buffer.claim(category);
++        if (slot < 0) { return; }
++        Record r; r.category=category; r.world=worldIndex;
++        r.framebuffer=indices.fbPairIndex; r.projection=indices.projectionIndex;
++        const auto &load=queue.workloads[indices.workloadIndex];
++        r.submission=load.submissionFrame; r.workload=load.workloadId;
++        const auto &data=load.drawData;
++        const auto &projection=load.fbPairs[indices.fbPairIndex].projections[indices.projectionIndex];
++        r.view=projection.transformsIndex;
++        auto position=[](const hlslpp::float4x4 &m) { return std::array<float,3>{m[3][0],m[3][1],m[3][2]}; };
++        auto id=[](const DrawData &d,uint32_t t) {
++            return t<d.worldTransformGroups.size() && d.worldTransformGroups[t]<d.transformGroups.size() ?
++                d.transformGroups[d.worldTransformGroups[t]].matrixId : UINT32_MAX;
++        };
++        if(worldIndex<data.worldTransforms.size()) {
++            r.worldAfter=position(data.worldTransforms[worldIndex]); r.id=id(data,worldIndex);
++            for(uint32_t t=0;t<data.worldTransforms.size();t++) { r.idOccurrences+=id(data,t)==r.id; }
++            if(worldIndex<data.worldTransformGroups.size() && data.worldTransformGroups[worldIndex]<data.transformGroups.size()) {
++                const auto &group=data.transformGroups[data.worldTransformGroups[worldIndex]];
++                r.positionPolicy=group.positionInterpolation; r.ordering=group.ordering;
++            }
++            if(const auto *match=context.get(indices.workloadIndex,worldIndex)) {
++                r.vertices=uint32_t(match->evidence->positionCount/3);
++                r.indices=uint32_t(match->evidence->topology.size()); r.topologyHash=match->evidence->topologyHash;
++            }
++        }
++        if(r.view<data.viewTransforms.size()) { r.viewAfter=position(data.viewTransforms[r.view]); }
++        if(indices.workloadIndex<frame.frameMap.workloads.size()) {
++            const auto &mapping=frame.frameMap.workloads[indices.workloadIndex];
++            if(mapping.mapped && mapping.prevWorkloadIndex<queue.workloads.size()) {
++                const auto &previous=queue.workloads[mapping.prevWorkloadIndex].drawData;
++                for(uint32_t t=0;t<previous.worldTransforms.size();t++) { r.previousIdOccurrences+=id(previous,t)==r.id; }
++                if(worldIndex<mapping.transforms.size()) {
++                    const auto &world=mapping.transforms[worldIndex]; r.mapped=world.mapped; r.worldLerp=world.rigidBody.lerpTranslation;
++                    if(world.mapped && world.prevTransformIndex<previous.worldTransforms.size()) {
++                        r.previousWorld=world.prevTransformIndex; r.previousId=id(previous,r.previousWorld);
++                        r.worldBefore=position(previous.worldTransforms[r.previousWorld]);
++                    }
++                }
++                if(r.view<mapping.viewProjections.size()) {
++                    const auto &view=mapping.viewProjections[r.view]; r.viewLerp=view.rigidBody.lerpTranslation;
++                    if(view.mapped && view.prevTransformIndex<previous.viewTransforms.size()) {
++                        r.viewBefore=position(previous.viewTransforms[view.prevTransformIndex]);
++                    }
++                }
++            }
++        }
++        buffer.publish(category,unsigned(slot),r);
++    }
++
 +    static uint32_t rr64CertifyScene(const GameFrame &frame, const WorkloadQueue &queue,
 +        const RR64GeometryMatchContext &context, const GameScene &current, const GameScene &previous)
 +    {
++        RR64PipelineDiagnostics::Scope diagnosticScope(RR64PipelineDiagnostics::Stage::GeometryCertify);
 +        uint32_t reasons = (rr64SceneRoles(queue, current) == rr64SceneRoles(queue, previous)) ? 0u : 1u;
 +        const auto currentUsed = rr64SceneTransforms(context, current);
 +        const auto previousUsed = rr64SceneTransforms(context, previous);
@@ -780,6 +896,7 @@ index 87392d0..536281d 100644
 +            if ((mesh == nullptr) || !mesh->valid) { reasons |= 2u; }
 +            if ((t >= mapping.transforms.size()) || !mapping.transforms[t].mapped) {
 +                reasons |= 4u;
++                rr64ObserveMatch(0,frame,queue,context,current.projections.front(),t);
 +                continue;
 +            }
 +            const uint32_t previousT = mapping.transforms[t].prevTransformIndex;
@@ -813,6 +930,7 @@ index 87392d0..536281d 100644
 +    static bool rr64SceneTranslationsCoherent(const GameFrame &frame, const WorkloadQueue &queue,
 +        const RR64GeometryMatchContext &context, const GameScene &scene)
 +    {
++        RR64PipelineDiagnostics::Scope diagnosticScope(RR64PipelineDiagnostics::Stage::GeometryCoherence);
 +        using namespace RR64CoordinateConsistency;
 +        auto translation = [](const hlslpp::float4x4 &matrix) {
 +            return std::array<float, 3>{ matrix[3][0], matrix[3][1], matrix[3][2] };
@@ -822,9 +940,9 @@ index 87392d0..536281d 100644
 +        for (const auto &indices : scene.projections) {
 +            const auto geometry = context.workloads.find(indices.workloadIndex);
 +            if (geometry == context.workloads.end()) { return false; }
-+            const auto used = geometry->second.projectionTransforms.find(
++            const auto used = geometry->second.evidence->projectionTransforms.find(
 +                rr64ProjectionKey(indices.fbPairIndex, indices.projectionIndex));
-+            if ((used == geometry->second.projectionTransforms.end()) || used->second.empty()) {
++            if ((used == geometry->second.evidence->projectionTransforms.end()) || used->second.empty()) {
 +                continue;
 +            }
 +            if (indices.workloadIndex >= frame.frameMap.workloads.size()) { return false; }
@@ -853,7 +971,10 @@ index 87392d0..536281d 100644
 +                if (worldMap.prevTransformIndex >= previous.worldTransforms.size()) { return false; }
 +                const TranslationState world{ translation(previous.worldTransforms[worldMap.prevTransformIndex]),
 +                    translation(data.worldTransforms[worldIndex]), true, worldMap.rigidBody.lerpTranslation };
-+                if (!coherentTranslations(true, world, view)) { return false; }
++                if (!coherentTranslations(true, world, view)) {
++                    rr64ObserveMatch(1,frame,queue,context,indices,worldIndex);
++                    return false;
++                }
 +            }
 +        }
 +        return true;
@@ -862,7 +983,7 @@ index 87392d0..536281d 100644
      // GameFrame
      
      bool GameFrame::areFramebufferPairsCompatible(const WorkloadQueue &workloadQueue, const GameIndices::FramebufferPair &first, const GameIndices::FramebufferPair &second) {
-@@ -77,6 +414,8 @@ namespace RT64 {
+@@ -77,6 +534,8 @@ namespace RT64 {
          assert(indicesCount > 0);
  
          matched = false;
@@ -871,7 +992,7 @@ index 87392d0..536281d 100644
          perspectiveScenes.clear();
          orthographicScenes.clear();
          workloads.clear();
-@@ -256,6 +595,35 @@ namespace RT64 {
+@@ -256,6 +715,35 @@ namespace RT64 {
          tileInterpolationUsed = false;
          lookAtInterpolationUsed = false;
          matched = true;
@@ -889,12 +1010,12 @@ index 87392d0..536281d 100644
 +            if ((workloads.size() != 1) || (prevFrame.workloads.size() != 1)) {
 +                rr64GeometryRejectionReasons |= 4u;
 +            }
-+            for (uint32_t w : workloads) { rr64Geometry.workloads.emplace(w, rr64CollectGeometry(workloadQueue.workloads[w], rr64TranslationRejected)); }
-+            for (uint32_t w : prevFrame.workloads) { rr64Geometry.workloads.emplace(w, rr64CollectGeometry(workloadQueue.workloads[w], rr64TranslationRejected)); }
++            for (uint32_t w : workloads) { rr64Geometry.workloads.emplace(w, rr64SubmittedGeometry(workloadQueue.workloads[w], rr64TranslationRejected)); }
++            for (uint32_t w : prevFrame.workloads) { rr64Geometry.workloads.emplace(w, rr64SubmittedGeometry(workloadQueue.workloads[w], rr64TranslationRejected)); }
 +            rr64InternGeometry(rr64Geometry);
 +            for (const auto &entry : rr64Geometry.workloads) {
-+                if (!entry.second.valid) { rr64GeometryRejectionReasons |= 2u; }
-+                for (const auto &mesh : entry.second.transforms) {
++                if (!entry.second.evidence->valid) { rr64GeometryRejectionReasons |= 2u; }
++                for (const auto &mesh : entry.second.evidence->transforms) {
 +                    if (mesh.used && !mesh.valid) { rr64GeometryRejectionReasons |= 2u; }
 +                }
 +            }
@@ -907,7 +1028,7 @@ index 87392d0..536281d 100644
  
          thread_local std::unordered_map<uint32_t, ModifiedBuffers> workloadsModified;
          workloadsModified.clear();
-@@ -271,7 +639,7 @@ namespace RT64 {
+@@ -271,7 +759,7 @@ namespace RT64 {
              workloadMap.mapped = true;
  
              Workload &curWorkload = workloadQueue.workloads[workloads[w]];
@@ -916,7 +1037,7 @@ index 87392d0..536281d 100644
              workloadMap.viewProjections.clear();
              workloadMap.viewProjections.resize(curWorkload.drawData.viewProjTransforms.size());
              workloadMap.transforms.clear();
-@@ -288,6 +656,13 @@ namespace RT64 {
+@@ -288,6 +776,13 @@ namespace RT64 {
              workloadMap.prevLookAtMapped.resize(prevWorkload.drawData.rspLookAt.size());
  
              buildTransformIdMap(curWorkload, curWorkload.transformIdMap, curWorkload.transformIgnoredIds);
@@ -930,7 +1051,7 @@ index 87392d0..536281d 100644
  
              // Retrieve the matching maps for the current and previous workload.
              GameFrameMap::WorkloadMap &curWorkloadMap = frameMap.workloads[workloads[w]];
-@@ -331,10 +706,26 @@ namespace RT64 {
+@@ -331,10 +826,26 @@ namespace RT64 {
          thread_local std::vector<MatchCandidate> matchCandidates;
          thread_local std::vector<bool> curScenesMatched;
          thread_local std::vector<bool> prevScenesMatched;
@@ -958,7 +1079,7 @@ index 87392d0..536281d 100644
                  const GameIndices::Projection curFirstProj = curScenes[i].projections[0];
                  const Workload &curWorkload = workloadQueue.workloads[curFirstProj.workloadIndex];
                  const FramebufferPair &curFbPair = curWorkload.fbPairs[curFirstProj.fbPairIndex];
-@@ -342,13 +733,16 @@ namespace RT64 {
+@@ -342,13 +853,16 @@ namespace RT64 {
                  const hlslpp::float4x4 &curViewTransform = curWorkload.drawData.viewTransforms[curProj.transformsIndex];
                  const hlslpp::float4x4 &curProjTransform = curWorkload.drawData.projTransforms[curProj.transformsIndex];
                  for (uint32_t j = 0; j < prevScenes.size(); j++) {
@@ -976,7 +1097,7 @@ index 87392d0..536281d 100644
                  }
              }
  
-@@ -366,14 +760,34 @@ namespace RT64 {
+@@ -366,14 +880,37 @@ namespace RT64 {
                      continue;
                  }
  
@@ -998,7 +1119,10 @@ index 87392d0..536281d 100644
              }
 +            if (certifyWorld) {
 +                for (size_t i = 0; i < currentWorld.size(); i++) {
-+                    if (currentWorld[i] && !curScenesMatched[i]) { rr64GeometryRejectionReasons |= 4u; }
++                    if (currentWorld[i] && !curScenesMatched[i]) {
++                        rr64GeometryRejectionReasons |= 4u;
++                        rr64ObserveMatch(2,*this,workloadQueue,rr64Geometry,curScenes[i].projections.front(),UINT32_MAX);
++                    }
 +                }
 +                for (size_t i = 0; i < previousWorld.size(); i++) {
 +                    if (previousWorld[i] && !prevScenesMatched[i]) { rr64GeometryRejectionReasons |= 4u; }
@@ -1014,29 +1138,56 @@ index 87392d0..536281d 100644
  
          if (!workloadsModified.empty()) {
              thread_local std::vector<BufferUploader::Upload> uploads;
-@@ -398,7 +812,7 @@ namespace RT64 {
+@@ -398,7 +935,8 @@ namespace RT64 {
          }
      }
  
 -    void GameFrame::matchScene(WorkloadQueue &workloadQueue, const GameFrame &prevFrame, const GameScene &curScene, const GameScene &prevScene, std::unordered_map<uint32_t, ModifiedBuffers> &workloadsModified, bool &tileInterpolationUsed, bool &lookAtInterpolationUsed) {
 +    void GameFrame::matchScene(WorkloadQueue &workloadQueue, const GameFrame &prevFrame, const GameScene &curScene, const GameScene &prevScene, std::unordered_map<uint32_t, ModifiedBuffers> &workloadsModified, bool &tileInterpolationUsed, bool &lookAtInterpolationUsed, const RR64GeometryMatchContext *rr64Geometry) {
++        RR64PipelineDiagnostics::Scope diagnosticScope(RR64PipelineDiagnostics::Stage::MatchScene);
          if (curScene.projections.empty() || prevScene.projections.empty()) {
              return;
          }
-@@ -516,6 +930,12 @@ namespace RT64 {
+@@ -516,10 +1054,36 @@ namespace RT64 {
          transformCheckSet.clear();
          tileCheckSet.clear();
          lookAtCheckSet.clear();
+-
 +        // Repeated material calls can name the same single-transform pair.
 +        // Its group and geometry certificates are immutable within this scene.
 +        // Deduplicate those checks only; tile/look-at matching and history
 +        // updates below still run exactly as before.
 +        thread_local std::unordered_set<uint64_t> singleTransformChecks;
 +        singleTransformChecks.clear();
- 
++
++        // Offline experiment: narrow only scenes without tile/look-at side
++        // effects, using exact geometry tokens already certified for this pair.
++        using IndexedKey = std::pair<uint64_t, uint32_t>;
++        std::multimap<IndexedKey, GameCallMap> indexedPrevious;
++        auto tokenFor = [&](const GameCallMap &entry, const GameScene &scene, uint32_t firstWorkload) -> uint32_t {
++            if (!rr64Geometry || !entry.doTransformMatching) return 0;
++            const auto &pi = scene.projections[entry.sceneProjIndex];
++            if (pi.workloadIndex != firstWorkload) return 0;
++            const auto &work = workloadQueue.workloads[pi.workloadIndex];
++            const auto &call = work.fbPairs[pi.fbPairIndex].projections[pi.projectionIndex].gameCalls[entry.callIndex];
++            if (call.callDesc.minWorldMatrix != call.callDesc.maxWorldMatrix ||
++                (call.callDesc.tileCount && entry.doTileInterpolation) ||
++                (call.callDesc.geometryMode & (G_LIGHTING | G_TEXTURE_GEN)) == (G_LIGHTING | G_TEXTURE_GEN)) return 0;
++            const auto world = call.callDesc.minWorldMatrix;
++            const auto &group = work.drawData.transformGroups[work.drawData.worldTransformGroups[world]];
++            if (group.matrixId != G_EX_ID_AUTO) return 0;
++            const auto *mesh = rr64Geometry->get(pi.workloadIndex,world);
++            return mesh && mesh->valid ? mesh->geometryToken : 0;
++        };
++        std::unordered_map<uint64_t,bool> indexedHashes;
          // Traverse the map and fill the set with all the combinations of transforms to check.
          for (std::pair<uint64_t, GameCallMap> curIt : curCallHashMap) {
-@@ -533,7 +953,19 @@ namespace RT64 {
+-            auto prevRange = prevCallHashMap.equal_range(curIt.first);
++            auto visitRange = [&](auto prevRange) {
+             for (auto prevIt = prevRange.first; prevIt != prevRange.second; prevIt++) {
+                 const GameIndices::Projection &curProjIndices = curScene.projections[curIt.second.sceneProjIndex];
+                 const Workload &curWorkload = workloadQueue.workloads[curProjIndices.workloadIndex];
+@@ -533,7 +1097,19 @@ namespace RT64 {
                  const GameCall &prevCall = prevProj.gameCalls[prevIt->second.callIndex];
                  const uint32_t curWorldMatrixCount = (curCall.callDesc.maxWorldMatrix - curCall.callDesc.minWorldMatrix) + 1;
                  const uint32_t prevWorldMatrixCount = (prevCall.callDesc.maxWorldMatrix - prevCall.callDesc.minWorldMatrix) + 1;
@@ -1057,7 +1208,7 @@ index 87392d0..536281d 100644
                      for (uint32_t w = 0; w < curWorldMatrixCount; w++) {
                          const uint32_t curWorldMatrix = curCall.callDesc.minWorldMatrix + w;
                          const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curWorldMatrix];
-@@ -542,6 +974,11 @@ namespace RT64 {
+@@ -542,6 +1118,11 @@ namespace RT64 {
                          const uint32_t prevGroupIndex = prevWorkload.drawData.worldTransformGroups[prevWorldMatrix];
                          const TransformGroup &prevGroup = prevWorkload.drawData.transformGroups[prevGroupIndex];
                          if ((curGroup.matrixId == prevGroup.matrixId) && ((curGroup.matrixId == G_EX_ID_AUTO) || ((curGroup.matrixId != G_EX_ID_IGNORE) && (curGroup.ordering == G_EX_ORDER_AUTO)))) {
@@ -1069,7 +1220,32 @@ index 87392d0..536281d 100644
                              transformCheckSet.emplace(curWorldMatrix, prevWorldMatrix);
                          }
                      }
-@@ -588,22 +1025,79 @@ namespace RT64 {
+@@ -572,6 +1153,24 @@ namespace RT64 {
+                     lookAtCheckSet.emplace(curLookAtIndex, prevLookAtIndex);
+                 }
+             }
++            };
++            const auto curToken=tokenFor(curIt.second,curScene,firstCurProjIndices.workloadIndex);
++            bool useIndexed=false;
++            if (curToken) {
++                const auto inserted=indexedHashes.emplace(curIt.first,true);
++                if (inserted.second) {
++                    const auto range=prevCallHashMap.equal_range(curIt.first);
++                    for(auto prev=range.first;prev!=range.second;++prev) {
++                        const auto token=tokenFor(prev->second,prevScene,firstPrevProjIndices.workloadIndex);
++                        if (!token) {inserted.first->second=false;break;}
++                        indexedPrevious.emplace(IndexedKey{prev->first,token},prev->second);
++                    }
++                }
++                useIndexed=inserted.first->second;
++            }
++            if (useIndexed)
++                visitRange(indexedPrevious.equal_range(IndexedKey{curIt.first,curToken}));
++            else visitRange(prevCallHashMap.equal_range(curIt.first));
+         }
+ 
+         // Compute all the differences between transforms and insert them into a vector that will be sorted according to the differences.
+@@ -588,22 +1187,79 @@ namespace RT64 {
  
              TransformMatchResult matchResult = computeTransformMatch(curTransform, firstCurViewProj, prevTransform, firstPrevViewProj, prevRigidBody);
              if (matchResult.valid) {
@@ -1139,12 +1315,12 @@ index 87392d0..536281d 100644
 +                if (firstCurWorkloadMap.transforms[candidate.curIndex].mapped) {
 +                    continue;
 +                }
- 
--            matchTransform(firstCurWorkload, firstPrevWorkload, firstCurWorkloadMap, firstPrevWorkloadMap, candidate.curIndex, candidate.prevIndex, modifiedBuffers);
++
 +                if (firstCurWorkloadMap.prevTransformsMapped[candidate.prevIndex]) {
 +                    continue;
 +                }
-+
+ 
+-            matchTransform(firstCurWorkload, firstPrevWorkload, firstCurWorkloadMap, firstPrevWorkloadMap, candidate.curIndex, candidate.prevIndex, modifiedBuffers);
 +                if (ambiguousTransforms.count(candidate.curIndex)) {
 +                    rr64GeometryRejectionReasons |= 8u;
 +                    continue;
@@ -1156,6 +1332,25 @@ index 87392d0..536281d 100644
          }
  
          if (!modifiedBuffers.empty()) {
+@@ -720,6 +1376,11 @@ namespace RT64 {
+         const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curTransformIndex];
+         const TransformGroup &curGroup = curWorkload.drawData.transformGroups[curGroupIndex];
+         curTransformMap.rigidBody.updateLinear(prevTransform, curTransform, curGroup.positionInterpolation);
++        // Keep velocity history from AUTO; only correct its small camera-relative
++        // direction penalty for our explicitly identified static world packets.
++        if (RR64StaticWorldMotion::smallTranslation(curGroup, prevTransform, curTransform)) {
++            curTransformMap.rigidBody.lerpTranslation = true;
++        }
+         curTransformMap.rigidBody.updateAngular(prevTransform, curTransform, curGroup.rotationInterpolation, curGroup.scaleInterpolation, curGroup.skewInterpolation);
+         curTransformMap.rigidBody.updatePerspective(prevTransform, curTransform, curGroup.perspectiveInterpolation);
+         curTransformMap.rigidBody.updateDecomposition(curTransform, curGroup.decompose);
+@@ -1039,4 +1700,4 @@ namespace RT64 {
+         }
+     }
+     */
+-};
+\ No newline at end of file
++};
 diff --git a/src/hle/rt64_game_frame.h b/src/hle/rt64_game_frame.h
 index 00a72f6..1f70749 100644
 --- a/src/hle/rt64_game_frame.h
@@ -1189,21 +1384,22 @@ index 00a72f6..1f70749 100644
          void buildCallHashMap(uint32_t sceneProjIndex, const Workload &workload, const Projection &proj, std::multimap<uint64_t, GameCallMap> &hashMap) const;
          void buildTransformIdMap(const Workload &workload, std::multimap<uint32_t, uint32_t> &idMap, std::vector<uint32_t> &ignoredIdVector) const;
 diff --git a/src/hle/rt64_interpreter.cpp b/src/hle/rt64_interpreter.cpp
-index dccaa87..219302e 100644
+index dccaa87..80d3e48 100644
 --- a/src/hle/rt64_interpreter.cpp
 +++ b/src/hle/rt64_interpreter.cpp
-@@ -3,8 +3,10 @@
+@@ -3,8 +3,11 @@
  //
  
  #include "rt64_interpreter.h"
 +#include "rt64_rr64_pipeline_diagnostics.h"
++#include "rt64_rr64_command_profile.h"
  
  #include <cassert>
 +#include <cstdio>
  
  //#define DUMP_DISPLAY_LISTS
  
-@@ -154,6 +156,7 @@ namespace RT64 {
+@@ -154,6 +157,7 @@ namespace RT64 {
      }
  
      void Interpreter::processDisplayLists(uint32_t dlStartAdddress, DisplayList *dlStart) {
@@ -1211,6 +1407,14 @@ index dccaa87..219302e 100644
          assert(hleGBI != nullptr);
  
          state->dlCpuProfiler.start();
+@@ -170,6 +174,7 @@ namespace RT64 {
+         uint8_t opCode;
+         GBIFunction func;
+         while (dl != nullptr) {
++            RR64CommandProfile::Scope sampledCommand(dl->w0,extendedOpCode);
+             opCode = (dl->w0 >> 24);
+ 
+             if ((extendedOpCode != 0) && (opCode == extendedOpCode)) {
 diff --git a/src/hle/rt64_present.h b/src/hle/rt64_present.h
 index e1889e5..092debd 100644
 --- a/src/hle/rt64_present.h
@@ -1235,7 +1439,7 @@ index e1889e5..092debd 100644
  };
 \ No newline at end of file
 diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
-index 3227ab1..631f109 100644
+index 3227ab1..2194b8c 100644
 --- a/src/hle/rt64_present_queue.cpp
 +++ b/src/hle/rt64_present_queue.cpp
 @@ -4,11 +4,50 @@
@@ -1584,16 +1788,20 @@ index 3227ab1..631f109 100644
                  
                  VIRenderer::RenderParams renderParams;
                  if (colorTarget != nullptr) {
-@@ -323,7 +516,7 @@ namespace RT64 {
+@@ -323,7 +516,11 @@ namespace RT64 {
                      renderParams.filtering = filtering;
                      renderParams.vi = &present.screenVI;
                      renderParams.removeBlackBorders = removeBlackBorders;
 -
 +                    renderParams.stretchToWindow = stretchToWindow;
++                    // Use the scene owned by this presentation, never a later
++                    // game-thread mode, when clipping unused menu side space.
++                    renderParams.nativeMenuBorders = stablePresentation &&
++                        !present.presentationScene.raceActive && !stretchToWindow;
                      const bool useDownsampling = (colorTarget->downsampleMultiplier > 1);
                      if (useDownsampling) {
                          colorTarget->downsampleTarget(ext.presentGraphicsWorker, ext.shaderLibrary);
-@@ -338,6 +531,7 @@ namespace RT64 {
+@@ -338,6 +535,7 @@ namespace RT64 {
                          renderParams.textureWidth = colorTarget->width;
                          renderParams.textureHeight = colorTarget->height;
                      }
@@ -1601,7 +1809,7 @@ index 3227ab1..631f109 100644
                  }
                  
                  commandList->setFramebuffer(swapChainFramebuffer);
-@@ -389,18 +583,99 @@ namespace RT64 {
+@@ -389,18 +587,99 @@ namespace RT64 {
              }
  
              if (presentFrame && swapChainValid) {
@@ -1704,7 +1912,7 @@ index 3227ab1..631f109 100644
                  presentProfiler.logAndRestart();
              }
          }
-@@ -426,12 +701,19 @@ namespace RT64 {
+@@ -426,12 +705,19 @@ namespace RT64 {
      }
      
      void PresentQueue::threadAdvanceBarrier() {
@@ -1726,7 +1934,7 @@ index 3227ab1..631f109 100644
  
          // Create the semaphore the acquire method will use.
          acquiredSemaphore = ext.device->createCommandSemaphore();
-@@ -467,6 +749,7 @@ namespace RT64 {
+@@ -467,6 +753,7 @@ namespace RT64 {
                  std::unique_lock<std::mutex> threadLock(threadMutex);
                  const bool needsResize = ext.swapChain->needsResize() || !swapChainValid;
                  if (needsResize) {
@@ -1734,7 +1942,7 @@ index 3227ab1..631f109 100644
                      ext.presentGraphicsWorker->commandList->begin();
                      ext.presentGraphicsWorker->commandList->end();
                      ext.presentGraphicsWorker->execute();
-@@ -504,13 +787,22 @@ namespace RT64 {
+@@ -504,13 +791,22 @@ namespace RT64 {
                  skipPresent = skipPresent || ext.swapChain->isEmpty();
  
                  Present &present = presents[processCursor];
@@ -1948,7 +2156,7 @@ index 3708220..381d3bd 100644
          std::set<uint64_t> dumpedSet;
  
 diff --git a/src/hle/rt64_rsp.cpp b/src/hle/rt64_rsp.cpp
-index ee2030b..b797714 100644
+index ee2030b..5f6ac94 100644
 --- a/src/hle/rt64_rsp.cpp
 +++ b/src/hle/rt64_rsp.cpp
 @@ -3,8 +3,11 @@
@@ -2013,7 +2221,7 @@ index ee2030b..b797714 100644
          if (usesFog) {
              if (fogChanged) {
                  auto &rspFogVector = workload.drawData.rspFog;
-@@ -676,42 +706,71 @@ namespace RT64 {
+@@ -676,42 +706,86 @@ namespace RT64 {
          auto &posScreen = workload.drawData.posScreen;
          const auto &mvp = modelViewProjMatrix;
          const uint32_t globalIndex = workload.drawData.vertexCount();
@@ -2023,12 +2231,25 @@ index ee2030b..b797714 100644
 +        const uint32_t total = globalIndex + count;
 +        posFloats.resize(total * 3);
 +        normColBytes.resize(total * 4);
-+        viewProjIndices.resize(total);
-+        worldIndices.resize(total);
-+        fogIndices.resize(total);
-+        lightIndices.resize(total);
-+        lightCounts.resize(total);
-+        lookAtIndices.resize(total);
++        // These attributes are constant across a vertex packet. Construct each
++        // new range with its final value instead of zeroing it and then issuing
++        // scattered per-vertex stores. Keep the old overwrite semantics if a
++        // stream's size differs from the submitted position stream.
++        const auto appendConstant = [globalIndex, total](auto &stream, auto value) {
++            if (stream.size() == globalIndex) {
++                stream.resize(total, value);
++            }
++            else {
++                stream.resize(total);
++                std::fill(stream.begin() + globalIndex, stream.end(), value);
++            }
++        };
++        appendConstant(viewProjIndices, curViewProjIndex);
++        appendConstant(worldIndices, curTransformIndex);
++        appendConstant(fogIndices, curFogIndex);
++        appendConstant(lightIndices, curLightIndex);
++        appendConstant(lightCounts, curLightCount);
++        appendConstant(lookAtIndices, curLookAtIndex);
 +        if constexpr (addEmptyVelocity) {
 +            velFloats.resize(total * 3, 0.0f);
 +            tcVelFloats.resize(total * 2, 0.0f);
@@ -2037,12 +2258,6 @@ index ee2030b..b797714 100644
 +        // before byte-color stores, which otherwise inhibit pointer reuse.
 +        auto *posFloatsOutput = posFloats.data();
 +        auto *normColBytesOutput = normColBytes.data();
-+        auto *viewProjIndicesOutput = viewProjIndices.data();
-+        auto *worldIndicesOutput = worldIndices.data();
-+        auto *fogIndicesOutput = fogIndices.data();
-+        auto *lightIndicesOutput = lightIndices.data();
-+        auto *lightCountsOutput = lightCounts.data();
-+        auto *lookAtIndicesOutput = lookAtIndices.data();
          for (uint32_t i = dstIndex; i < dstMax; i++) {
 -            auto &v = vertices[i];
 -            posFloats.emplace_back(v.x);
@@ -2069,12 +2284,6 @@ index ee2030b..b797714 100644
 +            normColBytesOutput[j * 4 + 2] = v.color.b;
 +            // Suppressed fog still uses zero shade alpha, as on the old path.
 +            normColBytesOutput[j * 4 + 3] = suppressFog ? 0 : v.color.a;
-+            viewProjIndicesOutput[j] = curViewProjIndex;
-+            worldIndicesOutput[j] = curTransformIndex;
-+            fogIndicesOutput[j] = curFogIndex;
-+            lightIndicesOutput[j] = curLightIndex;
-+            lightCountsOutput[j] = curLightCount;
-+            lookAtIndicesOutput[j] = curLookAtIndex;
 +            indices[i] = j;
              used[i] = false;
 -
@@ -2101,7 +2310,22 @@ index ee2030b..b797714 100644
 +        auto *texcoordOutput = tcFloats.data() + globalIndex * 2;
 +        const interop::RSPViewport &viewport = viewportStack[viewportStackSize - 1];
          uint32_t floatIndex = globalIndex * 3;
-         for (uint32_t i = dstIndex; i < dstMax; i++) {
+-        for (uint32_t i = dstIndex; i < dstMax; i++) {
++        uint32_t i = dstIndex;
++        // Independent vertices expose transform/division latency to the CPU.
++        // Keep each vertex's arithmetic and camera basis exactly unchanged.
++        for (; i + 1 < dstMax; i += 2) {
++            const hlslpp::float4 a = hlslpp::mul(hlslpp::float4(posFloats[floatIndex], posFloats[floatIndex + 1], posFloats[floatIndex + 2], 1.0f), mvp);
++            const hlslpp::float4 b = hlslpp::mul(hlslpp::float4(posFloats[floatIndex + 3], posFloats[floatIndex + 4], posFloats[floatIndex + 5], 1.0f), mvp);
++            transformedOutput[0] = a;
++            transformedOutput[1] = b;
++            screenOutput[0] = (a.xyz / hlslpp::float3(a.w, -a.w, a.w)) * viewport.scale + viewport.translate;
++            screenOutput[1] = (b.xyz / hlslpp::float3(b.w, -b.w, b.w)) * viewport.scale + viewport.translate;
++            transformedOutput += 2;
++            screenOutput += 2;
++            floatIndex += 6;
++        }
++        for (; i < dstMax; i++) {
              const hlslpp::float4 tfPos = hlslpp::mul(hlslpp::float4(posFloats[floatIndex + 0], posFloats[floatIndex + 1], posFloats[floatIndex + 2], 1.0f), mvp);
 -            const interop::RSPViewport &viewport = viewportStack[viewportStackSize - 1];
 -            posTransformed.emplace_back(tfPos);
@@ -2111,7 +2335,7 @@ index ee2030b..b797714 100644
              floatIndex += 3;
          }
  
-@@ -719,8 +778,8 @@ namespace RT64 {
+@@ -719,8 +793,8 @@ namespace RT64 {
              const float TextureSc = static_cast<float>(textureState.sc);
              const float TextureTc = static_cast<float>(textureState.tc);
              for (uint32_t i = dstIndex; i < dstMax; i++) {
@@ -2122,7 +2346,7 @@ index ee2030b..b797714 100644
              }
          }
          else {
-@@ -728,8 +787,8 @@ namespace RT64 {
+@@ -728,8 +802,8 @@ namespace RT64 {
              const int32_t TextureTc = (int32_t)(textureState.tc);
              const double Divisor = 65536.0f * 32.0f;
              for (uint32_t i = dstIndex; i < dstMax; i++) {
@@ -2133,7 +2357,7 @@ index ee2030b..b797714 100644
              }
          }
      }
-@@ -988,8 +1047,24 @@ namespace RT64 {
+@@ -988,8 +1062,24 @@ namespace RT64 {
      }
  
      void RSP::setFog(int16_t mul, int16_t offset) {
@@ -2160,7 +2384,7 @@ index ee2030b..b797714 100644
          fogChanged = true;
      }
      
-@@ -1050,6 +1125,7 @@ namespace RT64 {
+@@ -1050,6 +1140,7 @@ namespace RT64 {
      }
  
      void RSP::drawIndexedTri(uint32_t a, uint32_t b, uint32_t c, bool rawGlobalIndices) {
@@ -2168,7 +2392,7 @@ index ee2030b..b797714 100644
          // Copy mode is not supported when drawing regular tris and crashes the hardware.
          const uint32_t cycleType = state->rdp->otherMode.cycleType();
          assert(cycleType != G_CYC_COPY);
-@@ -1166,6 +1242,123 @@ namespace RT64 {
+@@ -1166,6 +1257,124 @@ namespace RT64 {
          drawIndexedTri(a, b, c, false);
      }
  
@@ -2248,8 +2472,9 @@ index ee2030b..b797714 100644
 +                    const uint32_t l = local[i];
 +                    if (!screenReady[l]) {
 +                        const hlslpp::float3 &p = data.posScreen[global[i]];
++                        const auto rounded = hlslpp::ceil(p.xy) * 4.0f;
 +                        screenBounds[l] = {int32_t(p[0] * 4.0f), int32_t(p[1] * 4.0f),
-+                            int32_t(hlslpp::ceil(p.x).x * 4.0f), int32_t(hlslpp::ceil(p.y).x * 4.0f)};
++                            int32_t(rounded[0]), int32_t(rounded[1])};
 +                        screenReady[l] = true;
 +                    }
 +                    const auto &b = screenBounds[l];
@@ -2292,7 +2517,7 @@ index ee2030b..b797714 100644
      void RSP::setViewportAlign(uint16_t ori, int16_t offx, int16_t offy) {
          extended.global.viewportOrigin = ori;
          extended.global.viewportOffsetX = offx;
-@@ -1310,3 +1503,4 @@ namespace RT64 {
+@@ -1310,3 +1519,4 @@ namespace RT64 {
          }
      }
  };
@@ -2859,7 +3084,7 @@ index 5b70e01..3b188ec 100644
  };
 \ No newline at end of file
 diff --git a/src/hle/rt64_workload.cpp b/src/hle/rt64_workload.cpp
-index b4c85f5..4ee7eba 100644
+index b4c85f5..97bd8fe 100644
 --- a/src/hle/rt64_workload.cpp
 +++ b/src/hle/rt64_workload.cpp
 @@ -19,6 +19,11 @@ namespace RT64 {
@@ -2874,19 +3099,47 @@ index b4c85f5..4ee7eba 100644
          workloadId = 0;
          extended.testZIndexCount = 0;
          extended.ditherNoiseStrength = 1.0f;
+@@ -43,6 +48,7 @@ namespace RT64 {
+     }
+ 
+     void Workload::resetDrawData() {
++        for (auto &certificate : rr64GeometryCache) { certificate.reset(); }
+         drawData.posFloats.clear();
+         drawData.velFloats.clear();
+         drawData.tcFloats.clear();
+@@ -323,4 +329,4 @@ namespace RT64 {
+             return 0;
+         }
+     }
+-};
+\ No newline at end of file
++};
 diff --git a/src/hle/rt64_workload.h b/src/hle/rt64_workload.h
-index 8ea27d5..8c5a7e0 100644
+index 8ea27d5..75bdf28 100644
 --- a/src/hle/rt64_workload.h
 +++ b/src/hle/rt64_workload.h
-@@ -21,6 +21,7 @@
+@@ -21,8 +21,10 @@
  #include "rt64_framebuffer_pair.h"
  #include "rt64_framebuffer_storage.h"
  #include "rt64_transform_group.h"
 +#include "rt64_rr64_frame_metadata.h"
  
  namespace RT64 {
++    struct RR64WorkloadGeometry;
      struct DrawData {
-@@ -225,6 +226,11 @@ namespace RT64 {
+         std::vector<float> posFloats;
+         std::vector<float> velFloats;
+@@ -211,6 +213,9 @@ namespace RT64 {
+ 
+     struct Workload {
+         uint64_t submissionFrame;
++        // Geometry evidence belongs to this submitted workload, never its reused
++        // queue index. Full and translation-rejected certificates differ.
++        std::shared_ptr<const RR64WorkloadGeometry> rr64GeometryCache[2];
+         DrawData drawData;
+         DrawRanges drawRanges;
+         DrawBuffers drawBuffers;
+@@ -225,6 +230,11 @@ namespace RT64 {
          FramebufferChangePool fbChangePool;
          FramebufferStorage fbStorage;
          uint32_t viOriginalRate;
@@ -2898,8 +3151,15 @@ index 8ea27d5..8c5a7e0 100644
          hlslpp::uint2 viFbSize = {};
          DebuggerRenderer debuggerRenderer;
          DebuggerCamera debuggerCamera;
+@@ -254,4 +264,4 @@ namespace RT64 {
+         bool addFramebufferPair(uint32_t colorAddress, uint8_t colorFmt, uint8_t colorSiz, uint16_t colorWidth, uint32_t depthAddress);
+         int currentFramebufferPairIndex() const;
+     };
+-};
+\ No newline at end of file
++};
 diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
-index 5a331aa..31155fc 100644
+index 5a331aa..366cb5e 100644
 --- a/src/hle/rt64_workload_queue.cpp
 +++ b/src/hle/rt64_workload_queue.cpp
 @@ -5,8 +5,25 @@
@@ -3386,8 +3646,8 @@ index 5a331aa..31155fc 100644
 +                    !curFrame.isDebuggerCameraEnabled(*this) && (curFrame.workloads.size() == 1) &&
 +                    (workloadConfig.targetRate > 0) &&
 +                    (!displayRateAboveOriginal ||
-+                        (((workloadConfig.targetRate % workload.viOriginalRate) == 0) &&
-+                        ((workloadConfig.targetRate / workload.viOriginalRate) <= 8u)));
++                        RR64FramePacing::validGeneratedFrameCount(workloadConfig.targetRate,
++                            workload.viOriginalRate, workloadConfig.targetRate / workload.viOriginalRate));
 +                for (uint32_t f = 0; f < workload.fbPairCount; f++) {
 +                    // Cross-buffer copies/CPU edits need composition across
 +                    // workloads. This bounded path uses only self-contained
@@ -4458,10 +4718,19 @@ index cd8004d..5c9ad2d 100644
                          invTMatrix = hlslpp::transpose(invMatrix);
                          lerpWorldTransforms.emplace_back(curMatrix);
 diff --git a/src/render/rt64_vi_renderer.cpp b/src/render/rt64_vi_renderer.cpp
-index b4ff4e9..6921665 100644
+index b4ff4e9..906fb11 100644
 --- a/src/render/rt64_vi_renderer.cpp
 +++ b/src/render/rt64_vi_renderer.cpp
-@@ -23,7 +23,14 @@ namespace RT64 {
+@@ -3,6 +3,8 @@
+ //
+ 
+ #include "rt64_vi_renderer.h"
++#include "common/rt64_rr64_menu_borders.h"
++#include <algorithm>
+ 
+ #include "shared/rt64_hlsl.h"
+ #include "shared/rt64_video_interface.h"
+@@ -23,7 +25,14 @@ namespace RT64 {
          return coordinate * relativeScale;
      }
  
@@ -4477,7 +4746,7 @@ index b4ff4e9..6921665 100644
          const hlslpp::float2 hdCenter = hdSize / 2;
          const hlslpp::float2 windowCenter = windowSize / 2;
          const hlslpp::float2 relativeCoordinate = { coordinate.x - hdCenter.x, coordinate.y - hdCenter.y };
-@@ -66,10 +73,9 @@ namespace RT64 {
+@@ -66,10 +75,21 @@ namespace RT64 {
          }
  
          descriptorSet->setTexture(descriptorSet->gInput, p.texture, RenderTextureLayout::SHADER_READ);
@@ -4486,10 +4755,22 @@ index b4ff4e9..6921665 100644
          RenderRect scissor;
 -        getViewportAndScissor(p.swapChain, *p.vi, p.resolutionScale, p.downsamplingScale, p.removeBlackBorders, viewport, scissor);
 +        getViewportAndScissor(p.swapChain, *p.vi, p.resolutionScale, p.downsamplingScale, p.removeBlackBorders, p.stretchToWindow, viewport, scissor);
++        // Menu artwork remains centered at its authored width. The widened
++        // target's unused margins may contain the guest's last sky clear color.
++        // Clip only those margins; the swapchain was already cleared to black.
++        // Keep the sampling viewport unchanged so neither the menu nor its 3D
++        // preview stretches. Race, pause and finish-camera frames bypass this.
++        if (p.nativeMenuBorders && p.resolutionScale.x > p.resolutionScale.y &&
++            p.resolutionScale.y > 0.0f) {
++            const auto bounds = RR64MenuBorders::bounds(true, viewport.x, viewport.width,
++                p.resolutionScale.x, p.resolutionScale.y);
++            scissor.left = std::max(scissor.left, bounds.first);
++            scissor.right = std::min(scissor.right, bounds.second);
++        }
          p.commandList->setViewports(viewport);
          p.commandList->setScissors(scissor);
  
-@@ -77,7 +83,6 @@ namespace RT64 {
+@@ -77,7 +97,6 @@ namespace RT64 {
          pushConstants.videoResolution = computeHDSize(hlslpp::float2(p.vi->fbSize()), p.resolutionScale, p.downsamplingScale);
          pushConstants.textureResolution = { float(p.textureWidth), float(p.textureHeight) };
          pushConstants.gamma = p.vi->gamma();
@@ -4497,7 +4778,7 @@ index b4ff4e9..6921665 100644
          p.commandList->setPipeline(shader->pipeline.get());
          p.commandList->setGraphicsPipelineLayout(shader->pipelineLayout.get());
          p.commandList->setGraphicsDescriptorSet(descriptorSet->get(), 0);
-@@ -86,7 +91,7 @@ namespace RT64 {
+@@ -86,7 +105,7 @@ namespace RT64 {
          p.commandList->drawInstanced(3, 1, 0, 0);
      }
  
@@ -4506,7 +4787,7 @@ index b4ff4e9..6921665 100644
          // We define three different coordinate spaces to work with to translate the VI parameters into the Window.
          //
          // VideoSD: This corresponds to the SD TV Scanline space, which is what the VI natively works on.
-@@ -111,13 +116,13 @@ namespace RT64 {
+@@ -111,15 +130,15 @@ namespace RT64 {
          // Scale all the rectangles to the space of the Window.
          hlslpp::float2 topLeftViewport = fromSDtoHD({ float(viViewRect.x), float(viViewRect.y) }, sdSize, hdSize);
          hlslpp::float2 bottomRightViewport = fromSDtoHD({ float(viViewRect.x + viViewRect.z), float(viViewRect.y + viViewRect.w) }, sdSize, hdSize);
@@ -4524,15 +4805,20 @@ index b4ff4e9..6921665 100644
  
          viewport = RenderViewport(topLeftViewport.x, topLeftViewport.y, bottomRightViewport.x - topLeftViewport.x, bottomRightViewport.y - topLeftViewport.y);
          scissor = RenderRect(lround(topLeftScissor.x), lround(topLeftScissor.y), lround(bottomRightScissor.x), lround(bottomRightScissor.y));
+     }
+-};
+\ No newline at end of file
++};
 diff --git a/src/render/rt64_vi_renderer.h b/src/render/rt64_vi_renderer.h
-index 8a3782a..28d800a 100644
+index 8a3782a..ecf82c0 100644
 --- a/src/render/rt64_vi_renderer.h
 +++ b/src/render/rt64_vi_renderer.h
-@@ -29,11 +29,12 @@ namespace RT64 {
+@@ -29,11 +29,13 @@ namespace RT64 {
              UserConfiguration::Filtering filtering = UserConfiguration::Filtering::Linear;
              const VI *vi = nullptr;
              bool removeBlackBorders = false;
 +            bool stretchToWindow = false;
++            bool nativeMenuBorders = false;
          };
  
          VIRenderer();
@@ -4541,8 +4827,9 @@ index 8a3782a..28d800a 100644
 -        static void getViewportAndScissor(const RenderSwapChain *swapChain, const VI &vi, hlslpp::float2 resolutionScale, uint32_t downsamplingScale, bool removeBlackBorders, RenderViewport &viewport, RenderRect &scissor);
 +        static void getViewportAndScissor(const RenderSwapChain *swapChain, const VI &vi, hlslpp::float2 resolutionScale, uint32_t downsamplingScale, bool removeBlackBorders, bool stretchToWindow, RenderViewport &viewport, RenderRect &scissor);
      };
- };
+-};
 \ No newline at end of file
++};
 diff --git a/src/tools/texture_packer/texture_packer.cpp b/src/tools/texture_packer/texture_packer.cpp
 index 1f5ccaf..abcb963 100644
 --- a/src/tools/texture_packer/texture_packer.cpp
