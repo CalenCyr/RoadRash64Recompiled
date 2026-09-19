@@ -1,3 +1,8 @@
+#include "rr64_netplay.hpp"
+#include "rr64_authoritative_eject.hpp"
+#include "rr64_prediction_context.hpp"
+#include "rr64_prediction_replay.hpp"
+#include "rr64_prediction_cop_state.hpp"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -63,7 +68,7 @@ std::atomic_bool gameplay_shortcuts_active{false};
 std::atomic_bool road_rumble_allowed{false};
 std::atomic_bool rumble_enabled{true};
 std::atomic_uint32_t rider_eject_requests{0};
-std::atomic_bool local_rider_has_fists_selected{true};
+std::array<std::atomic_bool, 4> local_rider_has_fists_selected{{true, true, true, true}};
 std::atomic_uint32_t audio_timeline_epoch{0};
 std::atomic_bool maximum_view_distance_enabled{false};
 std::atomic_bool player_started_title_session{false};
@@ -78,13 +83,9 @@ struct LocalBikeMotionSample {
 LocalBikeMotionSample local_bike_motion{};
 bool local_bike_has_moved_since_race_start = false;
 
-struct ManualEjectDurabilityProtection {
-    std::uint32_t bike = 0;
-    float durability = 0.0f;
-    bool active = false;
-};
-
-std::array<ManualEjectDurabilityProtection, 4> manual_eject_protections{};
+rr64::prediction::ManualEjectState manual_eject_protections{};
+thread_local rr64::prediction::ManualEjectState replay_eject_protections{};
+thread_local std::uint64_t replay_eject_epoch=0;
 
 struct LodTraceState {
     uint16_t lod = 0xFFFF;
@@ -292,6 +293,9 @@ extern "C" void rr64_trace_race_frame(unsigned char *rdram, void *context, unsig
         rr64::engine::are_gameplay_shortcuts_active(mode, pending_mode, pause_menu_state);
     gameplay_shortcuts_active.store(live_gameplay_shortcuts, std::memory_order_release);
 
+    // Authority admits eject edges into the same sequenced stream as movement.
+    // The legacy physical-controller loop must not consume them first.
+    if(rr64::netplay::get_status().authoritative)return;
     const unsigned eject_requests = rider_eject_requests.exchange(0, std::memory_order_acq_rel);
     for (unsigned slot = 0; slot < 4; ++slot) {
         auto &manual_eject_durability = manual_eject_protections[slot];
@@ -398,12 +402,13 @@ extern "C" void rr64_trace_race_frame(unsigned char *rdram, void *context, unsig
 
     } // Per-player eject and durability protection.
 
+    for (unsigned slot = 0; slot < 4; ++slot) {
     bool fists_selected = true;
     if (race_shortcut_scene && rdram != nullptr) {
         std::uint32_t bike_pool = 0;
         std::uint32_t rider = 0;
         std::uint32_t selected_weapon = rr64::engine::rider::fists_weapon;
-        if (rr64::engine::read_u32(rdram, rr64::engine::globals::bike_pool_pointer, bike_pool) &&
+        if (rr64::local_eject::resolve_bike(rdram, slot, bike_pool) &&
             rr64::engine::valid_guest_range(bike_pool, rr64::engine::bike::stride) &&
             rr64::engine::read_u32(rdram, bike_pool + rr64::engine::bike::rider_pointer, rider) &&
             rr64::engine::valid_guest_range(rider, rr64::engine::rider::stride) &&
@@ -412,7 +417,8 @@ extern "C" void rr64_trace_race_frame(unsigned char *rdram, void *context, unsig
             fists_selected = rr64::engine::rider_has_fists_selected(selected_weapon);
         }
     }
-    local_rider_has_fists_selected.store(fists_selected, std::memory_order_release);
+    local_rider_has_fists_selected[slot].store(fists_selected, std::memory_order_release);
+    }
 
     bool local_bike_accepts_drive = false;
     if (live_gameplay_feedback && rdram != nullptr) {
@@ -559,8 +565,8 @@ extern "C" void rr64_request_rider_eject(unsigned int slot) {
         rider_eject_requests.fetch_or(1u << slot, std::memory_order_release);
 }
 
-extern "C" int rr64_local_rider_has_fists_selected() {
-    return local_rider_has_fists_selected.load(std::memory_order_acquire) ? 1 : 0;
+extern "C" int rr64_local_rider_has_fists_selected(unsigned slot) {
+    return slot >= 4 || local_rider_has_fists_selected[slot].load(std::memory_order_acquire) ? 1 : 0;
 }
 
 extern "C" unsigned int rr64_audio_timeline_epoch() {
@@ -569,7 +575,7 @@ extern "C" unsigned int rr64_audio_timeline_epoch() {
 
 extern "C" void rr64_combat_impact_rumble(unsigned char *rdram, unsigned int first_bike,
                                           unsigned int second_bike, unsigned int strength_percent) {
-    if (rdram == nullptr || !rumble_enabled.load(std::memory_order_acquire) ||
+    if (rr64::prediction::active() || rdram == nullptr || !rumble_enabled.load(std::memory_order_acquire) ||
         !gameplay_feedback_active.load(std::memory_order_acquire) ||
         recompinput::game_input_disabled()) {
         return;
@@ -1090,12 +1096,35 @@ extern "C" void rr64_trace_guest_input(unsigned int mode, unsigned int active_ma
     std::fflush(stderr);
 }
 
+#include "rr64_autotest_control.hpp"
+extern "C" void rr64_prediction_request_verification_restart();
 extern "C" void rr64_autotest_input(unsigned char *rdram, unsigned int mode) {
     static const bool enabled = environment_flag_enabled("RR64_AUTOTEST");
     static const bool drive_enabled = environment_flag_enabled("RR64_AUTOTEST_DRIVE");
     static const std::string requested_scenario = environment_text("RR64_AUTOTEST_SCENARIO");
 
     if (!enabled || rdram == nullptr) {
+        return;
+    }
+
+    static rr64::autotest::ControlFile control_file;
+    if(control_file.enabled()){
+        static std::uint16_t previous=0;
+        static std::uint64_t last_action_serial=0;
+        const auto control=control_file.sample();
+        if(control.serial && control.serial!=last_action_serial){
+            last_action_serial=control.serial;
+            if(control.actions&2)rr64_prediction_request_verification_restart();
+            if((control.actions&1) && race_mode_active.load(std::memory_order_relaxed))
+                rr64_request_rider_eject(0);
+        }
+        const auto changed=static_cast<std::uint16_t>(previous^control.buttons);
+        rr64::engine::write_u16(rdram,rr64::engine::globals::controller_buttons,control.buttons);
+        rr64::engine::write_u16(rdram,rr64::engine::globals::controller_changed_buttons,changed);
+        rr64::engine::write_u16(rdram,rr64::engine::globals::controller_pressed_buttons,changed&control.buttons);
+        rr64::engine::write_s8(rdram,rr64::engine::globals::controller_stick_x,control.x);
+        rr64::engine::write_s8(rdram,rr64::engine::globals::controller_stick_y,control.y);
+        previous=control.buttons;
         return;
     }
 
@@ -1251,7 +1280,7 @@ extern "C" void rr64_restore_manual_eject_health(unsigned char *m, unsigned acto
     std::uint32_t bike = 0;
     if (!read_u32(m, actor + 0xE0, bike))
         return;
-    for (const auto &manual_eject_durability : manual_eject_protections) {
+    for (const auto &manual_eject_durability : rr64::prediction::isolated_state(manual_eject_protections,replay_eject_protections,replay_eject_epoch)) {
         if (!manual_eject_durability.active || bike != manual_eject_durability.bike)
             continue;
         float health = 0;
@@ -1260,4 +1289,42 @@ extern "C" void rr64_restore_manual_eject_health(unsigned char *m, unsigned acto
             write_float(m, bike + rr64::engine::bike::durability_current,
                         manual_eject_durability.durability);
     }
+}
+
+namespace rr64::prediction {
+bool capture_manual_eject(ManualEjectState &out){
+    if(active())return false;out=manual_eject_protections;return true;
+}
+bool seed_manual_eject(const ManualEjectState &historical){
+    if(!active())return false;
+    isolated_state(manual_eject_protections,replay_eject_protections,replay_eject_epoch)=historical;return true;
+}
+void commit_manual_eject(const ManualEjectState &state) noexcept {if(!active())manual_eject_protections=state;}
+bool replay_manual_eject(ManualEjectState &out){
+    if(!active() || replay_eject_epoch!=replay_epoch)return false;
+    out=replay_eject_protections;return true;
+}
+}
+
+extern "C" unsigned rr64_authority_take_actions(unsigned controller) {
+    if(controller>=4)return 0;
+    const auto mask=1u<<controller;
+    return (rider_eject_requests.fetch_and(~mask,std::memory_order_acq_rel)&mask)
+        ? rr64::authority::action_eject : 0;
+}
+extern "C" int rr64_authority_eject_step(unsigned char *m,void *context,unsigned slot,unsigned actions) {
+    if(!context || (actions&~rr64::authority::allowed_actions))return 0;
+    auto &protections=rr64::prediction::isolated_state(manual_eject_protections,replay_eject_protections,replay_eject_epoch);
+    return rr64::authority::eject_step(m,slot,(actions&rr64::authority::action_eject)!=0,protections,[&](unsigned bike){
+        rr64::prediction::CpuContext saved;
+        recomp_context call{};
+        if(!saved.capture(*static_cast<recomp_context*>(context)) || !saved.restore(call))return false;
+        call.r4=rr64::engine::guest_address(bike);
+        func_8003F0E8(m,&call);
+        return true;
+    });
+}
+
+extern "C" void rr64_authority_reset_eject(){
+    if(!rr64::prediction::active())manual_eject_protections={};
 }

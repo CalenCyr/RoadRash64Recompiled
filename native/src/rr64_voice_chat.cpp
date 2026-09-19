@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <deque>
 #include <mutex>
@@ -14,6 +15,8 @@
 #include "opus.h"
 
 #include "rr64_netplay.hpp"
+#include "librecomp/config.hpp"
+#include <string>
 
 namespace rr64::voice_chat {
 namespace {
@@ -33,9 +36,21 @@ struct PlaybackState {
     std::int16_t current = 0;
     std::int16_t next = 0;
     bool primed = false;
+    float pan = 0;
+    float pitch = 1;
 };
 
 std::atomic_bool g_enabled = true;
+std::atomic_bool g_muted=false;
+std::atomic<float> g_input_gain=1.f,g_output_gain=1.f,g_threshold=0.01f;
+std::atomic<float> g_flyby_strength=1.f;
+struct MotionSample {float distance=0,pitch=1;std::uint64_t local_tick=0,remote_tick=0;
+    std::chrono::steady_clock::time_point at{};bool detached=false,valid=false;};
+std::array<MotionSample,netplay::kMaximumPlayers> g_motion{};
+std::mutex g_settings_mutex;
+std::string g_microphone, g_open_microphone;
+std::vector<std::string> g_devices;
+unsigned g_gate_hold=0;
 SDL_AudioDeviceID g_capture_device = 0;
 OpusEncoder *g_encoder = nullptr;
 std::array<OpusDecoder *, netplay::kMaximumPlayers> g_decoders{};
@@ -43,13 +58,16 @@ std::array<PlaybackState, netplay::kMaximumPlayers> g_playback{};
 std::mutex g_playback_mutex;
 bool g_race_active = false;
 bool g_capture_failure_reported = false;
+std::chrono::steady_clock::time_point g_next_capture_attempt{};
 
 void clear_playback() {
     std::lock_guard lock(g_playback_mutex);
     g_playback = {};
+    g_motion = {};
 }
 
 void close_capture() {
+    g_gate_hold=0;
     if (g_capture_device != 0) {
         SDL_PauseAudioDevice(g_capture_device, 1);
         SDL_ClearQueuedAudio(g_capture_device);
@@ -70,6 +88,15 @@ void reset_codecs() {
 }
 
 bool ensure_capture() {
+    std::string selected;
+    {std::lock_guard lock(g_settings_mutex);selected=g_microphone;}
+    if(selected!=g_open_microphone){close_capture();g_open_microphone=selected;g_next_capture_attempt={};}
+    if(g_capture_device && SDL_GetAudioDeviceStatus(g_capture_device)==SDL_AUDIO_STOPPED)close_capture();
+    if(g_capture_device!=0) return true;
+    const auto now=std::chrono::steady_clock::now();
+    if(now<g_next_capture_attempt) return false;
+    // Missing/busy devices should not trigger an expensive open every 5 ms.
+    g_next_capture_attempt=now+std::chrono::seconds(1);
     if (g_encoder == nullptr) {
         int error = OPUS_OK;
         g_encoder = opus_encoder_create(kVoiceRate, 1, OPUS_APPLICATION_VOIP, &error);
@@ -96,7 +123,7 @@ bool ensure_capture() {
     desired.samples = kFrameSamples;
     desired.callback = nullptr;
     SDL_AudioSpec obtained{};
-    g_capture_device = SDL_OpenAudioDevice(nullptr, 1, &desired, &obtained, 0);
+    g_capture_device = SDL_OpenAudioDevice(selected.empty()?nullptr:selected.c_str(), 1, &desired, &obtained, 0);
     if (g_capture_device == 0) {
         if (!g_capture_failure_reported) {
             std::fprintf(stderr, "[RR64-VOICE] Microphone unavailable: %s\n", SDL_GetError());
@@ -105,6 +132,7 @@ bool ensure_capture() {
         return false;
     }
     g_capture_failure_reported = false;
+    g_next_capture_attempt={};
     SDL_PauseAudioDevice(g_capture_device, 0);
     std::fprintf(stderr, "[RR64-VOICE] Race microphone active at 48 kHz mono.\n");
     return true;
@@ -144,6 +172,11 @@ void capture_frames() {
         if (SDL_DequeueAudio(g_capture_device, pcm.data(), frame_bytes) != frame_bytes) {
             break;
         }
+        const float gain=g_input_gain.load();
+        if(gate_level(pcm,gain)>=g_threshold.load())g_gate_hold=12; // 240ms release avoids clipped syllables.
+        else if(g_gate_hold) --g_gate_hold;
+        else continue;
+        for(auto &sample:pcm)sample=static_cast<std::int16_t>(std::clamp(std::lround(sample*gain),-32768l,32767l));
         const int encoded_size = opus_encode(g_encoder, pcm.data(), kFrameSamples, encoded.data(),
                                              static_cast<opus_int32>(encoded.size()));
         if (encoded_size > 0) {
@@ -190,26 +223,52 @@ void update_spatial_gains(const netplay::Status &status) {
                            netplay::get_rider_state(status.local_slot, local);
 
     std::array<float, netplay::kMaximumPlayers> gains{};
-    if (has_local) {
+    std::array<float, netplay::kMaximumPlayers> pans{};
+    std::array<float, netplay::kMaximumPlayers> pitches;pitches.fill(1.f);
+    const auto now=std::chrono::steady_clock::now();
+    const auto has_body=[](const netplay::RiderState &r){
+        return r.active && r.rider_position_valid && std::isfinite(r.rider_x) &&
+               std::isfinite(r.rider_y) && std::isfinite(r.rider_z);
+    };
+    if (has_local && has_body(local)) {
         for (std::uint8_t slot = 0; slot < netplay::kMaximumPlayers; ++slot) {
             if (slot == status.local_slot || !status.players[slot].connected) {
                 continue;
             }
             netplay::RiderState remote{};
-            if (!netplay::get_rider_state(slot, remote)) {
+            if (!netplay::get_rider_state(slot, remote) || !has_body(remote)) {
                 continue;
             }
-            const float dx = remote.position_x - local.position_x;
-            const float dy = remote.position_y - local.position_y;
-            const float dz = remote.position_z - local.position_z;
-            gains[slot] = proximity_gain(std::sqrt(dx * dx + dy * dy + dz * dz));
+            // Speech and hearing originate at the bodies in every state.
+            // Missing body data silences playback; never substitute bike position.
+            const float dx = remote.rider_x-local.rider_x;
+            const float dy = remote.rider_y-local.rider_y;
+            const float dz = remote.rider_z-local.rider_z;
+            const float distance=std::sqrt(dx * dx + dy * dy + dz * dz);
+            gains[slot] = proximity_gain(distance);
+            pans[slot]=direction_pan(dx,dz,local.front_wheel_x-local.rear_wheel_x,local.front_wheel_z-local.rear_wheel_z);
+            auto &motion=g_motion[slot];
+            const bool detached=remote.root.valid && !remote.root.rider_attached;
+            if(motion.local_tick!=local.tick || motion.remote_tick!=remote.tick || !motion.valid){
+                const float elapsed=std::chrono::duration<float>(now-motion.at).count();
+                if(!motion.valid || detached!=motion.detached)motion.pitch=1; // No pitch impulse on eject/remount.
+                else if(elapsed>=0.01f)motion.pitch=flyby_pitch(motion.distance,distance,elapsed,g_flyby_strength.load());
+                if(!motion.valid || elapsed>=0.01f){
+                    motion.distance=distance;motion.at=now;motion.valid=true;
+                    motion.local_tick=local.tick;motion.remote_tick=remote.tick;motion.detached=detached;
+                }
+            }
+            if(std::chrono::duration<float>(now-motion.at).count()<0.25f)pitches[slot]=motion.pitch;
         }
     }
 
     std::lock_guard lock(g_playback_mutex);
     for (std::size_t slot = 0; slot < g_playback.size(); ++slot) {
         g_playback[slot].target_gain = gains[slot];
+        g_playback[slot].pan+=(pans[slot]-g_playback[slot].pan)*0.18f;
+        g_playback[slot].pitch+=(pitches[slot]-g_playback[slot].pitch)*0.1f;
         if (gains[slot] <= 0.001f) {
+            g_motion[slot]={};
             g_playback[slot].samples.clear();
             g_playback[slot].primed = false;
         }
@@ -237,6 +296,40 @@ bool prime_playback(PlaybackState &playback) {
 
 } // namespace
 
+void apply_config(recomp::config::Config &config){
+    g_muted.store(std::get<bool>(config.get_option_value("rr64_mic_mute")));
+    g_input_gain.store(float(std::get<double>(config.get_option_value("rr64_mic_gain")))/100.f);
+    g_output_gain.store(float(std::get<double>(config.get_option_value("rr64_voice_volume")))/100.f);
+    g_flyby_strength.store(float(std::get<double>(config.get_option_value("rr64_voice_flyby")))/100.f);
+    const auto db=std::get<double>(config.get_option_value("rr64_mic_threshold"));
+    g_threshold.store(db<=-60?0.f:float(std::pow(10.,db/20.)));
+    const auto selected=std::get<std::uint32_t>(config.get_option_value("rr64_microphone"));
+    std::lock_guard lock(g_settings_mutex);
+    g_microphone=selected<g_devices.size()?g_devices[selected]:std::string{};
+}
+
+void configure(recomp::config::Config &config){
+    // Config enum keys persist the device name, not its changing SDL index.
+    g_devices={""};
+    std::vector<recomp::config::ConfigOptionEnumOption> choices{{0u,"system_default","System Default"}};
+    const int count=SDL_GetNumAudioDevices(1);
+    for(int i=0;i<count;++i){
+        const char *name=SDL_GetAudioDeviceName(i,1);
+        if(!name || !*name || std::find(g_devices.begin(),g_devices.end(),name)!=g_devices.end())continue;
+        const auto index=static_cast<unsigned>(g_devices.size());g_devices.emplace_back(name);
+        choices.emplace_back(index,"device:"+g_devices.back(),g_devices.back());
+    }
+    config.add_enum_option("rr64_microphone","Microphone",
+        "Select your voice input. Connect microphones before opening the game; restart to refresh this list. System Default follows your operating system. If a saved device is unavailable at startup, select it again when reconnected.",choices,0u);
+    config.add_bool_option("rr64_mic_mute","Mute Microphone","Stops microphone capture without muting other players.",false);
+    config.add_number_option("rr64_mic_gain","Microphone Gain","Input level in percent. Lower this if your voice distorts.",0,200,5,0,false,100);
+    config.add_number_option("rr64_mic_threshold","Voice Activation Threshold","Level in dB. Lower values pick up quieter speech; higher values reject more background noise. -60 keeps the microphone open during online races.",-60,-10,1,0,false,-40);
+    config.add_number_option("rr64_voice_volume","Voice Chat Volume","Other players' voice volume in percent, separate from music and effects.",0,200,5,0,false,100);
+    config.add_number_option("rr64_voice_flyby","Voice Fly-by Effect","Subtle pitch shift as riders approach or move away, including airborne crashes. 0 disables pitch changes; direction and distance still apply.",0,100,5,0,false,100);
+    for(const auto *key:{"rr64_microphone","rr64_mic_mute","rr64_mic_gain","rr64_mic_threshold","rr64_voice_volume","rr64_voice_flyby"})
+        config.add_option_change_callback(key,[&config](auto,auto,auto){apply_config(config);});
+}
+
 void set_enabled(bool enabled_value) {
     g_enabled.store(enabled_value, std::memory_order_release);
 }
@@ -248,7 +341,7 @@ bool enabled() {
 void update() {
     const netplay::Status status = netplay::get_status();
     const bool active =
-        enabled() && status.active && status.connected && status.phase == netplay::Phase::Race;
+        enabled() && status.active && status.connected && !status.host_disconnected && status.phase == netplay::Phase::Race;
     if (!active) {
         netplay::take_received_voice_frames();
         if (g_race_active) {
@@ -262,7 +355,7 @@ void update() {
     }
 
     g_race_active = true;
-    capture_frames();
+    if(g_muted.load())close_capture();else capture_frames();
     update_spatial_gains(status);
     decode_received_frames();
 }
@@ -278,6 +371,9 @@ void mix(std::span<std::int16_t> stereo_samples, std::uint32_t output_rate) {
         if (playback.gain <= 0.001f || !prime_playback(playback)) {
             continue;
         }
+        const float volume=g_output_gain.load();
+        const float left=std::sqrt((1.f-playback.pan)*0.5f)*volume;
+        const float right=std::sqrt((1.f+playback.pan)*0.5f)*volume;
         for (std::size_t output = 0; output + 1 < stereo_samples.size(); output += 2) {
             const float interpolated =
                 static_cast<float>(playback.current) +
@@ -286,11 +382,11 @@ void mix(std::span<std::int16_t> stereo_samples, std::uint32_t output_rate) {
             const int voice =
                 static_cast<int>(std::lround(interpolated * playback.gain * kVoiceMixGain));
             stereo_samples[output] = static_cast<std::int16_t>(
-                std::clamp(static_cast<int>(stereo_samples[output]) + voice, -32768, 32767));
+                std::clamp(static_cast<int>(stereo_samples[output]) + int(std::lround(voice*left)), -32768, 32767));
             stereo_samples[output + 1] = static_cast<std::int16_t>(
-                std::clamp(static_cast<int>(stereo_samples[output + 1]) + voice, -32768, 32767));
+                std::clamp(static_cast<int>(stereo_samples[output + 1]) + int(std::lround(voice*right)), -32768, 32767));
 
-            playback.phase += source_step;
+            playback.phase += source_step*playback.pitch;
             while (playback.phase >= 1.0) {
                 playback.phase -= 1.0;
                 playback.current = playback.next;

@@ -3,6 +3,7 @@
 #include "rr64_engine_layout.hpp"
 #include "rr64_local_players.hpp"
 #include "rr64_netplay.hpp"
+#include "rr64_prediction_rules.hpp"
 #include "librecomp/addresses.hpp"
 #include <atomic>
 #include <fstream>
@@ -14,21 +15,29 @@ namespace {
 using namespace rr64::engine;
 namespace layout = rr64::engine::local_race;
 std::atomic<unsigned> saved{0}, revision{0};
+std::atomic<unsigned> online_saved{0};
+unsigned choices() {
+    return rr64::netplay::get_status().active ? online_saved.load(std::memory_order_acquire)
+                                              : saved.load(std::memory_order_acquire);
+}
 unsigned written_revision = 0;
 std::filesystem::path settings_path;
 bool initialized = false, menu_active = false, restore_choices = true;
 // Packed preferences: AI count [0:3], pedestrian density [4:5], bike choice
-// [6:8], Custom Cop Mode [9]. Bike choice 0 follows the track; 1..7 use stock indices 0..6.
+// [6:8], Custom Cop Mode [9], allow AI cops [10] (off for old presets). Bike choice 0 follows the
+// track; 1..7 use stock indices 0..6.
 unsigned race_bike_choice = 0;
 void save(unsigned bits) {
+    if (rr64::netplay::get_status().active) {
+        online_saved.store(bits, std::memory_order_release);
+        return;
+    }
     if (saved.exchange(bits, std::memory_order_acq_rel) != bits)
         revision.fetch_add(1, std::memory_order_release);
 }
 unsigned table_address = 0;
 unsigned char *table_owner = nullptr;
-unsigned read(unsigned char *rdram, unsigned a) {
-    return MEM_W(0, guest_address(a));
-}
+unsigned read(unsigned char *rdram, unsigned a) { return MEM_W(0, guest_address(a)); }
 void write(unsigned char *m, unsigned a, unsigned v) {
     auto *rdram = m;
     MEM_W(0, guest_address(a)) = v;
@@ -46,8 +55,10 @@ void text(unsigned char *rdram, unsigned address, const char *value) {
     MEM_B(23, guest_address(address)) = 0;
 }
 bool local() {
-    return rr64::local_players::active.load(std::memory_order_acquire) &&
-           !rr64::netplay::get_status().active;
+    const auto status = rr64::netplay::get_status();
+    if (status.active)
+        return status.connected && !status.replicated_riders;
+    return rr64::local_players::active.load(std::memory_order_acquire);
 }
 unsigned menu_humans(unsigned char *rdram) {
     const unsigned count = read(rdram, layout::menu_humans);
@@ -62,7 +73,7 @@ bool make_table(unsigned char *rdram) {
         table_address = 0;
     }
     if (!table_address) {
-        auto *host = static_cast<unsigned char *>(recomp::alloc(rdram, 11 * 36));
+        auto *host = static_cast<unsigned char *>(recomp::alloc(rdram, 12 * 36));
         if (!host)
             return false;
         table_address = 0x80000000u + static_cast<unsigned>(host - rdram);
@@ -70,31 +81,40 @@ bool make_table(unsigned char *rdram) {
     // Copy stock records, keeping their colors, font, alignment and animation.
     for (unsigned i = 0; i < 8 * 36; i += 4)
         write(rdram, table_address + i, read(rdram, layout::menu_table + i));
-    for (unsigned row : {8u, 9u})
+    for (unsigned row : {8u, 9u, 10u})
         for (unsigned i = 0; i < 36; i += 4)
             write(rdram, table_address + row * 36 + i,
                   read(rdram, layout::menu_table + 7 * 36 + i));
     for (unsigned i = 0; i < 36; i += 4)
-        write(rdram, table_address + 10 * 36 + i, 0);
+        write(rdram, table_address + 11 * 36 + i, 0);
     // Y is absolute when positive and advances by -Y otherwise. Leave space
-    // for all seven option rows, including modes that show the extra stock row.
-    // Smaller glyphs with fourteen-pixel line spacing avoid the previous overlap.
+    // for the stock rows and optional Custom Cop rows. Compact option rows
+    // use twelve-pixel spacing below the three larger header rows.
     write(rdram, table_address + 8, 0x42600000u); // 56.0f, below the title
     for (unsigned row = 0; row <= 2; ++row) {
         write(rdram, table_address + row * 36 + 0x1C, 0x3F400000u); // 0.75f
         if (row)
             write(rdram, table_address + row * 36 + 8, 0xC1A00000u); // -20.0f
     }
-    for (unsigned row = 3; row <= 9; ++row) {
+    for (unsigned row = 3; row <= 10; ++row) {
         write(rdram, table_address + row * 36 + 8,
-              row == 3 ? 0xC1A00000u : 0xC1600000u);                // heading gap 20, rows 14
+              row == 3 ? 0xC1A00000u : 0xC1400000u);                // heading gap 20, rows 12
         write(rdram, table_address + row * 36 + 0x1C, 0x3F200000u); // 0.625f
     }
     return true;
 }
-}
+} // namespace
 
 namespace rr64::local_race_options {
+void reset_online() {
+    online_saved.store(saved.load(std::memory_order_acquire), std::memory_order_release);
+    restore_choices = true;
+}
+unsigned online_options() { return online_saved.load(std::memory_order_acquire); }
+void apply_online_options(unsigned bits) {
+    if (valid_online_options(bits))
+        online_saved.store(bits, std::memory_order_release);
+}
 void initialize(const std::filesystem::path &directory) {
     if (initialized)
         return;
@@ -107,7 +127,10 @@ void initialize(const std::filesystem::path &directory) {
             // Preserve the old Off/full-field and Match Track/Level 1 choices.
             saved.store((bits & 1 ? 10u : 0u) | (((bits >> 1) & 3) << 4) | ((bits & 8) ? 64u : 0u));
             revision.fetch_add(1);
-        } else if ((version == 2 || version == 3) && bits <= (version == 2 ? 511u : 1023u) &&
+        } else if ((version == 2 || version == 3 || version == 4) &&
+                   bits <= (version == 2   ? 511u
+                            : version == 3 ? 1023u
+                                           : 2047u) &&
                    (bits & 15) <= 10) {
             saved.store(bits);
         }
@@ -118,25 +141,35 @@ void flush() {
     if (!initialized || current == written_revision)
         return;
     std::ofstream file(settings_path, std::ios::trunc);
-    file << "3 " << saved.load(std::memory_order_acquire) << '\n';
+    file << "4 " << saved.load(std::memory_order_acquire) << '\n';
     file.close();
     if (file)
         written_revision = current;
 }
-}
+} // namespace rr64::local_race_options
 
 // The stock recovery routine also runs a route-boundary timer (+858).
 // Local humans may roam while mounted; actual crashes, ejects, busts and
 // exhausted durability still need its original recovery/death decisions.
 extern "C" int rr64_local_player_roaming(unsigned char *rdram, unsigned actor) {
-    if (!local())
-        return 0;
-    const unsigned humans = read(rdram, layout::humans);
     constexpr unsigned first_actor = 0x800D8570, actor_stride = 0x118;
-    if (humans < 1 || humans > 4 || actor < first_actor ||
-        (actor - first_actor) % actor_stride != 0 ||
-        (actor - first_actor) / actor_stride >= humans)
+    if (actor < first_actor || (actor - first_actor) % actor_stride != 0 ||
+        (actor - first_actor) / actor_stride >= kMaximumRacers)
         return 0;
+    const unsigned slot = (actor - first_actor) / actor_stride;
+    // Authority uses stable actor-slot bits, not four local camera/controller
+    // slots. Replay must see its captured rules, not today's transport state.
+    const auto status = rr64::prediction::status_for_rules();
+    if (status.active && status.authoritative) {
+        if (!status.connected || (status.authority_humans & (1u << slot)) == 0)
+            return 0;
+    } else {
+        const bool enabled = status.active ? status.connected && !status.replicated_riders
+                                           : rr64::local_players::active.load();
+        const unsigned humans = read(rdram, layout::humans);
+        if (!enabled || humans < 1 || humans > 4 || slot >= humans)
+            return 0;
+    }
     const unsigned bike = read(rdram, actor + 0xE0);
     const unsigned rider = read(rdram, actor + 0xE4);
     const unsigned state = read(rdram, actor + 0xE8);
@@ -160,8 +193,33 @@ extern "C" void rr64_local_options_menu_begin(unsigned char *rdram) {
     if (read(rdram, globals::multiplayer_stage) != 1)
         restore_choices = true;
 }
-extern "C" int rr64_custom_cop_enabled() {
-    return local() && (saved.load() & 512u);
+extern "C" int rr64_custom_cop_enabled() { return local() && (choices() & 512u); }
+// Native 516B8 has already reserved human profiles at this point. Its remaining
+// category counts at sp+70 drive AI profile selection, including police (7).
+// Replace that category with regular racers before models/physics are built;
+// never edit already-spawned actors or the human controller/selection records.
+extern "C" void rr64_custom_cop_ai_pool(unsigned char *rdram, void *context) {
+    if (!context || !rr64_custom_cop_active() || (choices() & 1024u))
+        return;
+    auto &c = *static_cast<recomp_context *>(context);
+    const unsigned pool = static_cast<unsigned>(c.r29) + 0x70;
+    if (!valid_guest_range(pool, 9 * 4))
+        return;
+    const unsigned police = read(rdram, pool + 7 * 4);
+    if (!police || police > 14)
+        return;
+    unsigned regular = 5;
+    for (unsigned category : {5u, 6u, 8u})
+        if (read(rdram, pool + category * 4)) {
+            regular = category;
+            break;
+        }
+    const unsigned racers = read(rdram, pool + regular * 4);
+    if (racers > 14 - police)
+        return;
+    write(rdram, pool + regular * 4, racers + police);
+    write(rdram, pool + 7 * 4, 0);
+    c.r21 = 0; // native police speed/profile partition, now empty
 }
 extern "C" void rr64_local_options_reset_race() {
     race_bike_choice = 0;
@@ -173,7 +231,7 @@ extern "C" int rr64_local_options_input(unsigned char *rdram) {
         restore_choices = true;
         return 0;
     }
-    unsigned bits = saved.load(std::memory_order_acquire);
+    unsigned bits = choices();
     if (restore_choices) {
         write(rdram, layout::pedestrian_choice, (bits >> 4) & 3);
         write(rdram, layout::menu_dirty, 1);
@@ -181,18 +239,19 @@ extern "C" int rr64_local_options_input(unsigned char *rdram) {
     }
     const unsigned row = read(rdram, layout::menu_cursor);
     const unsigned buttons = read(rdram, layout::menu_buttons) & 0x60;
-    if ((row == 4 || row == 8 || row == 9) && buttons) {
+    if ((row == 4 || row == 8 || row == 9 || (row == 10 && (bits & 512u))) && buttons) {
         const bool increase = (buttons & 0x40) != 0;
         const unsigned maximum = row == 4   ? rr64::local_race_options::max_ai(menu_humans(rdram))
                                  : row == 8 ? 7
                                             : 1;
         unsigned value = row == 4   ? ai_count(bits, menu_humans(rdram))
                          : row == 8 ? (bits >> 6) & 7
-                                    : (bits >> 9) & 1;
+                                    : (bits >> (row == 10 ? 10 : 9)) & 1;
         value = increase ? (value < maximum ? value + 1 : 0) : (value ? value - 1 : maximum);
-        bits = row == 4   ? (bits & ~15u) | value
-               : row == 8 ? (bits & ~448u) | (value << 6)
-                          : (bits & ~512u) | (value << 9);
+        bits = row == 4    ? (bits & ~15u) | value
+               : row == 8  ? (bits & ~448u) | (value << 6)
+               : row == 10 ? (bits & ~1024u) | (value << 10)
+                           : (bits & ~512u) | (value << 9);
         save(bits);
         write(rdram, layout::menu_dirty, 1);
     }
@@ -202,17 +261,21 @@ extern "C" int rr64_local_options_input(unsigned char *rdram) {
     if (read(rdram, layout::ai_choice) != enabled)
         write(rdram, layout::menu_dirty, 1);
     write(rdram, layout::ai_choice, enabled);
-    return row == 4 || row == 8 || row == 9;
+    return row == 4 || row == 8 || row == 9 || row == 10;
 }
 
 extern "C" int rr64_local_options_navigation(unsigned char *rdram) {
     if (!menu_active)
         return -1;
     unsigned mask = 3u | (1u << 4) | (1u << 7) | (1u << 8) | (1u << 9);
+    if (choices() & 512u)
+        mask |= 1u << 10;
     for (unsigned row = 2; row < 8; ++row)
         if (MEM_B(row - 2, guest_address(layout::visibility)))
             mask |= 1u << row;
-    unsigned row = std::min(read(rdram, layout::menu_cursor), 9u);
+    unsigned row = std::min(read(rdram, layout::menu_cursor), 10u);
+    if (row == 10 && !(choices() & 512u))
+        row = 9;
     const unsigned buttons = read(rdram, layout::menu_buttons);
     if (buttons & 0x18)
         row = rr64::local_race_options::next_row(row, buttons & 8 ? -1 : 1, mask);
@@ -224,17 +287,21 @@ extern "C" unsigned rr64_local_options_table(unsigned stock) {
     return menu_active ? table_address : stock;
 }
 extern "C" unsigned rr64_local_options_visible(unsigned row, unsigned stock) {
+    if (menu_active && row == 10)
+        return (choices() & 512u) ? 1u : 0u;
     return menu_active && (row == 4 || row == 7 || row == 8 || row == 9) ? 1u : stock;
 }
 extern "C" void rr64_local_options_text(unsigned char *rdram, unsigned row, unsigned buffer) {
     if (!menu_active || !valid_guest_range(buffer, 24))
         return;
     char label[24];
-    const unsigned bits = saved.load(std::memory_order_acquire);
+    const unsigned bits = choices();
     if (row == 4) {
         std::snprintf(label, sizeof(label), "AI Racers: %u", ai_count(bits, menu_humans(rdram)));
         text(rdram, buffer, label);
     }
+    if (row == 10)
+        text(rdram, buffer, bits & 1024u ? "AI Cops: On" : "AI Cops: Off");
     if (row == 9)
         text(rdram, buffer, bits & 512u ? "Custom Cop Mode: On" : "Custom Cop Mode: Off");
     if (row == 8) {
@@ -255,7 +322,7 @@ extern "C" void rr64_local_options_finish(unsigned char *rdram) {
         return;
     const unsigned peds = read(rdram, layout::pedestrian_choice);
     if (peds <= 3)
-        save((saved.load() & ~48u) | (peds << 4));
+        save((choices() & ~48u) | (peds << 4));
     menu_active = false;
 }
 extern "C" void rr64_local_options_race(unsigned char *rdram) {
@@ -266,7 +333,7 @@ extern "C" void rr64_local_options_race(unsigned char *rdram) {
     const unsigned humans = read(rdram, layout::humans);
     if (humans < 1 || humans > 4)
         return;
-    const unsigned bits = saved.load(std::memory_order_acquire);
+    const unsigned bits = choices();
     write(rdram, layout::racers,
           rr64::local_race_options::roster(bits & 15u, humans, read(rdram, layout::racers)));
     race_bike_choice = (bits >> 6) & 7;

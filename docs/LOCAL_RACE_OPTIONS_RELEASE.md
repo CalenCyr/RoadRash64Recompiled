@@ -6,6 +6,12 @@ The in-game race options let you choose AI Racers from zero to the available loc
 
 Enable Custom Cop Mode to add the cop bike to selection. Choosing it limits the rider selector to the five stock cop profiles. At least one human must choose the cop bike and a cop rider to start. Cops begin ahead on the roadside where a suitable route position is available, waiting for racers to pass. They start with a baton and fists.
 
+Custom Cop also shows **AI Cops**, default **Off**: only human players become
+cops, and AI slots use regular racers. Turn it On to permit native AI cops.
+The online host selects this setting for everyone; all peers need the same new
+build (protocol 36). This addition has passed offline checks and awaits gameplay
+verification.
+
 Default controls:
 
 - Tap LB: cop shout.

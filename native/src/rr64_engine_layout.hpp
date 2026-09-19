@@ -18,6 +18,15 @@ inline constexpr std::uint32_t kMaximumRacers = 14u;
 inline constexpr std::uint32_t kModeRecordCount = 0x3Au;
 inline constexpr std::uint32_t kModeRecordSize = 0x18u;
 
+// Combat assist credit addresses the statistics block of a racer record.
+// A recent-hit timer alone does not prove its previous-attacker pointer is
+// initialized. Never turn a null/sentinel attribution into a statistics write.
+constexpr bool valid_combat_statistics(std::uint32_t address) {
+    constexpr std::uint32_t first = 0x800D8570u + 0x2Cu;
+    return address >= first && (address - first) % 0x118u == 0 &&
+           (address - first) / 0x118u < kMaximumRacers;
+}
+
 // Stock multiplayer options and race construction, USA v1.0. The menu count
 // and the human/racer counts have different consumers and must stay separate.
 namespace local_race {

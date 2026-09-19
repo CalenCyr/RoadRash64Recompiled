@@ -1,5 +1,7 @@
 #include "rr64_popup_input.hpp"
 #include "rr64_online_menu.hpp"
+#include "rr64_native.hpp"
+#include "rr64_local_race_options.hpp"
 #include "rr64_local_players.hpp"
 #include "recompinput/players.h"
 #include "recompinput/input_state.h"
@@ -79,6 +81,7 @@ std::atomic_uint32_t g_applied_game_setup_revision = 0;
 static_assert(engine::globals::multiplayer_game_setup_words.size() == netplay::kGameSetupWordCount);
 
 void reset_guest_setup_progress() {
+    local_race_options::reset_online();
     g_guest_character_select_active.store(false, std::memory_order_release);
     g_applied_game_setup_revision.store(0, std::memory_order_release);
 }
@@ -103,6 +106,8 @@ netplay::GameSetupState capture_game_setup(unsigned char *rdram) {
     }
     netplay::GameSetupState setup{};
     setup.valid = true;
+    setup.race_options=local_race_options::online_options();
+    engine::read_u32(rdram,engine::globals::random_state,setup.random_seed);
     for (std::size_t i = 0; i < engine::globals::multiplayer_game_setup_words.size(); ++i) {
         setup.words[i] = static_cast<std::uint32_t>(
             MEM_W(0, engine::guest_address(engine::globals::multiplayer_game_setup_words[i])));
@@ -124,6 +129,7 @@ void apply_game_setup(unsigned char *rdram, const netplay::GameSetupState &setup
         MEM_W(0, engine::guest_address(engine::globals::multiplayer_game_setup_words[i])) =
             setup.words[i];
     }
+    local_race_options::apply_online_options(setup.race_options);
     g_applied_game_setup_revision.store(setup.revision, std::memory_order_release);
     online_log("[RR64-ONLINE] Applied host game/race settings revision %u.\n", setup.revision);
 }
@@ -558,8 +564,9 @@ bool controls_online_players() {
 bool host_controls_game_setup() {
     const netplay::Status status = netplay::get_status();
     return status.active && status.connected && status.phase >= netplay::Phase::GameSetup &&
-           status.phase <= netplay::Phase::CharacterSelect &&
-           !g_guest_character_select_active.load(std::memory_order_acquire);
+           ((status.phase <= netplay::Phase::CharacterSelect &&
+             !g_guest_character_select_active.load(std::memory_order_acquire)) ||
+            status.phase == netplay::Phase::TrackSelect);
 }
 
 } // namespace rr64::online_menu
@@ -622,6 +629,7 @@ extern "C" void rr64_online_game_setup_before_update(unsigned char *rdram) {
     }
     if (rr64::online_menu::guest_multiplayer_stage(rdram) >= 2) {
         rr64::online_menu::g_guest_character_select_active.store(true, std::memory_order_release);
+        rr64_online_private_selection_begin(rdram);
     }
 }
 
@@ -629,6 +637,7 @@ extern "C" void rr64_online_game_setup_after_update(unsigned char *rdram) {
     if (rdram == nullptr) {
         return;
     }
+    rr64_online_private_selection_end(rdram);
     const std::uint32_t stage = rr64::online_menu::guest_multiplayer_stage(rdram);
     if (stage < 2) {
         return;

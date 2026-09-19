@@ -1,5 +1,9 @@
+#include "rr64_prediction_replay.hpp"
+#include "rr64_prediction_rules.hpp"
+#include "rr64_prediction_cop_state.hpp"
 #include "rr64_custom_cop.hpp"
 #include "rr64_custom_cop_rules.hpp"
+#include "rr64_custom_cop_roster.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_local_players.hpp"
 #include "rr64_netplay.hpp"
@@ -9,11 +13,21 @@
 namespace {
 using namespace rr64::engine;
 constexpr unsigned actors = 0x800D8570, stride = 0x118;
-bool race_enabled = false;
-float win_started = -1;
-unsigned initial_cops = 0, initial_racers = 0;
+using CopState = rr64::prediction::CopRulesState;
+CopState live_cop_state;
+thread_local CopState replay_cop_state;
+thread_local std::uint64_t replay_cop_epoch = 0;
+CopState &cop_state() {
+    return rr64::prediction::isolated_state(live_cop_state, replay_cop_state, replay_cop_epoch);
+}
 bool local() {
-    return rr64::local_players::active.load() && !rr64::netplay::get_status().active;
+    const auto s = rr64::prediction::status_for_rules();
+    return s.active ? s.connected && (s.authoritative || !s.replicated_riders)
+                    : rr64::local_players::active.load();
+}
+bool owns_outcomes() {
+    const auto s = rr64::prediction::status_for_rules();
+    return !s.active || !s.authoritative || s.is_host;
 }
 unsigned word(unsigned char *m, unsigned address) {
     unsigned value = 0;
@@ -25,20 +39,42 @@ bool actor(unsigned char *m, unsigned address) {
     return count <= 14 && address >= actors && (address - actors) % stride == 0 &&
            (address - actors) / stride < count;
 }
+} // namespace
+
+bool rr64::prediction::capture_cop_rules(CopRulesState &out) {
+    if (active())
+        return false;
+    out = live_cop_state;
+    return true;
+}
+void rr64::prediction::commit_cop_rules(const CopRulesState &state) noexcept {
+    if (!active())
+        live_cop_state = state;
+}
+bool rr64::prediction::seed_cop_rules(const CopRulesState &historical) {
+    if (!active())
+        return false;
+    replay_cop_state = historical;
+    replay_cop_epoch = replay_epoch;
+    return true;
+}
+bool rr64::prediction::replay_cop_rules(CopRulesState &out) {
+    if (!active() || replay_cop_epoch != replay_epoch)
+        return false;
+    out = replay_cop_state;
+    return true;
 }
 
-extern "C" int rr64_custom_cop_active() {
-    return race_enabled && local();
-}
+extern "C" int rr64_custom_cop_active() { return cop_state().race_enabled && local(); }
 extern "C" void rr64_custom_cop_reset() {
-    race_enabled = false;
-    win_started = -1;
-    initial_cops = initial_racers = 0;
+    cop_state().race_enabled = false;
+    cop_state().win_started = -1;
+    cop_state().initial_cops = cop_state().initial_racers = 0;
 }
 extern "C" void rr64_custom_cop_begin(unsigned char *m, int enabled) {
     rr64_custom_cop_reset();
-    const unsigned humans = word(m, 0x800A6578);
-    race_enabled = enabled && local() && humans >= 1 && humans <= 4;
+    cop_state().race_enabled =
+        enabled && local() && rr64::custom_cop::human_mask(m, rr64::prediction::status_for_rules());
 }
 extern "C" unsigned rr64_custom_cop_bike_count(unsigned stock) {
     return rr64_custom_cop_enabled() && stock >= 1 && stock <= 4 ? stock + 1 : stock;
@@ -46,6 +82,15 @@ extern "C" unsigned rr64_custom_cop_bike_count(unsigned stock) {
 extern "C" int rr64_custom_cop_can_start(unsigned char *m) {
     if (!rr64_custom_cop_enabled())
         return 1;
+    const auto online = rr64::prediction::status_for_rules();
+    if (online.active && online.game_setup.valid) {
+        for (const auto &p : online.players)
+            if (p.connected && p.selection.round == online.game_setup.revision &&
+                p.selection.confirmed && p.selection.bike == 31 && p.selection.rider >= 40 &&
+                p.selection.rider <= 44)
+                return 1;
+        return 0;
+    }
     const unsigned humans = word(m, 0x8009EF5C);
     if (humans < 1 || humans > 4)
         return 0;
@@ -96,30 +141,39 @@ extern "C" unsigned rr64_custom_cop_rider(unsigned char *rdram, unsigned player,
 extern "C" void rr64_custom_cop_roles(unsigned char *m) {
     if (!rr64_custom_cop_active())
         return;
-    const unsigned humans = word(m, 0x800A6578), total = word(m, 0x800A656C);
-    if (humans < 1 || humans > 4 || total < humans || total > 14)
+    const unsigned humans = rr64::custom_cop::human_mask(m, rr64::prediction::status_for_rules()),
+                   total = word(m, 0x800A656C);
+    if (!humans || !total || total > 14 || (humans >> total))
         return;
-    initial_cops = 0;
-    for (unsigned i = 0; i < humans; ++i) {
+    cop_state().initial_cops = 0;
+    for (unsigned i = 0; i < total; ++i) {
+        if (!(humans & (1u << i)))
+            continue;
         const unsigned a = actors + i * stride;
         const unsigned bike = word(m, a + 0x18), rider = word(m, a + 0x1C);
         const bool cop = rr64::custom_cop::selected_cop(true, bike, rider);
         // Run before the stock eligibility/count/model initialization. Leave
         // controller, viewport, profile ownership and AI flags untouched.
         write_u32(m, a + 0x20, cop ? 7 : bike < 12 ? 5 : bike < 24 ? 6 : 8);
-        initial_cops += cop;
+        cop_state().initial_cops += cop;
     }
-    initial_racers = total - initial_cops;
+    // Native AI police are allies too. Counting them as opponents here while
+    // skipping them in the victory scan makes an all-busted race unwinnable.
+    cop_state().initial_racers = 0;
+    for (unsigned i = 0; i < total; ++i)
+        cop_state().initial_racers += word(m, actors + i * stride + 0x20) != 7;
 }
 extern "C" int rr64_custom_cop_arrest(unsigned char *m, unsigned attacker, unsigned victim) {
-    if (!rr64_custom_cop_active() || attacker == victim || !actor(m, attacker) || !actor(m, victim))
+    if (!owns_outcomes() || !rr64_custom_cop_active() || attacker == victim ||
+        !actor(m, attacker) || !actor(m, victim))
         return 0;
     return word(m, attacker + 0x20) == 7 && word(m, victim + 0x20) != 7;
 }
 // A zero remaining count can also mean racers escaped or crashed out.
 // Announce victory only when every opposing actor has the stock busted flag.
 extern "C" float rr64_custom_cop_win_age(unsigned char *m) {
-    if (!rr64_custom_cop_active() || !initial_cops || !initial_racers)
+    if (!owns_outcomes() || !rr64_custom_cop_active() || !cop_state().initial_cops ||
+        !cop_state().initial_racers)
         return -1;
     const unsigned total = word(m, 0x800A656C);
     if (total > 14)
@@ -135,18 +189,19 @@ extern "C" float rr64_custom_cop_win_age(unsigned char *m) {
             return -1;
         ++busted;
     }
-    if (busted != initial_racers)
+    if (busted != cop_state().initial_racers)
         return -1;
     float now = 0;
     read_float(m, 0x800D7670, now);
     if (!std::isfinite(now))
         return -1;
-    if (win_started < 0)
-        win_started = now;
-    return now - win_started;
+    if (cop_state().win_started < 0)
+        cop_state().win_started = now;
+    return now - cop_state().win_started;
 }
 extern "C" int rr64_custom_cop_finished(unsigned char *m) {
-    if (!rr64_custom_cop_active() || !initial_cops || !initial_racers)
+    if (!owns_outcomes() || !rr64_custom_cop_active() || !cop_state().initial_cops ||
+        !cop_state().initial_racers)
         return 0;
     const float win_age = rr64_custom_cop_win_age(m);
     // Let the announcement animate before the original results transition.
@@ -169,7 +224,9 @@ extern "C" void rr64_custom_cop_equipment(unsigned char *rdram, unsigned a) {
     write_u32(rdram, rider + 0x5B0, 5);
 }
 extern "C" void rr64_custom_cop_spawn(unsigned char *rdram, unsigned slot, unsigned offsets) {
-    if (!rr64_custom_cop_active() || slot >= word(rdram, 0x800A6578) || slot >= 4 ||
+    if (!rr64_custom_cop_active() || slot >= 14 ||
+        !(rr64::custom_cop::human_mask(rdram, rr64::prediction::status_for_rules()) &
+          (1u << slot)) ||
         !valid_guest_range(offsets, 8))
         return;
     const unsigned a = actors + slot * stride;

@@ -30,6 +30,8 @@ thread_local bool pendingValid = false;
 thread_local unsigned char *weaponMapping = nullptr;
 thread_local unsigned weaponView = 0, weaponRecord = 0, weaponParent = 0, weaponGraph = 0;
 thread_local unsigned preparedSource = 0;
+thread_local unsigned onlineParent=0,onlineGraph=0;
+thread_local unsigned char *onlineMapping=nullptr;
 thread_local unsigned char *savedMapping = nullptr;
 thread_local unsigned savedPose = 0;
 thread_local std::array<unsigned, 7> savedWords{};
@@ -48,6 +50,7 @@ bool same_view(unsigned char *m) {
 }
 extern "C" void rr64_weapon_begin(unsigned char *m, unsigned node, unsigned graph) {
     restore_pose();
+    onlineParent=node;onlineGraph=graph;onlineMapping=m;
     count(0);
     weaponMapping = nullptr;
     weaponRecord = 0;
@@ -100,6 +103,7 @@ extern "C" unsigned long long rr64_weapon_counter(unsigned i) {
     return i < counters.size() ? counters[i].exchange(0, std::memory_order_relaxed) : 0;
 }
 extern "C" void rr64_weapon_end() {
+    onlineMapping=nullptr;onlineParent=onlineGraph=0;
     restore_pose();
     weaponMapping = nullptr;
     weaponRecord = 0;
@@ -134,6 +138,8 @@ extern "C" void rr64_weapon_source(unsigned char *m, void *context, unsigned rec
     count(5);
 }
 extern "C" void rr64_weapon_matrix(unsigned char *m, unsigned record, unsigned address) {
+    if (onlineMapping==m && record==onlineGraph)
+        rr64_online_presentation_matrix(m,onlineParent,record,address,preparedSource ? preparedSource : 3u);
     pendingValid = false;
     if (diagnostics() && same_view(m)) {
         using namespace rr64::engine;

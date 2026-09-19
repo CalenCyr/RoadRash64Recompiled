@@ -7,7 +7,6 @@
 
 namespace rr64::local_players {
 inline std::atomic_bool active{false};
-inline std::atomic_bool keyboard_enabled{false};
 inline std::mutex names_mutex;
 inline std::array<std::string, 4> names{"PLAYER 1", "PLAYER 2", "PLAYER 3", "PLAYER 4"};
 

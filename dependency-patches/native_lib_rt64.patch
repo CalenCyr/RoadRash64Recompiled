@@ -494,6 +494,17 @@ index 20c0d4d..c8e42e9 100644
              MapInitialized = true;
          }
      }
+diff --git a/src/gbi/rt64_gbi_f3d.cpp b/src/gbi/rt64_gbi_f3d.cpp
+index cf05674..223ab7f 100644
+--- a/src/gbi/rt64_gbi_f3d.cpp
++++ b/src/gbi/rt64_gbi_f3d.cpp
+@@ -241,4 +241,4 @@ namespace RT64 {
+             gbi->resetFromTask = &reset;
+         }
+     }
+-};
+\ No newline at end of file
++};
 diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
 index 785de27..cf5d869 100644
 --- a/src/hle/rt64_application.cpp
@@ -2120,6 +2131,17 @@ index a10c11a..316ce46 100644
          primDepth.y = (dz & 0xFFFFU) * Fixed16ToFloat;
          state->updateDrawStatusAttribute(DrawAttribute::PrimDepth);
      }
+diff --git a/src/hle/rt64_rdp.h b/src/hle/rt64_rdp.h
+index 84f4e7c..92f5e8b 100644
+--- a/src/hle/rt64_rdp.h
++++ b/src/hle/rt64_rdp.h
+@@ -212,4 +212,4 @@ namespace RT64 {
+         void drawTexRect(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, uint8_t tile, int16_t uls, int16_t ult, int16_t dsdx, int16_t dtdy, bool flip, const ExtendedAlignment &extAlignment);
+         void updateCallTexcoords(float u, float v);
+     };
+-};
+\ No newline at end of file
++};
 diff --git a/src/hle/rt64_rdp_tmem.cpp b/src/hle/rt64_rdp_tmem.cpp
 index 6051f4e..b63ffb4 100644
 --- a/src/hle/rt64_rdp_tmem.cpp
@@ -3953,19 +3975,23 @@ index bde2f03..e2d23ac 100644
          void threadAdvanceBarrier();
          void threadAdvanceWorkloadId(uint64_t newWorkloadId);
 diff --git a/src/render/rt64_framebuffer_renderer.cpp b/src/render/rt64_framebuffer_renderer.cpp
-index 9fae0d4..2135b1f 100644
+index 9fae0d4..7eb81db 100644
 --- a/src/render/rt64_framebuffer_renderer.cpp
 +++ b/src/render/rt64_framebuffer_renderer.cpp
-@@ -4,6 +4,8 @@
+@@ -4,6 +4,12 @@
  
  #include "rt64_framebuffer_renderer.h"
  
 +#include <algorithm>
++#include <array>
++#include <cstdio>
++#include <cstdlib>
++#include "common/rt64_rr64_hud_view.h"
 +
  #include "../include/rt64_extended_gbi.h"
  
  #include "common/rt64_elapsed_timer.h"
-@@ -15,6 +17,9 @@
+@@ -15,6 +21,9 @@
  
  #include "rt64_descriptor_sets.h"
  #include "rt64_render_worker.h"
@@ -3975,7 +4001,7 @@ index 9fae0d4..2135b1f 100644
  
  // TODO: Move to shared.
  
-@@ -51,6 +56,244 @@ namespace interop {
+@@ -51,6 +60,251 @@ namespace interop {
  
  namespace RT64 {
      // Helper functions.
@@ -4094,6 +4120,13 @@ index 9fae0d4..2135b1f 100644
 +
 +    AutomaticHUDBounds automaticHUDBounds(const Projection &proj, const GameCall &call, const DrawData &drawData, int32_t fbWidth, int32_t fbHeight) {
 +        AutomaticHUDBounds bounds{};
++        // Projected world billboards also become screen-space rectangles/raw
++        // triangles. Their size and position can cross every HUD corner as the
++        // camera approaches. Depth-tested/writing draws must never acquire a
++        // HUD anchor or the lower-row HUD inset from those bounds.
++        if (call.callDesc.otherMode.zCmp() || call.callDesc.otherMode.zUpd()) {
++            return bounds;
++        }
 +        if ((fbWidth <= 0) || (fbHeight <= 0)) {
 +            return bounds;
 +        }
@@ -4176,7 +4209,7 @@ index 9fae0d4..2135b1f 100644
 +    // health/weapon/ammo, lower-left status, and lower-right speedometer. Use
 +    // those regions instead of a generic small-draw heuristic so the tiled sky
 +    // and every menu/background draw remain completely independent.
-+    uint16_t automaticHUDOrigin(const AutomaticHUDBounds &bounds, int32_t fbWidth, int32_t fbHeight) {
++    constexpr uint16_t automaticHUDOrigin(const AutomaticHUDBounds &bounds, int32_t fbWidth, int32_t fbHeight, bool split = false) {
 +        if (!bounds.valid || (fbWidth <= 0) || (fbHeight <= 0)) {
 +            return G_EX_ORIGIN_NONE;
 +        }
@@ -4190,9 +4223,9 @@ index 9fae0d4..2135b1f 100644
 +        const float width = float(fbWidth);
 +        const float height = float(fbHeight);
 +        const bool upperLeftHUD =
-+            (left >= width * 0.04f) && (right <= width * 0.43f) &&
-+            (top >= height * 0.05f) && (bottom <= height * 0.23f) &&
-+            (drawWidth <= width * 0.22f) && (drawHeight <= height * 0.20f);
++            (left >= width * 0.04f) && (right <= width * (split ? 0.70f : 0.43f)) &&
++            (top >= height * (split ? 0.0f : 0.05f)) && (bottom <= height * (split ? 0.36f : 0.23f)) &&
++            (drawWidth <= width * (split ? 0.45f : 0.22f)) && (drawHeight <= height * (split ? 0.30f : 0.20f));
 +        const bool lowerLeftHUD =
 +            // Long opponent names are split into multiple texture batches and
 +            // their nameplate can extend well past the short-name envelope.
@@ -4220,7 +4253,7 @@ index 9fae0d4..2135b1f 100644
      
      RenderRect convertFixedRect(FixedRect rect, hlslpp::float2 resScale, int32_t fbWidth, float aspectRatioScale, float extOriginPercentage, int32_t horizontalMisalignment, uint16_t leftOrigin, uint16_t rightOrigin) {
          if (!rect.isNull()) {
-@@ -175,6 +418,8 @@ namespace RT64 {
+@@ -175,6 +429,8 @@ namespace RT64 {
          frameParams.viewUbershaders = ubershadersVisible;
          frameParams.ditherNoiseStrength = ditherNoiseStrength;
          framebufferCount = 0;
@@ -4229,7 +4262,7 @@ index 9fae0d4..2135b1f 100644
  
          // Create dummy color target if it hasn't been created yet.
          if (dummyColorTarget == nullptr) {
-@@ -1318,9 +1563,32 @@ namespace RT64 {
+@@ -1318,9 +1574,32 @@ namespace RT64 {
  
      void FramebufferRenderer::addFramebuffer(const DrawParams &p) {
          assert(p.fbStorage != nullptr);
@@ -4262,7 +4295,7 @@ index 9fae0d4..2135b1f 100644
          interop::FramebufferParams fbParams;
          fbParams.resolution = { p.targetWidth / p.resolutionScale.x, p.targetHeight / p.resolutionScale.y };
          fbParams.resolutionScale = p.resolutionScale;
-@@ -1433,7 +1701,17 @@ namespace RT64 {
+@@ -1433,7 +1712,17 @@ namespace RT64 {
  
          const float SimilarityPercentage = 0.1f; // TODO: Make more strict once VI ratios are in.
          const float scissorRatio = static_cast<float>(fbPair.scissorRect.width(false, true)) / static_cast<float>(fbPair.scissorRect.height(false, true));
@@ -4281,7 +4314,7 @@ index 9fae0d4..2135b1f 100644
          const float aspectRatioScale = adjustRatio ? (p.aspectRatioTarget / p.aspectRatioSource) : 1.0f;
          InstanceDrawCall instanceDrawCall;
          interop::RenderIndices renderIndices;
-@@ -1447,15 +1725,32 @@ namespace RT64 {
+@@ -1447,15 +1736,51 @@ namespace RT64 {
          const interop::float2 halfPixelOffset = { 1.0f / framebuffer.viewport.width, -1.0f / framebuffer.viewport.height };
          const float middleViewport = (wideWidth / 2.0f) - (originalWidth / 2.0f);
          const float extOriginPercentage = p.extAspectPercentage;
@@ -4299,9 +4332,28 @@ index 9fae0d4..2135b1f 100644
 +        // Texture changes can split the final glyph into another RT64
 +        // projection group. Retain the verified lower-left name anchor across
 +        // the framebuffer pair for a short draw window, not just one group.
-+        AutomaticHUDBounds lowerLeftTailAnchor{};
-+        uint16_t lowerLeftTailAnchorOrigin = G_EX_ORIGIN_NONE;
-+        uint32_t lowerLeftTailAnchorAge = 0;
++        // Discover rendered camera regions from this submitted workload. Do
++        // not infer a split layout from online peer or connected controller count.
++        std::array<RR64HUDView, 4> hudViews{};
++        size_t hudViewCount = 0;
++        if (liveRaceHUDPlacement) {
++            for (uint32_t i=0; i<fbPair.projectionCount; ++i) {
++                const auto &viewProjection=fbPair.projections[i];
++                if (viewProjection.type!=Projection::Type::Perspective || viewProjection.scissorRect.isNull()) continue;
++                const auto &r=viewProjection.scissorRect;
++                RR64HUDView v{float(r.left(true)),float(r.top(true)),float(r.right(true)),float(r.bottom(true))};
++                if (v.width()<p.fbWidth*0.4f || v.height()<p.fbHeight*0.4f ||
++                    (v.width()>p.fbWidth*0.6f && v.height()>p.fbHeight*0.6f)) continue;
++                bool duplicate=false;
++                for (size_t j=0;j<hudViewCount;++j) duplicate|=hudViews[j].same(v);
++                if (!duplicate && hudViewCount<hudViews.size()) hudViews[hudViewCount++]=v;
++            }
++        }
++        if (hudViewCount<2) hudViewCount=0;
++        std::array<AutomaticHUDBounds,5> lowerLeftTailAnchors{};
++        std::array<uint16_t,5> lowerLeftTailOrigins{};
++        lowerLeftTailOrigins.fill(G_EX_ORIGIN_NONE);
++        std::array<uint32_t,5> lowerLeftTailAges{};
          for (uint32_t pr = 0; (pr < fbPair.projectionCount) && (globalCallIndex < p.maxGameCall); pr++) {
              const Projection &proj = fbPair.projections[pr];
              if (proj.scissorRect.isNull()) {
@@ -4314,20 +4366,21 @@ index 9fae0d4..2135b1f 100644
  #       if RT_ENABLED
              // TODO: Move heuristics of RT proj elsewhere?
              // TODO: Use detected scenes logic instead.
-@@ -1508,6 +1803,12 @@ namespace RT64 {
+@@ -1508,6 +1833,13 @@ namespace RT64 {
  
              for (uint32_t d = 0; (d < proj.gameCallCount) && (globalCallIndex < p.maxGameCall); d++) {
                  const GameCall &call = proj.gameCalls[d];
 +                rr64OverwriteUnsupported = rr64OverwriteUnsupported ||
 +                    (call.debuggerDesc.highlightColor != 0);
-+                if (lowerLeftTailAnchor.valid && ++lowerLeftTailAnchorAge > 64u) {
-+                    lowerLeftTailAnchor = {};
-+                    lowerLeftTailAnchorOrigin = G_EX_ORIGIN_NONE;
++                for(size_t a=0;a<lowerLeftTailAnchors.size();++a) {
++                    if (lowerLeftTailAnchors[a].valid && ++lowerLeftTailAges[a]>64u) {
++                        lowerLeftTailAnchors[a]={}; lowerLeftTailOrigins[a]=G_EX_ORIGIN_NONE;
++                    }
 +                }
                  renderIndices.instanceIndex = call.callDesc.callIndex;
                  renderIndices.faceIndicesStart = call.meshDesc.faceIndicesStart;
                  renderIndices.rdpTileIndex = call.callDesc.tileIndex;
-@@ -1625,6 +1926,34 @@ namespace RT64 {
+@@ -1625,6 +1957,73 @@ namespace RT64 {
  
                          float invRatioScale = 1.0f / aspectRatioScale;
                          float horizontalMisalignment = 0.0f;
@@ -4338,81 +4391,79 @@ index 9fae0d4..2135b1f 100644
 +                        // projections need the explicit-origin safeguard.
 +                        const bool autoViewportEligible = (proj.type == Projection::Type::Rectangle) ||
 +                            (proj.type == Projection::Type::Triangle) || (viewportOrigin == G_EX_ORIGIN_NONE);
-+                        const AutomaticHUDBounds autoBounds = (automaticHUDAnchoring && autoViewportEligible)
++                        AutomaticHUDBounds autoBounds = (automaticHUDAnchoring && autoViewportEligible)
 +                            ? automaticHUDBounds(proj, call, drawData, p.fbWidth, p.fbHeight)
 +                            : AutomaticHUDBounds{};
-+                        uint16_t autoOrigin = automaticHUDOrigin(autoBounds, p.fbWidth, p.fbHeight);
++                        int hudView = -1;
++                        if (autoBounds.valid && hudViewCount) {
++                            for(size_t v=0;v<hudViewCount;++v) {
++                                if(hudViews[v].contains(autoBounds.left,autoBounds.top,autoBounds.right,autoBounds.bottom)) {
++                                    if(hudView>=0) {hudView=-1;break;}
++                                    hudView=int(v);
++                                }
++                            }
++                        }
++                        const bool perViewHUD=hudView>=0;
++                        const RR64HUDView view=perViewHUD ? hudViews[hudView] : RR64HUDView{0,0,float(p.fbWidth),float(p.fbHeight)};
++                        if(perViewHUD) {
++                            autoBounds.left-=view.left; autoBounds.right-=view.left;
++                            autoBounds.top-=view.top; autoBounds.bottom-=view.top;
++                        }
++                        const size_t anchorIndex=perViewHUD ? size_t(hudView) : 4;
++                        auto &lowerLeftTailAnchor=lowerLeftTailAnchors[anchorIndex];
++                        auto &lowerLeftTailAnchorOrigin=lowerLeftTailOrigins[anchorIndex];
++                        auto &lowerLeftTailAnchorAge=lowerLeftTailAges[anchorIndex];
++                        uint16_t autoOrigin = (hudViewCount && !perViewHUD) ? G_EX_ORIGIN_NONE :
++                            automaticHUDOrigin(autoBounds, int32_t(view.width()), int32_t(view.height()), perViewHUD);
 +                        if ((autoOrigin == G_EX_ORIGIN_NONE) && automaticHUDIsAdjacentLowerLeftTail(
 +                            lowerLeftTailAnchor,
 +                            lowerLeftTailAnchorOrigin,
 +                            autoBounds,
-+                            float(p.fbWidth),
-+                            float(p.fbHeight))) {
++                            view.width(),
++                            view.height())) {
 +                            autoOrigin = G_EX_ORIGIN_LEFT;
 +                        }
 +                        if (automaticHUDCanSeedLowerLeftTail(
 +                            autoBounds,
 +                            autoOrigin,
-+                            float(p.fbWidth),
-+                            float(p.fbHeight))) {
++                            view.width(),
++                            view.height())) {
 +                            lowerLeftTailAnchor = autoBounds;
 +                            lowerLeftTailAnchorOrigin = autoOrigin;
 +                            lowerLeftTailAnchorAge = 0;
 +                        }
++                        // Native lower-row health clusters start on the divider.
++                        // Give them the same authored top margin as Big Game.
++                        const float hudTopInset=perViewHUD && view.top>0 &&
++                            autoOrigin==G_EX_ORIGIN_LEFT && autoBounds.bottom<=view.height()*0.36f
++                            ? float(p.fbHeight)*0.05f : 0.0f;
++                        if(perViewHUD && autoOrigin!=G_EX_ORIGIN_NONE) {
++                            autoOrigin=rr64HUDViewOrigin(view,autoOrigin==G_EX_ORIGIN_RIGHT,float(p.fbWidth),G_EX_ORIGIN_RIGHT);
++                        }
++                        // Bounded, opt-in evidence for the private visual check.
++                        // Coordinates/count describe rendered views, not peers.
++                        static const bool hudTrace=std::getenv("RR64_HUD_LAYOUT_TRACE")!=nullptr;
++                        static thread_local unsigned hudTraceRemaining=160;
++                        if(hudTrace && hudTraceRemaining && autoBounds.valid && hudViewCount) {
++                            --hudTraceRemaining;
++                            std::fprintf(stderr,"[RR64-HUD-VIEW] views=%zu view=%d region=%.1f,%.1f,%.1f,%.1f bounds=%.1f,%.1f,%.1f,%.1f origin=%u top-inset=%.1f projection=%u\n",
++                                hudViewCount,hudView,view.left,view.top,view.right,view.bottom,
++                                autoBounds.left,autoBounds.top,autoBounds.right,autoBounds.bottom,
++                                unsigned(autoOrigin),hudTopInset,unsigned(proj.type));
++                        }
                          switch (proj.type) {
                          case Projection::Type::Perspective:
                          case Projection::Type::Orthographic: {
-@@ -1637,6 +1966,41 @@ namespace RT64 {
+@@ -1637,6 +2036,8 @@ namespace RT64 {
                              instanceDrawCall.type = InstanceDrawCall::Type::RegularRect;
                              triangles.indexStart = call.meshDesc.rawVertexStart;
  
-+                            // Road Rash assembles the sky from a 320-wide tile
-+                            // grid. Map those background tiles across the wide
-+                            // framebuffer as one surface; leaving them on the
-+                            // centered 4:3 transform exposes the flat clear
-+                            // color at whichever widescreen edge is visible.
-+                            const int32_t rectLeft = call.callDesc.rect.left(true);
-+                            const int32_t rectRight = call.callDesc.rect.right(true);
-+                            const int32_t rectTop = call.callDesc.rect.top(true);
-+                            const int32_t rectBottom = call.callDesc.rect.bottom(true);
-+                            const int32_t rectWidth = rectRight - rectLeft;
-+                            const int32_t rectHeight = rectBottom - rectTop;
-+                            // Long race notifications use a wide, shallow
-+                            // backing rectangle beginning at the game's x=19
-+                            // message margin. Its width overlaps the sky-tile
-+                            // heuristic, and on some strings it can also look
-+                            // like part of the upper-left HUD cluster. Keep the
-+                            // entire backing on the same centered transform as
-+                            // its text. The narrow x band distinguishes it from
-+                            // the sky grid, whose interior tiles begin at x=35.
-+                            const bool raceNotificationBacking = liveRaceWidescreen &&
-+                                (rectLeft >= int32_t(float(p.fbWidth) * 0.04f)) &&
-+                                (rectLeft <= int32_t(float(p.fbWidth) * 0.10f)) &&
-+                                (rectWidth >= int32_t(float(p.fbWidth) * 0.20f)) &&
-+                                (rectTop >= int32_t(float(p.fbHeight) * 0.12f)) &&
-+                                (rectBottom <= int32_t(float(p.fbHeight) * 0.50f)) &&
-+                                (rectHeight <= int32_t(float(p.fbHeight) * 0.15f));
-+                            if (raceNotificationBacking) {
-+                                autoOrigin = G_EX_ORIGIN_NONE;
-+                            }
-+                            const bool automaticSkyStretch = liveRaceWidescreen &&
-+                                !raceNotificationBacking &&
-+                                (rectBottom <= int32_t(float(p.fbHeight) * 0.40f)) &&
-+                                ((rectWidth >= int32_t(float(p.fbWidth) * 0.20f)) ||
-+                                 (rectLeft <= 0) || (rectRight >= p.fbWidth));
-+
++                            // Clouds are removed at their producer. Do not guess
++                            // that wide HUD rectangles are sky or stretch them.
                              bool tileCopiesUsed = false;
                              for (uint32_t t = 0; (t < call.callDesc.tileCount) && !tileCopiesUsed; t++) {
                                  tileCopiesUsed = drawData.callTiles[call.callDesc.tileIndex + t].tileCopyUsed;
-@@ -1645,14 +2009,16 @@ namespace RT64 {
-                             // The call's scissor spans the whole width of the framebuffer pair scissor. The rect must not be using extended origins.
-                             const bool regularOrigins = (call.callDesc.rectLeftOrigin == G_EX_ORIGIN_NONE) && (call.callDesc.rectRightOrigin == G_EX_ORIGIN_NONE);
-                             const bool coversScissorWidth = regularOrigins && (call.callDesc.rect.ulx <= fbPair.scissorRect.ulx) && (call.callDesc.rect.lrx >= fbPair.scissorRect.lrx);
--                            if ((tileCopiesUsed || coversScissorWidth || call.callDesc.rectAspect == G_EX_ASPECT_STRETCH) && (call.callDesc.rectAspect != G_EX_ASPECT_ADJUST)) {
-+                            if ((automaticSkyStretch || tileCopiesUsed || coversScissorWidth || call.callDesc.rectAspect == G_EX_ASPECT_STRETCH) && (call.callDesc.rectAspect != G_EX_ASPECT_ADJUST)) {
-                                 invRatioScale = 1.0f;
-                             }
-                             else {
+@@ -1652,7 +2053,10 @@ namespace RT64 {
                                  horizontalMisalignment = p.horizontalMisalignment;
                              }
  
@@ -4420,25 +4471,33 @@ index 9fae0d4..2135b1f 100644
 +                            const uint16_t rectLeftOrigin = (autoOrigin != G_EX_ORIGIN_NONE) ? autoOrigin : call.callDesc.rectLeftOrigin;
 +                            const uint16_t rectRightOrigin = (autoOrigin != G_EX_ORIGIN_NONE) ? autoOrigin : call.callDesc.rectRightOrigin;
 +                            RenderViewport viewportRect = convertViewportRect(call.callDesc.rect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, horizontalMisalignment, rectLeftOrigin, rectRightOrigin);
++                            viewportRect.y += hudTopInset*p.resolutionScale.y;
                              triangles.screenScale = { viewportRect.width / framebuffer.viewport.width, viewportRect.height / framebuffer.viewport.height };
                              triangles.screenOffset.x = halfPixelOffset.x + ((viewportRect.x + viewportRect.width / 2.0f) - halfViewportSize.x) / halfViewportSize.x;
                              triangles.screenOffset.y = halfPixelOffset.y + (halfViewportSize.y - (viewportRect.y + viewportRect.height / 2.0f)) / halfViewportSize.y;
-@@ -1676,7 +2042,13 @@ namespace RT64 {
+@@ -1676,7 +2080,20 @@ namespace RT64 {
                              break;
                          }
  
 -                        triangles.scissor = convertFixedRect(call.callDesc.scissorRect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, int32_t(horizontalMisalignment), call.callDesc.scissorLeftOrigin, call.callDesc.scissorRightOrigin);
 +                        if ((autoOrigin != G_EX_ORIGIN_NONE) && (proj.type != Projection::Type::Rectangle)) {
-+                            triangles.screenOffset.x += (autoOrigin == G_EX_ORIGIN_LEFT) ? -automaticHUDOffset : automaticHUDOffset;
++                            triangles.screenOffset.x += rr64HUDViewOffset(autoOrigin,G_EX_ORIGIN_RIGHT,automaticHUDOffset);
++                            triangles.screenOffset.y -= 2.0f*hudTopInset*p.resolutionScale.y/commonHeight;
 +                        }
 +
 +                        const uint16_t scissorLeftOrigin = (autoOrigin != G_EX_ORIGIN_NONE) ? autoOrigin : call.callDesc.scissorLeftOrigin;
 +                        const uint16_t scissorRightOrigin = (autoOrigin != G_EX_ORIGIN_NONE) ? autoOrigin : call.callDesc.scissorRightOrigin;
 +                        triangles.scissor = convertFixedRect(call.callDesc.scissorRect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, int32_t(horizontalMisalignment), scissorLeftOrigin, scissorRightOrigin);
++                        if(perViewHUD && autoOrigin!=G_EX_ORIGIN_NONE) {
++                            triangles.scissor.left=std::max(triangles.scissor.left,int32_t(view.left*p.resolutionScale.x));
++                            triangles.scissor.right=std::min(triangles.scissor.right,int32_t(view.right*p.resolutionScale.x));
++                            triangles.scissor.top=std::max(triangles.scissor.top,int32_t(view.top*p.resolutionScale.y));
++                            triangles.scissor.bottom=std::min(triangles.scissor.bottom,int32_t(view.bottom*p.resolutionScale.y));
++                        }
  
                          bool usesViewport = (proj.type == Projection::Type::Perspective) || (proj.type == Projection::Type::Orthographic);
                          if (usesViewport) {
-@@ -1760,6 +2132,85 @@ namespace RT64 {
+@@ -1760,6 +2177,85 @@ namespace RT64 {
          checkRasterScene(rasterScene);
      }
  
@@ -4524,6 +4583,13 @@ index 9fae0d4..2135b1f 100644
      void FramebufferRenderer::endFramebuffers(RenderWorker *worker, const DrawBuffers *drawBuffers, const OutputBuffers *outputBuffers, bool rtEnabled) {
          bool shaderViewRtEnabled = false;
          std::vector<BufferUploader::Upload> shaderUploads = {
+@@ -1917,4 +2413,4 @@ namespace RT64 {
+         unsigned int im3dVertexCount;
+     };
+ };
+-*/
+\ No newline at end of file
++*/
 diff --git a/src/render/rt64_framebuffer_renderer.h b/src/render/rt64_framebuffer_renderer.h
 index 3add9c3..03e4fcc 100644
 --- a/src/render/rt64_framebuffer_renderer.h
@@ -4830,6 +4896,17 @@ index 8a3782a..ecf82c0 100644
 -};
 \ No newline at end of file
 +};
+diff --git a/src/shaders/RasterPS.hlsl b/src/shaders/RasterPS.hlsl
+index e7895c3..7db2fad 100644
+--- a/src/shaders/RasterPS.hlsl
++++ b/src/shaders/RasterPS.hlsl
+@@ -310,4 +310,4 @@ void PSMain(
+     pixelColor = resultColor;
+     pixelAlpha = resultAlpha;
+ }
+-#endif
+\ No newline at end of file
++#endif
 diff --git a/src/tools/texture_packer/texture_packer.cpp b/src/tools/texture_packer/texture_packer.cpp
 index 1f5ccaf..abcb963 100644
 --- a/src/tools/texture_packer/texture_packer.cpp

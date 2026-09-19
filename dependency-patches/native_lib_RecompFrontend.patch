@@ -75,14 +75,15 @@ index f5ed6c0..19cb3ba 100644
      #define DEFINE_INPUT(name, value, readable) name,
      // - Enum containing every recomp input.
 diff --git a/recompinput/include/recompinput/players.h b/recompinput/include/recompinput/players.h
-index 6c59b61..5d890a4 100644
+index 6c59b61..5fc0536 100644
 --- a/recompinput/include/recompinput/players.h
 +++ b/recompinput/include/recompinput/players.h
-@@ -25,6 +25,7 @@ namespace recompinput {
+@@ -25,6 +25,8 @@ namespace recompinput {
          const Player& get_player(int player_index, bool temp_player = false);
          bool get_player_is_assigned(int player_index, bool temp_player = false);
          bool has_enough_players_assigned();
 +        void refresh_connected_players(bool include_keyboard);
++        bool select_player_device(int player_index, SDL_GameController* controller);
          InputDevice get_player_input_device(int player_index, bool temp_player = false);
      }
  
@@ -698,10 +699,10 @@ index 03ed871..d8badb0 100644
  
  void recompinput::add_rotation_deltas(SDL_JoystickID joystick_id, float rot_x, float rot_y) {
 diff --git a/recompinput/src/input_types.cpp b/recompinput/src/input_types.cpp
-index c6786e6..241103f 100644
+index c6786e6..b4848fa 100644
 --- a/recompinput/src/input_types.cpp
 +++ b/recompinput/src/input_types.cpp
-@@ -12,11 +12,17 @@ static std::array<std::string, num_game_inputs> game_input_names = {
+@@ -12,11 +12,35 @@ static std::array<std::string, num_game_inputs> game_input_names = {
  };
  #undef DEFINE_INPUT
  
@@ -714,14 +715,32 @@ index c6786e6..241103f 100644
      std::array<std::string, num_game_inputs> descriptions = {
          DEFINE_ALL_INPUTS()
      };
-+    descriptions[static_cast<size_t>(GameInput::RR64_WEAPON_TRICK)] = "Perform the original weapon flourish. Default: right bumper. Menu tab switching is unchanged.";
-+    descriptions[static_cast<size_t>(GameInput::RR64_EJECT)] = "Eject your rider from the bike during gameplay. Default: left-stick click. Uses the existing local-rider shortcut.";
++    descriptions[static_cast<size_t>(GameInput::X_AXIS_NEG)] = "Steer left; move left in game menus.";
++    descriptions[static_cast<size_t>(GameInput::X_AXIS_POS)] = "Steer right; move right in game menus.";
++    descriptions[static_cast<size_t>(GameInput::Y_AXIS_POS)] = "Lean forward; move up in game menus.";
++    descriptions[static_cast<size_t>(GameInput::Y_AXIS_NEG)] = "Lean back; move down in game menus.";
++    descriptions[static_cast<size_t>(GameInput::A)] = "Wheelie; confirm a game-menu selection.";
++    descriptions[static_cast<size_t>(GameInput::B)] = "Heavy brake; go back in game menus.";
++    descriptions[static_cast<size_t>(GameInput::Z)] = "Hold to accelerate.";
++    descriptions[static_cast<size_t>(GameInput::R)] = "Skid brake for turns.";
++    descriptions[static_cast<size_t>(GameInput::L)] = "Weapon taunt. As a cop: tap to shout; hold one second to toggle the siren.";
++    descriptions[static_cast<size_t>(GameInput::START)] = "Start a race or pause/resume. Online pause is host-only.";
++    descriptions[static_cast<size_t>(GameInput::C_UP)] = "Switch the selected weapon.";
++    descriptions[static_cast<size_t>(GameInput::C_DOWN)] = "Use your weapon, or backfist when unarmed.";
++    descriptions[static_cast<size_t>(GameInput::C_LEFT)] = "Kick a nearby opponent.";
++    descriptions[static_cast<size_t>(GameInput::C_RIGHT)] = "Punch; a timed hit can steal a weapon.";
++    descriptions[static_cast<size_t>(GameInput::DPAD_UP)] = "Move up in game menus.";
++    descriptions[static_cast<size_t>(GameInput::DPAD_DOWN)] = "Move down in game menus.";
++    descriptions[static_cast<size_t>(GameInput::DPAD_LEFT)] = "Move left or change a game-menu option.";
++    descriptions[static_cast<size_t>(GameInput::DPAD_RIGHT)] = "Move right or change a game-menu option.";
++    descriptions[static_cast<size_t>(GameInput::RR64_WEAPON_TRICK)] = "Perform a weapon flourish, including when playing as a cop.";
++    descriptions[static_cast<size_t>(GameInput::RR64_EJECT)] = "Jump off your bike. Voluntary eject alone does not damage the bike or count as a bust.";
 +    descriptions[static_cast<size_t>(GameInput::RR64_SPOKE_JAM)] = "Hold to attempt a spoke jam with a weapon. With fists selected, press to punch or steal a weapon. Default: right-stick click. Opponent range and timing rules still apply.";
      descriptions[static_cast<size_t>(GameInput::TOGGLE_MENU)] = "Open or close this configuration menu from in game.";
      descriptions[static_cast<size_t>(GameInput::ACCEPT_MENU)] = "In the recomp interface, performs the action for the currently highlighted item. Like pressing a button, or toggling a switch.";
      descriptions[static_cast<size_t>(GameInput::BACK_MENU)] = "In the recomp interface, returns to the header or backs out to a previous menu.";
 diff --git a/recompinput/src/players.cpp b/recompinput/src/players.cpp
-index 08cb3f3..698490f 100644
+index 08cb3f3..f8e272b 100644
 --- a/recompinput/src/players.cpp
 +++ b/recompinput/src/players.cpp
 @@ -1,3 +1,4 @@
@@ -729,7 +748,7 @@ index 08cb3f3..698490f 100644
  #include "recompinput/recompinput.h"
  #include "recompinput/players.h"
  #include "recompinput/profiles.h"
-@@ -5,8 +6,13 @@
+@@ -5,8 +6,14 @@
  #include "ultramodern/ultramodern.hpp"
  #include "composites/ui_assign_players_modal.h"
  #include "config/ui_config_page_controls.h"
@@ -740,10 +759,11 @@ index 08cb3f3..698490f 100644
  
  namespace recompinput {
 +static std::recursive_mutex assignment_mutex;
++static std::array<bool, max_num_players_supported> explicit_keyboard{};
  
  void Player::button_pressed() {
      last_button_press_timestamp = ultramodern::time_since_start();
-@@ -25,7 +31,7 @@ public:
+@@ -25,7 +32,7 @@ public:
      }
  
      void add_keyboard_player() {
@@ -752,7 +772,7 @@ index 08cb3f3..698490f 100644
              Player &player = (*this)[count++];
              player = Player();
              player.keyboard_enabled = true;
-@@ -34,7 +40,7 @@ public:
+@@ -34,7 +41,7 @@ public:
      }
  
      void add_controller_player(SDL_GameController* controller) {
@@ -761,7 +781,7 @@ index 08cb3f3..698490f 100644
              Player &player = (*this)[count++];
              player = Player();
              player.controller = controller;
-@@ -43,12 +49,17 @@ public:
+@@ -43,12 +50,17 @@ public:
      }
  
      bool player_is_assigned(int player_index) const {
@@ -781,7 +801,7 @@ index 08cb3f3..698490f 100644
      bool is_assigning = false;
      size_t min_players = 1;
      size_t max_players = 4;
-@@ -63,13 +74,11 @@ static struct {
+@@ -63,13 +75,11 @@ static struct {
  } PlayerState;
  
  size_t players::get_number_of_assigned_players() {
@@ -796,7 +816,7 @@ index 08cb3f3..698490f 100644
      return PlayerState.max_players;
  }
  
-@@ -102,18 +111,28 @@ void players::set_player_count_range(size_t min_players, size_t max_players) {
+@@ -102,18 +112,28 @@ void players::set_player_count_range(size_t min_players, size_t max_players) {
  }
  
  const recompinput::Player& players::get_player(int player_index, bool temp_player) {
@@ -826,15 +846,44 @@ index 08cb3f3..698490f 100644
      auto player_array = PlayerState.get_player_array(temp_player);
      if (!player_array.player_is_assigned(player_index)) {
          return InputDevice::COUNT;
-@@ -130,6 +149,38 @@ InputDevice players::get_player_input_device(int player_index, bool temp_player)
+@@ -130,6 +150,67 @@ InputDevice players::get_player_input_device(int player_index, bool temp_player)
  }
  
  // playerassignment start
++bool players::select_player_device(int index, SDL_GameController* controller) {
++    const auto connected = recompinput::connected_controllers();
++    std::scoped_lock lock(assignment_mutex);
++    if (index < 0 || index >= 4 || PlayerState.is_assigning) return false;
++    if (controller && std::find(connected.begin(), connected.end(), controller) == connected.end()) return false;
++    auto& slots = PlayerState.players;
++    // Swap occupied devices rather than allowing two players to share a pad.
++    if (controller) for (int i = 0; i < 4; ++i) {
++        if (i != index && slots[i].controller == controller) {
++            std::swap(slots[i], slots[index]);
++            std::swap(explicit_keyboard[i], explicit_keyboard[index]);
++            break;
++        }
++    }
++    slots[index].controller = controller;
++    slots[index].keyboard_enabled = !controller;
++    explicit_keyboard[index] = !controller;
++    slots.recount();
++    for (int i = 0; i < 4; ++i) {
++        profiles::set_input_profile_for_player(i, slots[i].controller ?
++            profiles::get_controller_profile_index_from_sdl_controller(slots[i].controller) : -1, InputDevice::Controller);
++        profiles::set_input_profile_for_player(i, slots[i].keyboard_enabled ?
++            profiles::get_or_create_mp_keyboard_profile_index(i) : -1, InputDevice::Keyboard);
++    }
++    if (recompui::controls_page) recompui::controls_page->force_update();
++    return true;
++}
++
 +void players::refresh_connected_players(bool include_keyboard) {
 +    // Poll on the UI thread; preserve surviving slots and explicit reassignments.
 +    const auto connected = recompinput::connected_controllers();
 +    std::scoped_lock lock(assignment_mutex);
 +    if (PlayerState.is_assigning) return;
++    include_keyboard = include_keyboard || std::any_of(explicit_keyboard.begin(), explicit_keyboard.end(), [](bool selected) { return selected; });
 +    static std::vector<SDL_GameController*> previous;
 +    static bool previous_keyboard = false;
 +    static bool initialized = false;
@@ -865,7 +914,7 @@ index 08cb3f3..698490f 100644
  
  bool playerassignment::is_active() {
      return PlayerState.is_assigning;
-@@ -150,17 +201,20 @@ void playerassignment::stop_and_close_modal() {
+@@ -150,17 +231,20 @@ void playerassignment::stop_and_close_modal() {
  }
  
  void playerassignment::commit_player_assignment() {
@@ -1234,7 +1283,7 @@ index 1f98b3c..a83a958 100644
              recomp::mods::ZipModFileHandle file_handle(path, open_error);
              if (open_error != recomp::mods::ModOpenError::Good) {
 diff --git a/recompui/src/composites/ui_player_card.cpp b/recompui/src/composites/ui_player_card.cpp
-index 7a75884..3c68dc7 100644
+index 7a75884..1364b87 100644
 --- a/recompui/src/composites/ui_player_card.cpp
 +++ b/recompui/src/composites/ui_player_card.cpp
 @@ -2,9 +2,17 @@
@@ -1255,10 +1304,76 @@ index 7a75884..3c68dc7 100644
  
  PlayerCard::PlayerCard(
      ResourceId rid,
-@@ -65,6 +73,19 @@ PlayerCard::PlayerCard(
+@@ -65,62 +73,40 @@ PlayerCard::PlayerCard(
      if (!is_assignment_card) {
          auto player = recompinput::players::get_player(player_index, is_assignment_card);
          update_player_card_icon();
+-
+-        auto profile_label = context.create_element<Label>(this, "Profile", LabelStyle::Small);
+-
+-        profile_label->set_margin_top(8.0f);
+-
+-        bool has_controller = recompinput::players::get_player_input_device(player_index, is_assignment_card) == recompinput::InputDevice::Controller;
+-        recompinput::InputDevice device = has_controller ? recompinput::InputDevice::Controller : recompinput::InputDevice::Keyboard;
+-        const std::vector<int> profile_indices = recompinput::profiles::get_indices_for_custom_profiles(device);
+-        int cur_profile = recompinput::profiles::get_input_profile_for_player(player_index, device);
+-
+-        std::vector<SelectOption> options;
+-
+-        int device_profile_index = has_controller
+-            ? recompinput::profiles::get_controller_profile_index_from_sdl_controller(player.controller)
+-            : recompinput::profiles::get_or_create_mp_keyboard_profile_index(player_index);
+-
+-        if (device_profile_index >= 0) {
+-            options.emplace_back(
+-                recompinput::profiles::get_input_profile_name(device_profile_index),
+-                std::to_string(device_profile_index)
+-            );
+-        }
+-
+-        if (has_controller) {
+-            options.emplace_back(
+-                recompinput::profiles::get_input_profile_name(recompinput::profiles::get_sp_controller_profile_index()),
+-                std::to_string(recompinput::profiles::get_sp_controller_profile_index())
+-            );
+-        } else {
+-            options.emplace_back(
+-                recompinput::profiles::get_input_profile_name(recompinput::profiles::get_sp_keyboard_profile_index()),
+-                std::to_string(recompinput::profiles::get_sp_keyboard_profile_index())
+-            );
+-        }
+-
+-        for (size_t i = 0; i < profile_indices.size(); ++i) {
+-            int profile_index = profile_indices[i];
+-            std::string profile_name = recompinput::profiles::get_input_profile_name(profile_index);
+-            options.emplace_back(profile_name, std::to_string(profile_index));
++        context.create_element<Label>(this, "Input device", LabelStyle::Small);
++        const auto controllers = recompinput::connected_controllers();
++        std::vector<SelectOption> devices{{"Mouse & Keyboard", "keyboard"}};
++        std::string selected_device = player.keyboard_enabled ? "keyboard" : "unassigned";
++        if (!player.controller && !player.keyboard_enabled) devices.emplace_back("Unassigned", "unassigned");
++        for (size_t i = 0; i < controllers.size(); ++i) {
++            const char* name = SDL_GameControllerName(controllers[i]);
++            devices.emplace_back(std::to_string(i + 1) + ": " + (name ? name : "Controller"), std::to_string(i));
++            if (controllers[i] == player.controller) selected_device = std::to_string(i);
+         }
+-
+-        auto select = context.create_element<Select>(
+-            this,
+-            options,
+-            std::to_string(cur_profile)
+-        );
+-
+-        select->add_change_callback([this](SelectOption& option, int option_index) {
+-            this->on_select_player_profile(std::stoi(option.value));
++        auto device_select = context.create_element<Select>(this, devices, selected_device);
++        device_select->set_width(100.0f, Unit::Percent);
++        device_select->add_change_callback([player_index, controllers](SelectOption& option, int) {
++            if (option.value == "unassigned") return;
++            SDL_GameController* controller = option.value == "keyboard" ? nullptr : controllers.at(std::stoul(option.value));
++            recompinput::players::select_player_device(player_index, controller);
+         });
+-        select->set_width(100.0f, Unit::Percent);
 +        if (read_player_name && save_player_name) {
 +            context.create_element<Label>(this, "In-game name", LabelStyle::Small);
 +            auto* name = context.create_element<TextInput>(this, true);
@@ -1273,8 +1388,14 @@ index 7a75884..3c68dc7 100644
 +            });
 +        }
  
-         auto profile_label = context.create_element<Label>(this, "Profile", LabelStyle::Small);
+         bool player_is_assigned = recompinput::players::get_player_is_assigned(player_index, is_assignment_card);
+-        select->set_enabled(player_is_assigned);
  
+-        edit_profile_button = context.create_element<Button>(this, "Edit Profile", ButtonStyle::Secondary, ButtonSize::Medium);
++        edit_profile_button = context.create_element<Button>(this, "Customize Controls", ButtonStyle::Secondary, ButtonSize::Medium);
+         edit_profile_button->add_pressed_callback([this]() {
+             this->on_edit_profile();
+         });
 diff --git a/recompui/src/composites/ui_player_card.h b/recompui/src/composites/ui_player_card.h
 index 8d92aa5..880a2e4 100644
 --- a/recompui/src/composites/ui_player_card.h
@@ -1289,10 +1410,45 @@ index 8d92aa5..880a2e4 100644
  // player index, profile index
  using on_select_player_profile_callback = std::function<void(int, int)>;
 diff --git a/recompui/src/config/ui_config_page_controls.cpp b/recompui/src/config/ui_config_page_controls.cpp
-index f379a6f..6305d61 100644
+index f379a6f..95a6c5b 100644
 --- a/recompui/src/config/ui_config_page_controls.cpp
 +++ b/recompui/src/config/ui_config_page_controls.cpp
-@@ -170,7 +170,7 @@ void GameInputRow::focus_on_first_binding() {
+@@ -46,7 +46,8 @@ GameInputRow::GameInputRow(
+     set_width(100.0f, Unit::Percent);
+     // Have to set height here for the scroll buffer to work.
+     // Otherwise it fails to calculate the correct size (RmlUI issue)
+-    set_height(64.0f);
++    set_height_auto();
++    set_min_height(80.0f);
+ 
+     set_padding_top(4.0f);
+     set_padding_right(16.0f);
+@@ -62,11 +63,19 @@ GameInputRow::GameInputRow(
+ 
+     set_debug_id("GameInputRow (" + input_ctx.name + ")");
+ 
+-    auto label = context.create_element<Label>(this, input_ctx.name, theme::Typography::LabelMD);
+-    label->set_flex_grow(2.0f);
+-    label->set_flex_shrink(1.0f);
+-    label->set_flex_basis(300.0f);
+-    label->set_height_auto();
++    auto text = context.create_element<Element>(this, 0, "div", false);
++    text->set_flex_grow(2.0f);
++    text->set_flex_shrink(1.0f);
++    text->set_flex_basis(300.0f);
++    text->set_display(Display::Flex);
++    text->set_flex_direction(FlexDirection::Column);
++    text->set_padding_right(12.0f);
++    context.create_element<Label>(text, input_ctx.name, theme::Typography::LabelMD);
++    if (!input_ctx.description.empty()) {
++        auto description = context.create_element<Label>(text, input_ctx.description, LabelStyle::Small);
++        description->set_color(theme::color::TextDim);
++        description->set_height_auto();
++    }
+     // TODO: whitespace nowrap impl
+ 
+     auto bindings_container = context.create_element<Element>(this, 0, "div", false);
+@@ -170,7 +179,7 @@ void GameInputRow::focus_on_first_binding() {
  ConfigPageControls::ConfigPageControls(ResourceId rid, Element *parent) : ConfigPage(rid, parent) {
      controls_page = this;
  
@@ -1301,7 +1457,7 @@ index f379a6f..6305d61 100644
      this->max_num_players = multiplayer_enabled ? recompinput::players::get_max_number_of_players() : 1;
      multiplayer_view_mappings = !multiplayer_enabled;
  
-@@ -381,11 +381,9 @@ void ConfigPageControls::render_body_players() {
+@@ -381,11 +390,9 @@ void ConfigPageControls::render_body_players() {
      body_left->set_max_height(100.0f, Unit::Percent);
      body_left->set_overflow_y(Overflow::Auto);
  
@@ -1315,7 +1471,7 @@ index f379a6f..6305d61 100644
          player_grid = context.create_element<Element>(body_left, 0, "div", false);
          player_grid->set_as_navigation_container(NavigationType::GridRow);
          player_grid->set_display(Display::Flex);
-@@ -399,17 +397,11 @@ void ConfigPageControls::render_body_players() {
+@@ -399,17 +406,11 @@ void ConfigPageControls::render_body_players() {
          // The player cards still need the padding for controller nav visibility.
          player_grid->set_margin_bottom(-64.0f);
  
@@ -1335,6 +1491,44 @@ index f379a6f..6305d61 100644
              auto player_card = context.create_element<PlayerCard>(
                  player_grid,
                  j,
+@@ -473,6 +474,37 @@ void ConfigPageControls::render_footer() {
+     {
+         auto footer_left = footer->get_left();
+         footer_left->clear_children();
++        if (multiplayer_enabled) {
++            // Saved layouts belong inside customization, not device assignment.
++            const auto device = get_player_input_device();
++            const auto player = recompinput::players::get_player(selected_player);
++            std::vector<SelectOption> options;
++            auto add_profile = [&options](int index) {
++                if (index < 0) return;
++                const auto value = std::to_string(index);
++                for (const auto& option : options) if (option.value == value) return;
++                options.emplace_back(recompinput::profiles::get_input_profile_name(index), value);
++            };
++            add_profile(selected_profile_index);
++            if (device == recompinput::InputDevice::Controller) {
++                add_profile(recompinput::profiles::get_controller_profile_index_from_sdl_controller(player.controller));
++                add_profile(recompinput::profiles::get_sp_controller_profile_index());
++            } else if (device == recompinput::InputDevice::Keyboard) {
++                add_profile(recompinput::profiles::get_or_create_mp_keyboard_profile_index(selected_player));
++                add_profile(recompinput::profiles::get_sp_keyboard_profile_index());
++            }
++            if (device != recompinput::InputDevice::COUNT) {
++                for (int index : recompinput::profiles::get_indices_for_custom_profiles(device)) add_profile(index);
++            }
++            context.create_element<Label>(footer_left, "Saved layout", LabelStyle::Small);
++            auto select = context.create_element<Select>(footer_left, options, std::to_string(selected_profile_index));
++            select->set_enabled(device != recompinput::InputDevice::COUNT);
++            select->add_change_callback([this](SelectOption& option, int) {
++                selected_profile_index = std::stoi(option.value);
++                on_select_player_profile(selected_player, selected_profile_index);
++                force_update();
++            });
++        }
+         if (!multiplayer_enabled) {
+             keyboard_toggle = context.create_element<IconToggle>(footer_left, "icons/Cont.svg", "icons/Keyboard.svg", ToggleSize::Large);
+             keyboard_toggle->set_checked(single_player_show_keyboard_mappings);
 diff --git a/recompui/src/config/ui_config_tab_graphics.cpp b/recompui/src/config/ui_config_tab_graphics.cpp
 index 4fdf81f..f3f6949 100644
 --- a/recompui/src/config/ui_config_tab_graphics.cpp

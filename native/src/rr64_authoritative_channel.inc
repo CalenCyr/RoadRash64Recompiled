@@ -1,0 +1,162 @@
+// Internal netplay implementation, under g_mutex and existing endpoint/token
+// validation. No new socket, service, or player-facing configuration.
+bool valid_finish_mode(unsigned mode) {
+    return mode==0 || mode==0x0b || mode==0x14 || mode==0x19 || mode==0x1e || mode==0x20;
+}
+void commit_authority_frame_locked(const AuthorityFrame &frame) {
+    g_session.previous_riders=g_session.riders;
+    g_session.riders=frame.riders;
+    g_session.authority_frame=frame;
+    g_session.world={frame.stamp.round,frame.stamp.tick,frame.traffic};
+}
+bool enable_authority_locked(unsigned round,unsigned humans) {
+    if(round!=g_session.game_setup.revision || !round || !humans || humans>>kMaximumPlayers || !(humans&1))return false;
+    if(g_session.authoritative && g_session.authority_round==round)return g_session.authority_humans==humans;
+    if(!g_session.authority_host.reset(round,humans))return false;
+    g_session.authority_client.reset(round);
+    g_session.authority_local_sequence=0;
+    g_session.authority_frame={};g_session.authority_assemblies={};
+    g_session.riders={};g_session.previous_riders={};
+    g_session.world={};g_session.world_receiver.reset();
+    g_session.authority_replay_stamp={};g_session.authority_replay_ticket=0;g_session.authority_replay_last=0;
+    g_session.authority_round=round;g_session.authority_humans=humans;g_session.authoritative=true;
+    g_session.authority_loaded=0;g_session.authority_released=false;g_session.authority_finish_mode=0;g_session.authority_finish_tick=0;
+    g_session.authority_sent={};g_session.hits={};return true;
+}
+// Rider-first and traffic-first delivery use the same bounded assembly.
+AuthorityAssembly *authority_assembly_locked(const authority::Stamp &stamp,unsigned riders,unsigned world){
+    if(stamp.round!=g_session.authority_round || !stamp.tick || stamp.tick<=g_session.authority_frame.stamp.tick)return nullptr;
+    auto &a=g_session.authority_assemblies[stamp.tick%g_session.authority_assemblies.size()];
+    if(a.frame.stamp.tick>stamp.tick)return nullptr;
+    if(a.frame.stamp.tick!=stamp.tick){a={};a.frame.stamp=stamp;a.payload_mask=riders;a.world_mask=world;}
+    if(a.payload_mask!=riders || a.world_mask!=world || a.frame.stamp.round!=stamp.round ||
+       a.frame.stamp.acknowledged!=stamp.acknowledged)return nullptr;
+    return &a;
+}
+void complete_authority_assembly_locked(AuthorityAssembly &a){
+    if(a.mask!=(a.payload_mask?a.payload_mask:1u) || a.received_world!=a.world_mask)return;
+    for(unsigned s=0;s<kMaximumPlayers;++s)
+        if(a.frame.stamp.acknowledged[s]<g_session.authority_frame.stamp.acknowledged[s])return;
+    if(!world_sync::valid(world_sync::Snapshot{a.frame.stamp.round,a.frame.stamp.tick,a.frame.traffic}) ||
+       authority_world_mask(a.frame)!=a.world_mask)return;
+    commit_authority_frame_locked(a.frame);
+}
+bool handle_authority_locked(const std::uint8_t *bytes,int size,unsigned sender,const sockaddr_in &) {
+    const auto type=reinterpret_cast<const PacketHeader*>(bytes)->type;
+    if(type!=PacketType::AuthorityBegin && type!=PacketType::AuthorityInput && type!=PacketType::AuthorityState && type!=PacketType::AuthorityReady && type!=PacketType::AuthorityWorld)return false;
+    if(g_session.phase!=Phase::Race)return true;
+    if(is_client_locked() && type==PacketType::AuthorityBegin && size==sizeof(AuthorityBeginPacket)) {
+        const auto &p=*reinterpret_cast<const AuthorityBeginPacket*>(bytes);
+        if(p.released<=1 && valid_finish_mode(p.finish_mode) && p.humans==g_session.race_player_mask && enable_authority_locked(p.round,p.humans)) {
+            g_session.authority_released|=p.released!=0;
+            if(!g_session.authority_finish_mode && p.finish_mode) {
+                g_session.authority_finish_mode=p.finish_mode;g_session.authority_finish_tick=p.finish_tick;
+            }
+        }
+    } else if(is_host_locked() && g_session.authoritative && type==PacketType::AuthorityReady && size==sizeof(AuthorityReadyPacket)) {
+        const auto &p=*reinterpret_cast<const AuthorityReadyPacket*>(bytes);
+        if(p.round==g_session.authority_round && sender<kMaximumPlayers && (g_session.authority_humans&(1u<<sender)))
+            g_session.authority_loaded|=1u<<sender;
+    } else if(is_host_locked() && g_session.authoritative && type==PacketType::AuthorityInput && size==sizeof(AuthorityInputPacket)) {
+        const auto &p=*reinterpret_cast<const AuthorityInputPacket*>(bytes);
+        // Loading UI actions are not race inputs. A peer retransmits its first
+        // admitted command after release; rejecting early packets consumes no
+        // command sequence and cannot create a later gap.
+        if(g_session.authority_released && sender<kMaximumPlayers &&
+           (g_session.authority_loaded&(1u<<sender)))g_session.authority_host.receive(sender,p.batch);
+    } else if(is_client_locked() && g_session.authoritative && type==PacketType::AuthorityState && size==sizeof(AuthorityStatePacket)) {
+        const auto &p=*reinterpret_cast<const AuthorityStatePacket*>(bytes);
+        if(p.stamp.round!=g_session.authority_round || !p.stamp.tick || p.part>=kAuthorityParts ||
+           (p.payload_mask>>kMaximumPlayers) || !p.world_mask || (p.world_mask>>world_sync::batches) ||
+           !((p.payload_mask?p.payload_mask:1u)&(1u<<p.part)) ||
+           p.stamp.tick<=g_session.authority_frame.stamp.tick || !authority::valid_timing(p.timing) ||
+           p.cop_mode>1 || !std::isfinite(p.cop_win_age) || p.cop_win_age < -1)return true;
+        // Validate before allocating or changing an in-flight assembly.
+        const unsigned first=p.part*kAuthorityPartRiders,count=std::min(kAuthorityPartRiders,kMaximumPlayers-first);
+        std::array<RiderState,kAuthorityPartRiders> states{};
+        for(unsigned i=0;i<count;++i) {
+            states[i]=from_wire(p.riders[i]);
+            if(!authority::valid_outcome(p.outcomes[i]) ||
+               (states[i].active || p.outcomes[i].valid)!=bool(p.payload_mask&(1u<<(first+i))))return true;
+            if(states[i].active && (!finite_rider_state(states[i]) || !authority::valid_outcome(p.outcomes[i]) || !authority::valid_dynamics(p.dynamics[i]) ||
+               (states[i].host_ai && (g_session.authority_humans&(1u<<(first+i))))))return true;
+        }
+        auto *pending=authority_assembly_locked(p.stamp,p.payload_mask,p.world_mask);
+        if(!pending)return true;
+        auto &assembly=*pending;
+        if(!assembly.mask){
+            assembly.frame.timing=p.timing;assembly.frame.cop_mode=p.cop_mode;
+            assembly.frame.cop_win_age=p.cop_win_age;
+        }
+        if(assembly.frame.timing!=p.timing || assembly.frame.cop_mode!=p.cop_mode || assembly.frame.cop_win_age!=p.cop_win_age)return true;
+        // A repeated part is immutable. Never mix two versions of one host tick.
+        if(assembly.mask&(1u<<p.part))return true;
+        for(unsigned i=0;i<count;++i){assembly.frame.riders[first+i]=states[i];assembly.frame.outcomes[first+i]=p.outcomes[i];assembly.frame.dynamics[first+i]=p.dynamics[i];}
+        assembly.mask|=1u<<p.part;
+        complete_authority_assembly_locked(assembly);
+    } else if(is_client_locked() && g_session.authoritative && type==PacketType::AuthorityWorld && size==sizeof(AuthorityWorldPacket)) {
+        const auto &p=*reinterpret_cast<const AuthorityWorldPacket*>(bytes);
+        if(p.part>=world_sync::batches || !p.world_mask || (p.world_mask>>world_sync::batches) ||
+           !(p.world_mask&(1u<<p.part)) || (p.payload_mask>>kMaximumPlayers))return true;
+        for(unsigned i=0;i<p.traffic.size();++i)
+            if(!world_sync::valid(p.traffic[i]) ||
+               (p.part*world_sync::batch_size+i>=world_sync::capacity && p.traffic[i].active))return true;
+        auto *pending=authority_assembly_locked(p.stamp,p.payload_mask,p.world_mask);
+        if(!pending || (pending->received_world&(1u<<p.part)))return true;
+        for(unsigned i=0;i<p.traffic.size() && p.part*world_sync::batch_size+i<world_sync::capacity;++i)
+            pending->frame.traffic[p.part*world_sync::batch_size+i]=p.traffic[i];
+        pending->received_world|=1u<<p.part;
+        complete_authority_assembly_locked(*pending);
+    }
+    return true;
+}
+void service_authority_locked(Clock::time_point now) {
+    if(!g_session.authoritative)return;
+    if(g_session.authority_round!=g_session.game_setup.revision) {g_session.authoritative=false;return;}
+    if(g_session.phase!=Phase::Race || g_session.host_disconnected || now-g_session.authority_sent<std::chrono::milliseconds(16))return;
+    g_session.authority_sent=now;
+    if(is_host_locked()) {
+        AuthorityBeginPacket p{};initialize_packet(p,PacketType::AuthorityBegin);
+        p.round=g_session.authority_round;p.humans=g_session.authority_humans;
+        p.released=g_session.authority_released?1:0;
+        p.finish_mode=g_session.authority_finish_mode;
+        p.finish_tick=g_session.authority_finish_tick;
+        for(unsigned s=1;s<kMaximumPlayers;++s)if(g_session.peers[s].connected)send_packet_locked(p,g_session.peers[s].endpoint);
+        const auto payload_mask=authority_payload_mask(g_session.authority_frame);
+        // Empty slots need no payload. A retired actor can still carry its
+        // final result; retain that part without resurrecting its visible pose.
+        if(g_session.authority_frame.stamp.tick)for(unsigned part=0;part<kAuthorityParts;++part) {
+            if(!((payload_mask?payload_mask:1u)&(1u<<part)))continue;
+            AuthorityStatePacket state{};initialize_packet(state,PacketType::AuthorityState);
+            state.stamp=g_session.authority_frame.stamp;state.part=part;
+            state.payload_mask=payload_mask;state.world_mask=authority_world_mask(g_session.authority_frame);
+            state.timing=g_session.authority_frame.timing;
+            state.cop_mode=g_session.authority_frame.cop_mode;state.cop_win_age=g_session.authority_frame.cop_win_age;
+            for(unsigned i=0;i<kAuthorityPartRiders && part*kAuthorityPartRiders+i<kMaximumPlayers;++i){
+                state.riders[i]=to_wire(g_session.authority_frame.riders[part*kAuthorityPartRiders+i]);
+                state.outcomes[i]=g_session.authority_frame.outcomes[part*kAuthorityPartRiders+i];
+                state.dynamics[i]=g_session.authority_frame.dynamics[part*kAuthorityPartRiders+i];
+            }
+            for(unsigned s=1;s<kMaximumPlayers;++s)if(g_session.peers[s].connected)send_packet_locked(state,g_session.peers[s].endpoint);
+        }
+        if(g_session.authority_frame.stamp.tick)for(unsigned part=0;part<world_sync::batches;++part){
+            const auto mask=authority_world_mask(g_session.authority_frame);
+            if(!(mask&(1u<<part)))continue;
+            AuthorityWorldPacket state{};initialize_packet(state,PacketType::AuthorityWorld);
+            state.stamp=g_session.authority_frame.stamp;state.part=part;
+            state.payload_mask=payload_mask;state.world_mask=mask;
+            for(unsigned i=0;i<state.traffic.size() && part*world_sync::batch_size+i<world_sync::capacity;++i)
+                state.traffic[i]=g_session.authority_frame.traffic[part*world_sync::batch_size+i];
+            for(unsigned peer=1;peer<kMaximumPlayers;++peer)if(g_session.peers[peer].connected)
+                send_packet_locked(state,g_session.peers[peer].endpoint);
+        }
+    } else {
+        if(g_session.local_slot<kMaximumPlayers && (g_session.authority_loaded&(1u<<g_session.local_slot))){
+            AuthorityReadyPacket ready{};initialize_packet(ready,PacketType::AuthorityReady);ready.round=g_session.authority_round;
+            send_packet_locked(ready,g_session.host_endpoint);
+        }
+        AuthorityInputPacket p{};initialize_packet(p,PacketType::AuthorityInput);p.batch.round=g_session.authority_round;
+        p.batch.count=g_session.authority_client.resend(p.batch.commands);
+        if(p.batch.count)send_packet_locked(p,g_session.host_endpoint);
+    }
+}

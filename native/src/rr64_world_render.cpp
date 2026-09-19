@@ -1,4 +1,5 @@
 #include "rr64_presentation_options.hpp"
+#include "rr64_prediction_replay.hpp"
 #include "rr64_world_render.hpp"
 #include "rr64_world_camera.hpp"
 #include "rr64_actor_render_snapshot.hpp"
@@ -498,6 +499,7 @@ extern "C" void rr64_world_end_actor() {
     normalized = false;
 }
 extern "C" void rr64_world_invalidate(unsigned char *m) {
+    if (rr64::prediction::active()) return;
     if (!rr64_world_distance_enabled())
         return;
     rr64_world_end_actor();
@@ -508,6 +510,8 @@ extern "C" void rr64_world_invalidate(unsigned char *m) {
 }
 extern "C" void rr64_world_observe_allocation(unsigned char *m, unsigned node, unsigned view,
                                               unsigned bytes) {
+    // Private native constructors must not replace the live world's cache owner.
+    if (rr64::prediction::active()) return;
     if (!rr64_world_distance_enabled() || view >= 4u || !bytes || bytes > 128u * 64u || bytes % 64u)
         return;
     unsigned type = 0, entity = 0;

@@ -1,3 +1,4 @@
+#include "rr64_prediction_replay.hpp"
 #include "rr64_presentation_options.hpp"
 #include "rr64_actor_render_snapshot.hpp"
 #include "rr64_actor_render_diagnostics.hpp"
@@ -486,6 +487,9 @@ extern "C" void rr64_lod_read_stats(unsigned long long *preparations,
 
 extern "C" void rr64_lod_observe_allocation(unsigned char *rdram, unsigned int node,
                                             unsigned int view, unsigned int bytes) {
+    // Replay allocations belong to a disposable image. Registering that image
+    // here resets the live Max LOD allocation store and loses distant poses.
+    if (rr64::prediction::active()) return;
     if (!rr64_render_only_max_lod_enabled() || shadow_mapping) {
         return;
     }
@@ -499,6 +503,7 @@ extern "C" void rr64_lod_observe_allocation(unsigned char *rdram, unsigned int n
 }
 
 extern "C" void rr64_lod_invalidate(unsigned char *rdram) {
+    if (rr64::prediction::active()) return;
     end_binding();
     if (!rr64_render_only_max_lod_enabled() || shadow_mapping) {
         return;
@@ -512,6 +517,7 @@ extern "C" void rr64_lod_invalidate(unsigned char *rdram) {
 }
 
 extern "C" void rr64_lod_release_node(unsigned char *rdram, unsigned int node) {
+    if(rr64::prediction::active())return;
     if (!rr64_render_only_max_lod_enabled() || shadow_mapping)
         return;
     auto &state = runtime();
@@ -525,6 +531,7 @@ extern "C" void rr64_lod_release_node(unsigned char *rdram, unsigned int node) {
 }
 
 extern "C" void rr64_lod_reset_actor_pool(unsigned char *rdram) {
+    if (rr64::prediction::active()) return;
     if (!rr64_render_only_max_lod_enabled() || shadow_mapping)
         return;
     auto &state = runtime();
@@ -537,6 +544,7 @@ extern "C" void rr64_lod_reset_actor_pool(unsigned char *rdram) {
 }
 
 extern "C" void rr64_lod_begin_preparation(unsigned char *rdram) {
+    if (rr64::prediction::active()) return;
     rr64_lod_invalidate(rdram);
     if (!rr64_render_only_max_lod_enabled() || shadow_mapping) {
         return;

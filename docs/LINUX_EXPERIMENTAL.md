@@ -1,6 +1,6 @@
-# Road Rash 64 Recompiled 1.2 — Experimental Linux download
+# Road Rash 64 Recompiled 1.3 — Experimental Linux download
 
-This package integrates CalenCyr's native Linux contribution with the RoadRash64Recompiled 1.2 source. It is a separate Linux build, not the
+This package integrates CalenCyr's native Linux contribution with the RoadRash64Recompiled 1.3 source. It is a separate Linux build, not the
 Windows executable running through Wine. No ROM is included; select your own
 supported Road Rash 64 USA v1.0 ROM at startup.
 
@@ -30,6 +30,17 @@ SDL 2.30.3. SDL 2.26 or later is required; Ubuntu 22.04's original SDL is too ol
 Use GCC 12 or newer with its matching C++20 standard library. Clang 14 with the
 older/mixed libraries failed during validation and is not the documented recipe.
 
+GCC 12 is the initial Linux packaging baseline, not a requirement to use only
+that version, and it is not the Windows compiler. The current Windows candidate
+build uses Visual Studio's ClangCL 19.1.5. GCC 16.2 is available as of August 2026,
+but this project has not yet validated a GCC 16 package. Compiler age alone does
+not establish the cause of a crash, network desynchronization or a performance
+regression. Evaluate a newer compiler in a separate build directory, with a
+matching standard library, then compare tests and representative race timings.
+Recheck the AppImage's required GLIBC/GLIBCXX versions before changing the
+distributed compiler baseline; preserve the existing package for comparison.
+Upstream release status: https://gcc.gnu.org/gcc-16/.
+
 Linux development packages include build-essential, g++-12, cmake, ninja-build,
 pkg-config, git, Python 3.10+, libsdl2-dev (2.26+), libgtk-3-dev, libssl-dev,
 libvulkan-dev and zlib1g-dev. AppImage packaging also uses curl, ImageMagick and
@@ -51,3 +62,5 @@ and corresponding sources. FFmpeg is built as minimal shared libraries; replacin
 them is possible by extracting the AppImage and rebuilding compatible libraries.
 The exact FFmpeg configuration is in native/CMakeLists.txt. Do not publish a
 repackaged binary without updating its source and license materials.
+
+Online and proximity voice are experimental. Maximum Draw Distance can load all race areas on the map; start around 50-60%, particularly for split screen. This 1.3 integration has not been gameplay-tested on Linux.

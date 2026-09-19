@@ -1,5 +1,6 @@
 #include "rr64_msvc_crt_compat.hpp"
 #include "rr64_achievements.hpp"
+#include "rr64_prediction_replay.hpp"
 
 #include <algorithm>
 #include <array>
@@ -157,6 +158,7 @@ unsigned g_jam_count = 0;
 std::array<bool, kAchievements.size()> g_badge_loaded{};
 std::atomic_bool g_enabled{true};
 std::atomic_bool g_hide_toast_requested{false};
+std::filesystem::path g_progress_path;
 
 std::filesystem::path progress_path() {
     return recompui::file::get_app_folder_path() / "achievements.txt";
@@ -323,13 +325,13 @@ std::size_t find_by_retro_id(std::uint32_t retro_id) {
     return kAchievements.size();
 }
 
-void save_progress(const std::array<bool, kAchievements.size()> &unlocked) {
+bool save_progress(const std::array<bool, kAchievements.size()> &unlocked) {
     std::error_code ec;
-    std::filesystem::create_directories(progress_path().parent_path(), ec);
-    std::ofstream output(progress_path(), std::ios::trunc);
+    std::filesystem::create_directories(g_progress_path.parent_path(), ec);
+    std::ofstream output(g_progress_path, std::ios::trunc);
     if (!output) {
         std::fprintf(stderr, "[RR64-ACH] Could not save achievement progress.\n");
-        return;
+        return false;
     }
     output << "# Road Rash 64 Recompiled local achievements v1\n";
     for (std::size_t i = 0; i < kAchievements.size(); ++i) {
@@ -337,6 +339,8 @@ void save_progress(const std::array<bool, kAchievements.size()> &unlocked) {
             output << kAchievements[i].retro_id << '\n';
         }
     }
+    output.close();
+    return static_cast<bool>(output);
 }
 
 void load_progress() {
@@ -548,7 +552,24 @@ void initialize() {
         return;
     }
     load_progress();
+    g_progress_path = progress_path(); // Resolve frontend paths on its owning thread.
     g_initialized = true;
+}
+
+void flush_progress() {
+    std::array<bool, kAchievements.size()> unlocked{};
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_initialized || !g_persist_dirty) return;
+        unlocked = g_unlocked;
+        g_persist_dirty = false;
+    }
+    // No game/UI lock is held during filesystem work. An unlock arriving
+    // during this write sets dirty again, preserving the newer snapshot.
+    if (!save_progress(unlocked)) {
+        std::lock_guard lock(g_mutex);
+        g_persist_dirty = true; // Retry on the next worker tick, not every UI frame.
+    }
 }
 
 void set_enabled(bool enabled_value) {
@@ -709,22 +730,13 @@ void update_ui() {
         return;
     }
 
-    std::array<bool, kAchievements.size()> unlocked{};
-    bool save_needed = false;
     std::optional<std::size_t> next_toast{};
     {
         std::lock_guard lock(g_mutex);
-        unlocked = g_unlocked;
-        save_needed = g_persist_dirty;
-        g_persist_dirty = false;
         if (!g_ui.active_toast.has_value() && !g_toast_queue.empty()) {
             next_toast = g_toast_queue.front();
             g_toast_queue.pop_front();
         }
-    }
-
-    if (save_needed) {
-        save_progress(unlocked);
     }
 
     if (!g_ui.toast_initialized) {
@@ -852,6 +864,7 @@ extern "C" void rr64_achievement_observe_frame(unsigned char *) {
 
 extern "C" void rr64_achievement_game_event(unsigned char *, unsigned int event_id, unsigned int,
                                             unsigned int) {
+    if(rr64::prediction::active())return;
     rr64::achievements::handle_game_event(event_id);
 }
 

@@ -1,8 +1,11 @@
+#include "rr64_prediction_replay.hpp"
 #include "rr64_netplay.hpp"
 #include "rr64_connection_address.hpp"
+#include "rr64_local_race_options.hpp"
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -54,16 +57,18 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr std::uint32_t kProtocolMagic = 0x52523634u; // RR64
-constexpr std::uint16_t kProtocolVersion = 6;
+constexpr std::uint16_t kProtocolVersion = 38; // Separate cop trick action from directional attacks.
 constexpr std::size_t kPlayerNameCapacity = 24;
 constexpr auto kHelloInterval = std::chrono::milliseconds(500);
 constexpr auto kStateInterval = std::chrono::milliseconds(25);
 constexpr auto kSnapshotInterval = std::chrono::milliseconds(50);
-constexpr auto kRaceStateInterval = std::chrono::milliseconds(25);
-constexpr auto kRaceSnapshotInterval = std::chrono::milliseconds(50);
+constexpr auto kRaceStateInterval = std::chrono::milliseconds(16);
+constexpr auto kRaceSnapshotInterval = std::chrono::milliseconds(8);
+constexpr auto kWorldSnapshotInterval = std::chrono::milliseconds(25);
+constexpr auto kRiderRepairInterval = std::chrono::milliseconds(100);
 constexpr auto kPingInterval = std::chrono::seconds(1);
 constexpr auto kPeerTimeout = std::chrono::seconds(5);
-constexpr auto kConnectTimeout = std::chrono::seconds(15);
+constexpr auto kConnectTimeout = std::chrono::seconds(5);
 constexpr std::size_t kMaximumQueuedVoiceFrames = 128;
 constexpr std::uint16_t kMaximumVoicePacketsPerSecond = 75;
 
@@ -79,6 +84,9 @@ enum class PacketType : std::uint8_t {
     RaceSnapshot,
     Voice,
     ConnectReject,
+    WorldSnapshot,
+    HitRequest, HitCommit, HitRequestAck, HitCommitAck,
+    AuthorityBegin, AuthorityInput, AuthorityState, AuthorityReady, AuthorityWorld,
 };
 
 #pragma pack(push, 1)
@@ -92,6 +100,13 @@ struct PacketHeader {
     std::uint32_t sequence = 0;
     std::uint64_t session = 0;
 };
+
+struct AuthorityBeginPacket { PacketHeader header{}; std::uint32_t round=0,humans=0,released=0,finish_mode=0; std::uint64_t finish_tick=0; };
+struct AuthorityReadyPacket { PacketHeader header{}; std::uint32_t round=0; };
+struct AuthorityInputPacket { PacketHeader header{}; authority::InputBatch batch{}; };
+static_assert(sizeof(AuthorityInputPacket)<1200);
+
+struct HitPacket { PacketHeader header{}; HitEvent event{}; };
 
 struct HelloPacket {
     PacketHeader header{};
@@ -114,6 +129,7 @@ struct WelcomePacket {
 
 struct ClientStatePacket {
     PacketHeader header{};
+    online_flow::Selection selection{};
     std::uint8_t slot = kInvalidSlot;
     std::uint8_t ready = 0;
     std::uint8_t character = 0;
@@ -125,6 +141,7 @@ struct ClientStatePacket {
 };
 
 struct WirePlayer {
+    online_flow::Selection selection{};
     std::uint8_t connected = 0;
     std::uint8_t ready = 0;
     std::uint8_t character = 0;
@@ -137,11 +154,14 @@ struct WirePlayer {
 };
 
 struct WireGameSetup {
+    std::uint32_t start_requested = 0;
+    std::uint32_t random_seed = 0;
     std::uint32_t revision = 0;
     std::uint16_t transition_buttons = 0;
     std::uint8_t valid = 0;
     std::uint8_t reserved = 0;
     std::uint32_t words[kGameSetupWordCount]{};
+    std::uint32_t race_options = 0;
 };
 
 struct LobbySnapshotPacket {
@@ -165,6 +185,7 @@ struct WireRiderState {
     std::uint16_t flags = 0;
     std::uint16_t reserved2 = 0;
     std::uint32_t tick = 0;
+    std::uint64_t sample_time_us = 0;
     float position_x = 0.0f;
     float position_y = 0.0f;
     float position_z = 0.0f;
@@ -174,6 +195,9 @@ struct WireRiderState {
     float rear_wheel_x = 0.0f;
     float rear_wheel_y = 0.0f;
     float rear_wheel_z = 0.0f;
+    std::uint32_t rider_position_valid = 0;
+    float rider_x = 0.0f, rider_y = 0.0f, rider_z = 0.0f;
+    RiderRootState root{};
     float bike_lean = 0.0f;
     float front_suspension = 0.0f;
     float rear_suspension = 0.0f;
@@ -181,15 +205,62 @@ struct WireRiderState {
 
 struct ClientRiderStatePacket {
     PacketHeader header{};
+    std::uint32_t round = 0;
     std::uint8_t slot = kInvalidSlot;
     std::uint8_t reserved[3]{};
     WireRiderState state{};
 };
 
+// Bounded parts retain room for physics fields without IP fragmentation.
+constexpr unsigned kAuthorityPartRiders=1;
+constexpr unsigned kAuthorityParts=(kMaximumPlayers+kAuthorityPartRiders-1)/kAuthorityPartRiders;
+static_assert(kAuthorityPartRiders==1 && kAuthorityParts<32);
+unsigned authority_payload_mask(const AuthorityFrame &frame) {
+    unsigned mask=0;
+    for(unsigned s=0;s<kMaximumPlayers;++s)if(frame.riders[s].active || frame.outcomes[s].valid)mask|=1u<<s;
+    return mask;
+}
+struct AuthorityStatePacket {
+    PacketHeader header{};
+    authority::Stamp stamp{};
+    authority::NativeTiming timing{};
+    std::uint32_t part=0;
+    std::uint32_t payload_mask=0,world_mask=0;
+    WireRiderState riders[kAuthorityPartRiders]{};
+    authority::Outcome outcomes[kAuthorityPartRiders]{};
+    authority::RiderDynamics dynamics[kAuthorityPartRiders]{};
+    std::uint32_t cop_mode=0;
+    float cop_win_age=-1;
+};
+static_assert(sizeof(AuthorityStatePacket)<1200);
+// Traffic and riders share the exact simulation stamp, but use separate
+// sub-MTU fragments. No half-world frame is made visible to the game.
+struct AuthorityWorldPacket {
+    PacketHeader header{};
+    authority::Stamp stamp{};
+    std::uint32_t part=0,payload_mask=0,world_mask=0;
+    std::array<world_sync::Traffic,world_sync::batch_size> traffic{};
+};
+static_assert(sizeof(AuthorityWorldPacket)<1200);
+unsigned authority_world_mask(const AuthorityFrame &frame){
+    unsigned mask=0;
+    for(unsigned i=0;i<world_sync::capacity;++i)if(frame.traffic[i].active)
+        mask|=1u<<(i/world_sync::batch_size);
+    return mask?mask:1u; // An empty roster must explicitly retire old traffic.
+}
+
+
 struct RaceSnapshotPacket {
     PacketHeader header{};
+    std::uint32_t round = 0;
     std::uint32_t host_tick = 0;
-    WireRiderState riders[kMaximumPlayers]{};
+    std::uint32_t slot_mask = 0;
+    WireRiderState riders[4]{};
+};
+
+struct WorldSnapshotPacket {
+    PacketHeader header{};
+    world_sync::Batch batch{};
 };
 
 struct PingPacket {
@@ -209,6 +280,12 @@ struct VoicePacket {
 };
 #pragma pack(pop)
 
+struct AuthorityAssembly {
+    AuthorityFrame frame{};
+    unsigned mask=0;
+    unsigned payload_mask=0,world_mask=0,received_world=0;
+};
+
 struct InputState {
     std::uint16_t buttons = 0;
     float stick_x = 0.0f;
@@ -221,11 +298,38 @@ struct Peer {
     Clock::time_point last_seen{};
     Clock::time_point ping_sent{};
     std::uint32_t ping_nonce = 0;
+    std::uint32_t last_state_sequence = 0;
     Clock::time_point voice_window_start{};
     std::uint16_t voice_packets_in_window = 0;
 };
 
+struct HitQueueEntry { HitEvent event{}; Clock::time_point sent{}; };
+struct HitChannel {
+    std::uint32_t round=0, next_request=1, received_commit=0;
+    std::array<std::uint32_t,kMaximumPlayers> received_request{},next_commit{};
+    std::deque<HitQueueEntry> proposals;
+    std::array<std::deque<HitQueueEntry>,kMaximumPlayers> commits;
+    std::deque<HitEvent> delivered;
+};
 struct Session {
+    bool authoritative=false;
+    unsigned authority_loaded=0;
+    unsigned authority_finish_mode=0;
+    std::uint64_t authority_finish_tick=0;
+    bool authority_released=false;
+    std::uint32_t authority_local_sequence=0;
+    std::uint32_t authority_round=0,authority_humans=0;
+    authority::HostRound authority_host{};
+    authority::ClientHistory authority_client{};
+    Clock::time_point authority_sent{};
+    AuthorityFrame authority_frame{};
+    std::array<AuthorityAssembly,8> authority_assemblies{};
+    authority::Stamp authority_replay_stamp{};
+    std::uint32_t authority_replay_last=0;
+    std::uint64_t authority_replay_ticket=0;
+    HitChannel hits{};
+    bool host_disconnected = false;
+    Clock::time_point host_disconnected_at{};
     Config config{};
     SOCKET socket = INVALID_SOCKET;
     sockaddr_in host_endpoint{};
@@ -239,11 +343,18 @@ struct Session {
     std::array<RiderState, kMaximumPlayers> previous_riders{};
     std::array<Peer, kMaximumPlayers> peers{};
     GameSetupState game_setup{};
+    std::uint32_t setup_serial = 0;
+    std::uint32_t race_player_mask = 0;
+    world_sync::Snapshot world{};
+    world_sync::Receiver world_receiver{};
     Clock::time_point last_hello{};
     Clock::time_point last_state{};
     Clock::time_point last_snapshot{};
     Clock::time_point last_race_state{};
     Clock::time_point last_race_snapshot{};
+    Clock::time_point last_world_snapshot{};
+    std::array<std::array<std::uint32_t,kMaximumPlayers>,kMaximumPlayers> sent_rider_ticks{};
+    std::array<std::array<Clock::time_point,kMaximumPlayers>,kMaximumPlayers> sent_rider_at{};
     Clock::time_point last_ping{};
     std::uint32_t client_ping_nonce = 0;
     Clock::time_point client_ping_sent{};
@@ -260,7 +371,17 @@ struct Session {
 };
 
 std::mutex g_mutex;
+std::uint64_t g_authority_replay_ticket=0; // never reused across session resets
 Session g_session{};
+struct AuthorityReadFrame {bool enabled=false;std::uint32_t token=0,round=0;AuthorityFrame frame{};};
+thread_local AuthorityReadFrame authority_read;
+const AuthorityFrame &authority_read_frame_locked(){
+    if(authority_read.enabled && authority_read.token==g_session.token &&
+       authority_read.round==g_session.authority_round && g_session.config.mode==Mode::Join)
+        return authority_read.frame;
+    return g_session.authority_frame;
+}
+
 bool g_winsock_started = false;
 
 bool is_host_locked() {
@@ -295,7 +416,21 @@ std::string read_string(const char *source, std::size_t capacity) {
 }
 
 bool finite_rider_state(const RiderState &state) {
-    return std::isfinite(state.position_x) && std::isfinite(state.position_y) &&
+    if(!valid_attack_visual(state.root.attack)) return false;
+    if (state.host_ai && (state.character>44 || state.bike>31)) return false;
+    if (!std::isfinite(state.root.durability) || !std::isfinite(state.root.durability_capacity)) return false;
+    if (state.root.equipment_valid>1 || (state.root.equipment_valid && (state.weapon<1 || state.weapon>14))) return false;
+    if (state.root.valid > 1 || state.root.bike_attached > 1 ||
+        state.root.rider_attached > 1 || state.root.ejected > 1 ||
+        !std::isfinite(state.root.bike_height) || !std::isfinite(state.root.rider_height)) return false;
+    for (const auto &v : {state.root.bike_origin,state.root.bike_velocity,state.root.bike_motion,state.root.rider_velocity,state.root.rider_anchor})
+        for(float x:v) if(!std::isfinite(x)) return false;
+    if (!std::isfinite(state.root.rider_impact_reserve)) return false;
+    for (float x:state.root.bike_display_angles) if (!std::isfinite(x)) return false;
+    for (float x:state.root.bike_rotation) if (!std::isfinite(x)) return false;
+    for (float x:state.root.rider_rotation) if (!std::isfinite(x)) return false;
+    return state.rider_position_valid <= 1u && std::isfinite(state.rider_x) &&
+           std::isfinite(state.rider_y) && std::isfinite(state.rider_z) && std::isfinite(state.position_x) && std::isfinite(state.position_y) &&
            std::isfinite(state.position_z) && std::isfinite(state.front_wheel_x) &&
            std::isfinite(state.front_wheel_y) && std::isfinite(state.front_wheel_z) &&
            std::isfinite(state.rear_wheel_x) && std::isfinite(state.rear_wheel_y) &&
@@ -305,7 +440,9 @@ bool finite_rider_state(const RiderState &state) {
 
 WireRiderState to_wire(const RiderState &state) {
     WireRiderState wire{};
+    wire.root = state.root;
     wire.active = state.active ? 1 : 0;
+    wire.reserved = state.host_ai ? 1 : 0;
     wire.animation = state.animation;
     wire.weapon = state.weapon;
     wire.character = state.character;
@@ -313,6 +450,7 @@ WireRiderState to_wire(const RiderState &state) {
     wire.health = state.health;
     wire.flags = state.flags;
     wire.tick = state.tick;
+    wire.sample_time_us = state.sample_time_us;
     wire.position_x = state.position_x;
     wire.position_y = state.position_y;
     wire.position_z = state.position_z;
@@ -322,6 +460,10 @@ WireRiderState to_wire(const RiderState &state) {
     wire.rear_wheel_x = state.rear_wheel_x;
     wire.rear_wheel_y = state.rear_wheel_y;
     wire.rear_wheel_z = state.rear_wheel_z;
+    wire.rider_position_valid = state.rider_position_valid;
+    wire.rider_x = state.rider_x;
+    wire.rider_y = state.rider_y;
+    wire.rider_z = state.rider_z;
     wire.bike_lean = state.bike_lean;
     wire.front_suspension = state.front_suspension;
     wire.rear_suspension = state.rear_suspension;
@@ -330,7 +472,9 @@ WireRiderState to_wire(const RiderState &state) {
 
 RiderState from_wire(const WireRiderState &wire) {
     RiderState state{};
+    state.root = wire.root;
     state.active = wire.active != 0;
+    state.host_ai = wire.reserved != 0;
     state.animation = wire.animation;
     state.weapon = wire.weapon;
     state.character = wire.character;
@@ -338,6 +482,7 @@ RiderState from_wire(const WireRiderState &wire) {
     state.health = wire.health;
     state.flags = wire.flags;
     state.tick = wire.tick;
+    state.sample_time_us = wire.sample_time_us;
     state.position_x = wire.position_x;
     state.position_y = wire.position_y;
     state.position_z = wire.position_z;
@@ -347,6 +492,10 @@ RiderState from_wire(const WireRiderState &wire) {
     state.rear_wheel_x = wire.rear_wheel_x;
     state.rear_wheel_y = wire.rear_wheel_y;
     state.rear_wheel_z = wire.rear_wheel_z;
+    state.rider_position_valid = wire.rider_position_valid;
+    state.rider_x = wire.rider_x;
+    state.rider_y = wire.rider_y;
+    state.rider_z = wire.rider_z;
     state.bike_lean = wire.bike_lean;
     state.front_suspension = wire.front_suspension;
     state.rear_suspension = wire.rear_suspension;
@@ -358,7 +507,9 @@ float blend(float from, float to, float alpha) {
 }
 
 RiderState interpolate(const RiderState &previous, const RiderState &current, float alpha) {
-    if (!previous.active || previous.tick >= current.tick) {
+    // A root snapshot includes discrete attachment and orientation state.
+    // Never combine its current root with positions from an earlier tick.
+    if (current.root.valid || !previous.active || previous.tick >= current.tick) {
         return current;
     }
     RiderState result = current;
@@ -371,6 +522,11 @@ RiderState interpolate(const RiderState &previous, const RiderState &current, fl
     result.rear_wheel_x = blend(previous.rear_wheel_x, current.rear_wheel_x, alpha);
     result.rear_wheel_y = blend(previous.rear_wheel_y, current.rear_wheel_y, alpha);
     result.rear_wheel_z = blend(previous.rear_wheel_z, current.rear_wheel_z, alpha);
+    if (previous.rider_position_valid && current.rider_position_valid) {
+        result.rider_x = blend(previous.rider_x, current.rider_x, alpha);
+        result.rider_y = blend(previous.rider_y, current.rider_y, alpha);
+        result.rider_z = blend(previous.rider_z, current.rider_z, alpha);
+    }
     result.bike_lean = blend(previous.bike_lean, current.bike_lean, alpha);
     result.front_suspension = blend(previous.front_suspension, current.front_suspension, alpha);
     result.rear_suspension = blend(previous.rear_suspension, current.rear_suspension, alpha);
@@ -379,6 +535,7 @@ RiderState interpolate(const RiderState &previous, const RiderState &current, fl
 
 static_assert(sizeof(LobbySnapshotPacket) <= 1200, "Lobby snapshots must avoid UDP fragmentation");
 static_assert(sizeof(RaceSnapshotPacket) <= 1200, "Race snapshots must avoid UDP fragmentation");
+static_assert(sizeof(WorldSnapshotPacket)<=1200,"World batches must avoid fragmentation");
 static_assert(sizeof(VoicePacket) <= 1200, "Voice packets must avoid UDP fragmentation");
 
 template <typename Packet> void initialize_packet(Packet &packet, PacketType type) {
@@ -400,6 +557,15 @@ void close_socket_locked() {
         closesocket(g_session.socket);
         g_session.socket = INVALID_SOCKET;
     }
+}
+void host_disconnected_locked() {
+    // Preserve the last race/camera identity for the terminal notification.
+    // A dead host is not permission to resume as local split-screen players.
+    g_session.host_disconnected = true;
+    g_session.host_disconnected_at = Clock::now();
+    g_session.message = "Host Disconnected";
+    g_session.inputs = {};
+    close_socket_locked();
 }
 void connection_failure_locked(const std::string &message) {
     std::fprintf(
@@ -521,6 +687,22 @@ void send_packet_locked(const Packet &packet, const sockaddr_in &endpoint) {
         record_socket_error_locked("send", WSAGetLastError());
 }
 
+// A running round has an immutable human roster. Losing one participant must
+// end that round rather than leave a held input or a loading barrier forever.
+// Called under g_mutex, including from receive/timeout handling.
+void stop_authority_locked(const char *reason) {
+    if(!g_session.authoritative || g_session.host_disconnected)return;
+    PacketHeader packet{};packet.type=PacketType::Disconnect;packet.size=sizeof(packet);
+    packet.sequence=g_session.sequence++;packet.session=g_session.token;
+    if(is_host_locked()) {
+        for(unsigned slot=1;slot<kMaximumPlayers;++slot)
+            if(g_session.peers[slot].connected)send_packet_locked(packet,g_session.peers[slot].endpoint);
+    } else if(is_client_locked())send_packet_locked(packet,g_session.host_endpoint);
+    host_disconnected_locked();
+    g_session.message="Online sync stopped";
+    std::fprintf(stderr,"[RR64-NET] authority stopped: %s\n",reason?reason:"unknown");
+}
+
 std::size_t voice_packet_size(const VoicePacket &packet) {
     return offsetof(VoicePacket, payload) + packet.payload_size;
 }
@@ -610,6 +792,7 @@ void send_client_state_locked(const Clock::time_point now) {
     ClientStatePacket packet{};
     initialize_packet(packet, PacketType::ClientState);
     packet.slot = slot;
+    packet.selection = g_session.players[slot].selection;
     packet.ready = g_session.players[slot].ready ? 1 : 0;
     packet.character = g_session.players[slot].character;
     packet.track = g_session.players[slot].track;
@@ -633,12 +816,16 @@ void send_snapshot_locked(const Clock::time_point now) {
     packet.replicated_riders = g_session.replicated_riders ? 1 : 0;
     packet.game_setup.revision = g_session.game_setup.revision;
     packet.game_setup.transition_buttons = g_session.game_setup.transition_buttons;
+    packet.game_setup.race_options = g_session.game_setup.race_options;
+    packet.game_setup.random_seed = g_session.game_setup.random_seed;
+    packet.game_setup.start_requested = g_session.game_setup.start_requested;
     packet.game_setup.valid = g_session.game_setup.valid ? 1 : 0;
     std::copy(g_session.game_setup.words.begin(), g_session.game_setup.words.end(),
               packet.game_setup.words);
     for (std::uint8_t slot = 0; slot < kMaximumPlayers; ++slot) {
         const PlayerInfo &player = g_session.players[slot];
         WirePlayer &wire = packet.players[slot];
+        wire.selection = player.selection;
         wire.connected = player.connected ? 1 : 0;
         wire.ready = player.ready ? 1 : 0;
         wire.character = player.character;
@@ -659,7 +846,15 @@ void send_snapshot_locked(const Clock::time_point now) {
     g_session.last_snapshot = now;
 }
 
+// Keep the configured cadence despite late polling. Discard missed slots, not
+// the phase of the schedule; never burst-send obsolete snapshots to catch up.
+void advance_race_deadline(Clock::time_point &last,const Clock::time_point now,
+                           const std::chrono::milliseconds interval) {
+    if(now>=last+interval) last+=interval*((now-last)/interval);
+}
+
 void send_client_rider_state_locked(const Clock::time_point now) {
+    if(g_session.authoritative)return;
     if (g_session.local_slot >= kMaximumPlayers) {
         return;
     }
@@ -670,24 +865,69 @@ void send_client_rider_state_locked(const Clock::time_point now) {
     ClientRiderStatePacket packet{};
     initialize_packet(packet, PacketType::ClientRiderState);
     packet.slot = g_session.local_slot;
+    packet.round = g_session.game_setup.revision;
     packet.state = to_wire(state);
     send_packet_locked(packet, g_session.host_endpoint);
-    g_session.last_race_state = now;
+    advance_race_deadline(g_session.last_race_state,now,kRaceStateInterval);
 }
 
 void send_race_snapshot_locked(const Clock::time_point now) {
-    RaceSnapshotPacket packet{};
-    initialize_packet(packet, PacketType::RaceSnapshot);
-    for (std::uint8_t slot = 0; slot < kMaximumPlayers; ++slot) {
-        packet.host_tick = std::max(packet.host_tick, g_session.riders[slot].tick);
-        packet.riders[slot] = to_wire(g_session.riders[slot]);
-    }
-    for (std::uint8_t slot = 1; slot < kMaximumPlayers; ++slot) {
-        if (g_session.peers[slot].connected) {
-            send_packet_locked(packet, g_session.peers[slot].endpoint);
+    // This is the legacy owner-state transport. Authority mode has its own
+    // complete-frame channel; the mode flag is not the host/client role.
+    if(g_session.authoritative)return;
+    // Forward fresh actors promptly, without rebroadcasting every unchanged
+    // actor or echoing a player's own state. Each record remains self-contained;
+    // loss never creates a dependency on an earlier delta. Periodic repair also
+    // delivers the final state if its last movement packet was lost.
+    for(unsigned peer=1;peer<kMaximumPlayers;++peer) {
+        if(!g_session.peers[peer].connected) continue;
+        RaceSnapshotPacket packet{};
+        std::array<unsigned,4> slots{};unsigned count=0;
+        auto flush=[&] {
+            if(!count) return;
+            initialize_packet(packet,PacketType::RaceSnapshot);
+            packet.round=g_session.game_setup.revision;
+            packet.header.size=static_cast<std::uint16_t>(offsetof(RaceSnapshotPacket,riders)+count*sizeof(WireRiderState));
+            const int sent=sendto(g_session.socket,reinterpret_cast<const char*>(&packet),packet.header.size,0,
+                reinterpret_cast<const sockaddr*>(&g_session.peers[peer].endpoint),sizeof(sockaddr_in));
+            if(sent==packet.header.size) for(unsigned i=0;i<count;++i) {
+                const unsigned slot=slots[i];
+                g_session.sent_rider_ticks[peer][slot]=g_session.riders[slot].tick;
+                g_session.sent_rider_at[peer][slot]=now;
+            }
+            else if(sent==SOCKET_ERROR) record_socket_error_locked("rider-send",WSAGetLastError());
+            // GCC needs an explicitly typed value for this nested packet aggregate.
+#if defined(__GNUC__) && !defined(__clang__)
+            packet=RaceSnapshotPacket{};
+#else
+            packet={};
+#endif
+            count=0;
+        };
+        for(unsigned slot=0;slot<kMaximumPlayers;++slot) {
+            const auto &rider=g_session.riders[slot];
+            if(slot==peer || !rider.active) continue;
+            if(g_session.sent_rider_ticks[peer][slot]==rider.tick &&
+               now-g_session.sent_rider_at[peer][slot]<kRiderRepairInterval) continue;
+            slots[count]=slot;packet.slot_mask|=1u<<slot;
+            packet.riders[count++]=to_wire(rider);
+            if(count==4) flush();
         }
+        flush();
     }
-    g_session.last_race_snapshot = now;
+    if(g_session.world.round==g_session.game_setup.revision && g_session.world.tick &&
+       now-g_session.last_world_snapshot>=kWorldSnapshotInterval) {
+        for(unsigned b=0;b<world_sync::batches;++b) {
+            WorldSnapshotPacket packet{};initialize_packet(packet,PacketType::WorldSnapshot);
+            packet.batch.round=g_session.world.round;packet.batch.tick=g_session.world.tick;packet.batch.index=b;
+            for(unsigned i=0;i<world_sync::batch_size && b*world_sync::batch_size+i<world_sync::capacity;++i)
+                packet.batch.traffic[i]=g_session.world.traffic[b*world_sync::batch_size+i];
+            for(unsigned slot=1;slot<kMaximumPlayers;++slot)
+                if(g_session.peers[slot].connected) send_packet_locked(packet,g_session.peers[slot].endpoint);
+        }
+        advance_race_deadline(g_session.last_world_snapshot,now,kWorldSnapshotInterval);
+    }
+    advance_race_deadline(g_session.last_race_snapshot,now,kRaceSnapshotInterval);
 }
 
 void send_ping_locked(std::uint8_t slot, const sockaddr_in &endpoint, const Clock::time_point now) {
@@ -720,6 +960,9 @@ void send_reject_locked(const sockaddr_in &endpoint, RejectReason reason) {
     packet.reason = reason;
     send_packet_locked(packet, endpoint);
 }
+
+#include "rr64_hit_channel.inc"
+#include "rr64_authoritative_channel.inc"
 
 void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockaddr_in &endpoint,
                                const Clock::time_point now) {
@@ -771,27 +1014,51 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
     }
     g_session.peers[slot].last_seen = now;
 
+    // Gameplay messages must pass session and endpoint ownership checks above.
+    if(handle_authority_locked(bytes,size,slot,endpoint)) return;
+    if(handle_hit_locked(bytes,size,slot,endpoint,now)) return;
+
     if (header.type == PacketType::ClientState && size == sizeof(ClientStatePacket)) {
         const auto &state = *reinterpret_cast<const ClientStatePacket *>(bytes);
         if (state.slot != slot) {
             return;
         }
+        // UDP can reorder client input packets. Never rewind controls/readiness
+        // to an older packet from the same authenticated peer.
+        auto &lastSequence=g_session.peers[slot].last_state_sequence;
+        if(lastSequence!=0&&static_cast<std::int32_t>(header.sequence-lastSequence)<=0)return;
+        lastSequence=header.sequence;
         PlayerInfo &player = g_session.players[slot];
+        if (online_flow::valid(state.selection) &&
+            state.selection.round == g_session.game_setup.revision &&
+            g_session.game_setup.valid) {
+            // Once loading starts, a peer may acknowledge loading but cannot
+            // silently replace its already committed rider or bike.
+            if (g_session.phase == Phase::CharacterSelect ||
+                (g_session.phase == Phase::TrackSelect &&
+                 state.selection.rider == player.selection.rider &&
+                 state.selection.bike == player.selection.bike && state.selection.confirmed))
+                player.selection = state.selection;
+        }
         player.ready = state.ready != 0;
-        player.character = state.character;
+        player.character = player.selection.round==g_session.game_setup.revision && player.selection.confirmed
+            ? static_cast<std::uint8_t>(player.selection.rider) : state.character;
         player.track = state.track;
         player.name = read_string(state.player_name, sizeof(state.player_name));
-        g_session.inputs[slot].buttons = state.buttons;
+        g_session.inputs[slot].buttons = g_session.phase == Phase::Race
+            ? online_flow::race_buttons(state.buttons,slot) : state.buttons;
         g_session.inputs[slot].stick_x = static_cast<float>(state.stick_x) / 127.0f;
         g_session.inputs[slot].stick_y = static_cast<float>(state.stick_y) / 127.0f;
     } else if (header.type == PacketType::ClientRiderState &&
                size == sizeof(ClientRiderStatePacket)) {
+        // In authority mode clients submit commands, never authoritative poses.
+        if(g_session.authoritative) return;
         const auto &packet = *reinterpret_cast<const ClientRiderStatePacket *>(bytes);
-        if (packet.slot != slot || g_session.phase != Phase::Race) {
+        if (packet.slot != slot || packet.round != g_session.game_setup.revision || g_session.phase != Phase::Race) {
             return;
         }
         RiderState proposed = from_wire(packet.state);
-        if (!proposed.active || !finite_rider_state(proposed) ||
+        if (proposed.host_ai || !proposed.active || !finite_rider_state(proposed) ||
             proposed.tick <= g_session.riders[slot].tick) {
             return;
         }
@@ -842,6 +1109,11 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
                 static_cast<std::uint16_t>(std::clamp<std::int64_t>(elapsed, 0, 999));
         }
     } else if (header.type == PacketType::Disconnect) {
+        if(g_session.authoritative && (g_session.authority_humans&(1u<<slot))) {
+            g_session.authority_host.disconnect(slot);
+            g_session.authority_loaded|=1u<<slot;
+            std::fprintf(stderr,"[RR64-NET] peer %u left; race continues with neutral input.\n",unsigned(slot));
+        }
         g_session.peers[slot] = {};
         g_session.players[slot] = {};
         g_session.inputs[slot] = {};
@@ -905,9 +1177,15 @@ void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sock
         return;
     }
     g_session.last_host_seen = now;
+    if(handle_authority_locked(bytes,size,0,endpoint)) return;
+    if(handle_hit_locked(bytes,size,0,endpoint,now)) return;
 
     if (header.type == PacketType::LobbySnapshot && size == sizeof(LobbySnapshotPacket)) {
         const auto &snapshot = *reinterpret_cast<const LobbySnapshotPacket *>(bytes);
+        if (snapshot.game_setup.start_requested > 1) return;
+        for (const auto &player : snapshot.players)
+            if (!online_flow::valid(player.selection)) return;
+        if(!local_race_options::valid_online_options(snapshot.game_setup.race_options))return;
         if (snapshot.phase > static_cast<std::uint8_t>(Phase::Race)) {
             return;
         }
@@ -916,54 +1194,87 @@ void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sock
         }
         g_session.last_lobby_snapshot_sequence = header.sequence;
         const Phase incoming_phase = static_cast<Phase>(snapshot.phase);
+        const bool preserve_local_ready = incoming_phase==Phase::Lobby && g_session.phase==Phase::Lobby;
         if (incoming_phase != g_session.phase) {
             g_session.received_voice_frames.clear();
             g_session.last_voice_sequences = {};
             g_session.local_voice_sequence = 0;
         }
         g_session.phase = incoming_phase;
+        if(incoming_phase!=Phase::Race){g_session.authoritative=false;g_session.authority_loaded=0;g_session.authority_released=false;}
         g_session.replicated_riders = snapshot.replicated_riders != 0;
         g_session.config.maximum_players =
             static_cast<std::uint8_t>(std::clamp<unsigned>(snapshot.reserved, 2u, kMaximumPlayers));
+        if(snapshot.game_setup.revision!=g_session.game_setup.revision) {
+            g_session.riders={}; g_session.previous_riders={}; g_session.race_player_mask=0;
+            g_session.world={};g_session.world_receiver.reset();
+            for(unsigned slot=0;slot<kMaximumPlayers;++slot)
+                if(snapshot.players[slot].connected) g_session.race_player_mask|=1u<<slot;
+        }
         g_session.game_setup.valid = snapshot.game_setup.valid != 0;
         g_session.game_setup.revision = snapshot.game_setup.revision;
         g_session.game_setup.transition_buttons = snapshot.game_setup.transition_buttons;
+        g_session.game_setup.race_options = snapshot.game_setup.race_options;
+        g_session.game_setup.random_seed = snapshot.game_setup.random_seed;
+        g_session.game_setup.start_requested = snapshot.game_setup.start_requested;
         std::copy(std::begin(snapshot.game_setup.words), std::end(snapshot.game_setup.words),
                   g_session.game_setup.words.begin());
         for (std::uint8_t slot = 0; slot < kMaximumPlayers; ++slot) {
             const WirePlayer &wire = snapshot.players[slot];
             PlayerInfo &player = g_session.players[slot];
+            if (slot != g_session.local_slot || g_session.phase != Phase::CharacterSelect)
+                player.selection = wire.selection;
             player.connected = wire.connected != 0;
-            player.ready = wire.ready != 0;
+            // Readiness is locally owned while staying in the lobby. A delayed
+            // host echo must not undo a toggle and resend the old value forever.
+            if (slot!=g_session.local_slot || !preserve_local_ready)
+                player.ready = wire.ready != 0;
             player.slot = player.connected ? slot : kInvalidSlot;
             player.character = wire.character;
             player.track = wire.track;
             player.ping_ms = wire.ping_ms;
             player.name = read_string(wire.name, sizeof(wire.name));
-            g_session.inputs[slot].buttons = wire.buttons;
-            g_session.inputs[slot].stick_x = static_cast<float>(wire.stick_x) / 127.0f;
-            g_session.inputs[slot].stick_y = static_cast<float>(wire.stick_y) / 127.0f;
+            // Host echo is delayed. Preserve our most recent locally sampled
+            // controls so the next outgoing packet cannot resend stale input.
+            if(slot!=g_session.local_slot){
+                g_session.inputs[slot].buttons = wire.buttons;
+                g_session.inputs[slot].stick_x = static_cast<float>(wire.stick_x) / 127.0f;
+                g_session.inputs[slot].stick_y = static_cast<float>(wire.stick_y) / 127.0f;
+            }
         }
         g_session.message = "Connected - " + std::to_string(snapshot.connected_players) + " / " +
                             std::to_string(kMaximumPlayers) + " riders";
-    } else if (header.type == PacketType::RaceSnapshot && size == sizeof(RaceSnapshotPacket)) {
-        if (g_session.phase != Phase::Race ||
-            header.sequence <= g_session.last_race_snapshot_sequence) {
-            return;
+    } else if (header.type == PacketType::WorldSnapshot && size == sizeof(WorldSnapshotPacket)) {
+        if(g_session.authoritative || g_session.phase!=Phase::Race) return;
+        const auto &packet=*reinterpret_cast<const WorldSnapshotPacket *>(bytes);
+        if(g_session.world_receiver.accept(packet.batch,g_session.game_setup.revision))
+            g_session.world=g_session.world_receiver.snapshot();
+    } else if (header.type == PacketType::RaceSnapshot) {
+        if(g_session.authoritative)return;
+        if (g_session.phase != Phase::Race) return;
+        if(size<int(offsetof(RaceSnapshotPacket,riders)+sizeof(WireRiderState)) || size>int(sizeof(RaceSnapshotPacket))) return;
+        RaceSnapshotPacket snapshot{};std::memcpy(&snapshot,bytes,size);
+        if (snapshot.round!=g_session.game_setup.revision) return;
+        if(snapshot.slot_mask & ~((1u<<kMaximumPlayers)-1)) return;
+        const unsigned count=std::popcount(snapshot.slot_mask);
+        if(!count || count>4 || size!=int(offsetof(RaceSnapshotPacket,riders)+count*sizeof(WireRiderState))) return;
+        std::array<unsigned,4> slots{};unsigned next=0;
+        for(unsigned slot=0;slot<kMaximumPlayers;++slot) if(snapshot.slot_mask&(1u<<slot)) slots[next++]=slot;
+        std::array<RiderState,4> incoming{};
+        for (unsigned i=0;i<count;++i) {
+            incoming[i]=from_wire(snapshot.riders[i]);
+            const auto slot=slots[i];
+            if (incoming[i].active && (!finite_rider_state(incoming[i]) ||
+                (incoming[i].host_ai && (g_session.race_player_mask & (1u<<slot))))) return;
         }
-        const auto &snapshot = *reinterpret_cast<const RaceSnapshotPacket *>(bytes);
-        std::array<RiderState, kMaximumPlayers> incoming{};
-        for (std::uint8_t slot = 0; slot < kMaximumPlayers; ++slot) {
-            incoming[slot] = from_wire(snapshot.riders[slot]);
-            if (incoming[slot].active && !finite_rider_state(incoming[slot])) {
-                return;
-            }
-        }
-        g_session.last_race_snapshot_sequence = header.sequence;
-        for (std::uint8_t slot = 0; slot < kMaximumPlayers; ++slot) {
-            if (incoming[slot].tick >= g_session.riders[slot].tick) {
-                g_session.previous_riders[slot] = g_session.riders[slot];
-                g_session.riders[slot] = incoming[slot];
+        // Order by each actor's tick, not a global packet sequence: a later batch
+        // may arrive before batch 0. Never replace our locally authored state.
+        for (unsigned i=0;i<count;++i) {
+            const unsigned slot=slots[i];
+            if (slot!=g_session.local_slot && incoming[i].active &&
+                incoming[i].tick>g_session.riders[slot].tick) {
+                g_session.previous_riders[slot]=g_session.riders[slot];
+                g_session.riders[slot]=incoming[i];
             }
         }
     } else if (header.type == PacketType::Voice &&
@@ -991,12 +1302,7 @@ void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sock
                 static_cast<std::uint16_t>(std::clamp<std::int64_t>(elapsed, 0, 999));
         }
     } else if (header.type == PacketType::Disconnect) {
-        g_session.message = "Host ended the session";
-        g_session.phase = Phase::Connecting;
-        g_session.token = 0;
-        g_session.local_slot = kInvalidSlot;
-        g_session.riders = {};
-        g_session.previous_riders = {};
+        host_disconnected_locked();
     }
 }
 
@@ -1057,6 +1363,11 @@ void expire_peers_locked(const Clock::time_point now) {
     for (std::uint8_t slot = 1; slot < kMaximumPlayers; ++slot) {
         if (g_session.peers[slot].connected &&
             now - g_session.peers[slot].last_seen > kPeerTimeout) {
+            if(g_session.authoritative && (g_session.authority_humans&(1u<<slot))) {
+                g_session.authority_host.disconnect(slot);
+                g_session.authority_loaded|=1u<<slot;
+                std::fprintf(stderr,"[RR64-NET] peer %u timed out; race continues.\n",unsigned(slot));
+            }
             g_session.peers[slot] = {};
             g_session.players[slot] = {};
             g_session.inputs[slot] = {};
@@ -1067,6 +1378,8 @@ void expire_peers_locked(const Clock::time_point now) {
 }
 
 void service_locked(const Clock::time_point now) {
+    service_authority_locked(now);
+    service_hits_locked(now);
     if (g_session.config.mode == Mode::Offline || g_session.socket == INVALID_SOCKET) {
         return;
     }
@@ -1079,13 +1392,12 @@ void service_locked(const Clock::time_point now) {
         if (g_session.local_slot == kInvalidSlot &&
             now - g_session.connect_started >= kConnectTimeout) {
             connection_failure_locked(
-                "No host handshake after 15 seconds. Check the host address, UDP port and Windows firewall for this build.");
+                "Failed to connect: no hosted game responded. Ask the host to press Host first, then check the address and port and try again.");
             return;
         }
         if (g_session.local_slot != kInvalidSlot &&
             now - g_session.last_host_seen >= kPeerTimeout) {
-            connection_failure_locked(
-                "Connection to host lost. Return to Host / Join to reconnect.");
+            host_disconnected_locked();
             return;
         }
         if (g_session.local_slot == kInvalidSlot && now - g_session.last_hello >= kHelloInterval) {
@@ -1122,6 +1434,167 @@ void service_locked(const Clock::time_point now) {
 }
 
 } // namespace
+
+bool authority_start() {
+    std::lock_guard lock(g_mutex);
+    if(!is_host_locked() || g_session.host_disconnected || g_session.phase!=Phase::Race || !g_session.game_setup.revision)return false;
+    unsigned humans=g_session.race_player_mask;
+    if(!humans || !(humans&1))return false;
+    return enable_authority_locked(g_session.game_setup.revision,humans);
+}
+bool authority_race_gate(bool native_loaded) {
+    std::lock_guard lock(g_mutex);
+    if(!g_session.authoritative || g_session.host_disconnected || g_session.phase!=Phase::Race ||
+       g_session.authority_round!=g_session.game_setup.revision || g_session.local_slot>=kMaximumPlayers)return false;
+    const auto local=1u<<g_session.local_slot;
+    if(!(g_session.authority_humans&local))return false;
+    if(native_loaded)g_session.authority_loaded|=local;
+    if(is_host_locked() && g_session.authority_loaded==g_session.authority_humans)
+        g_session.authority_released=true;
+    return g_session.authority_released && (g_session.authority_loaded&local);
+}
+bool authority_set_finish_mode(unsigned mode) {
+    std::lock_guard lock(g_mutex);
+    if(!is_host_locked() || !g_session.authoritative || g_session.host_disconnected ||
+       g_session.phase!=Phase::Race || !valid_finish_mode(mode) || !mode)return false;
+    if(g_session.authority_finish_mode)return g_session.authority_finish_mode==mode;
+    g_session.authority_finish_mode=mode;
+    g_session.authority_finish_tick=g_session.authority_frame.stamp.tick;return true;
+}
+unsigned authority_finish_mode() {
+    std::lock_guard lock(g_mutex);
+    // Receiving the final packet is not applying it. Client teardown must wait
+    // for successful native reconciliation, including an older replay that was
+    // already in flight when a newer final snapshot arrived.
+    const auto applied=is_host_locked()?g_session.authority_frame.stamp.tick:
+        g_session.authority_client.reconciled_tick();
+    return g_session.authoritative && !g_session.host_disconnected &&
+        g_session.phase==Phase::Race &&
+        g_session.authority_round==g_session.game_setup.revision &&
+        applied>=g_session.authority_finish_tick ? g_session.authority_finish_mode : 0;
+}
+bool authority_queue_input(std::uint16_t buttons,std::int8_t x,std::int8_t y) {
+    authority::Command accepted{};return authority_queue_input_recorded(buttons,x,y,accepted);
+}
+bool authority_queue_input_recorded(std::uint16_t buttons,std::int8_t x,std::int8_t y,authority::Command &accepted,std::uint8_t actions) {
+    std::lock_guard lock(g_mutex);
+    const auto rejected=[&](const char *reason){
+        std::fprintf(stderr,"[RR64-NET] input rejected reason=%s slot=%u round=%u setup=%u released=%u loaded=%x humans=%x sequence=%u buttons=%04x stick=%d,%d actions=%u\n",
+            reason,unsigned(g_session.local_slot),g_session.authority_round,g_session.game_setup.revision,
+            g_session.authority_released,g_session.authority_loaded,g_session.authority_humans,
+            g_session.authority_local_sequence,buttons,int(x),int(y),unsigned(actions));return false;
+    };
+    if(!g_session.authoritative || g_session.host_disconnected || g_session.phase!=Phase::Race ||
+       g_session.authority_round!=g_session.game_setup.revision || !g_session.authority_released ||
+       g_session.local_slot>=kMaximumPlayers ||
+       !(g_session.authority_loaded&(1u<<g_session.local_slot)))return rejected("race-not-released");
+    if(is_host_locked()) {
+        // The host does not predict itself or await a network acknowledgement.
+        // Advance only after admission; a full queue must not create a gap.
+        if(g_session.authority_local_sequence==UINT32_MAX)return rejected("sequence-exhausted");
+        authority::InputBatch b{};b.round=g_session.authority_round;b.count=1;
+        b.commands[0]={b.round,g_session.authority_local_sequence+1,buttons,x,y,actions};
+        if(!g_session.authority_host.receive(0,b))return rejected("host-command-invalid-or-full");
+        ++g_session.authority_local_sequence;accepted=b.commands[0];return true;
+    }
+    authority::Command c;
+    if(!g_session.authority_client.append(buttons,x,y,c,actions))return rejected("client-command-invalid-or-full");
+    accepted=c;return true;
+}
+bool authority_begin_step(authority::Step &step) {
+    std::lock_guard lock(g_mutex);
+    return is_host_locked() && g_session.authoritative && g_session.authority_released && !g_session.host_disconnected && g_session.phase==Phase::Race &&
+        g_session.authority_round==g_session.game_setup.revision && g_session.authority_host.begin(step);
+}
+bool authority_finish_step(std::uint64_t tick,authority::Stamp &stamp) {
+    std::lock_guard lock(g_mutex);
+    if(!is_host_locked() || !g_session.authoritative || g_session.host_disconnected || g_session.phase!=Phase::Race ||
+       g_session.authority_round!=g_session.game_setup.revision || !g_session.authority_host.finish(tick))return false;
+    stamp=g_session.authority_host.stamp();return true;
+}
+
+bool submit_hit(HitEvent event) {
+    std::lock_guard lock(g_mutex);
+    if(g_session.authoritative || g_session.phase!=Phase::Race || g_session.host_disconnected) return false;
+    reset_hits_locked();
+    if(!valid_hit_locked(event,g_session.local_slot)) return false;
+    if(is_host_locked()) return route_hit_locked(event);
+    if(g_session.hits.proposals.size()>=64) return false;
+    event.id=g_session.hits.next_request++;
+    g_session.hits.proposals.push_back({event,{}});return true;
+}
+void authority_fail(const char *reason) {
+    std::lock_guard lock(g_mutex);
+    stop_authority_locked(reason);
+}
+
+bool authority_publish_frame(const AuthorityFrame &frame) {
+    std::lock_guard lock(g_mutex);
+    if(!is_host_locked() || !g_session.authoritative || g_session.host_disconnected || g_session.phase!=Phase::Race ||
+       frame.stamp.round!=g_session.game_setup.revision || !frame.stamp.tick ||
+       frame.stamp.tick<=g_session.authority_frame.stamp.tick || !authority::valid_timing(frame.timing) ||
+       frame.cop_mode>1 || !std::isfinite(frame.cop_win_age) || frame.cop_win_age < -1)return false;
+    if(!world_sync::valid(world_sync::Snapshot{frame.stamp.round,frame.stamp.tick,frame.traffic}))return false;
+    const auto completed=g_session.authority_host.stamp();
+    if(frame.stamp.tick!=completed.tick || frame.stamp.acknowledged!=completed.acknowledged)return false;
+    for(const auto &outcome:frame.outcomes)if(!authority::valid_outcome(outcome))return false;
+    for(unsigned s=0;s<kMaximumPlayers;++s)if(frame.riders[s].active &&
+       (!finite_rider_state(frame.riders[s]) || !authority::valid_outcome(frame.outcomes[s]) || !authority::valid_dynamics(frame.dynamics[s]) ||
+        (frame.riders[s].host_ai && (g_session.authority_humans&(1u<<s)))))return false;
+    commit_authority_frame_locked(frame);return true;
+}
+void authority_pin_frame(){
+    std::lock_guard lock(g_mutex);
+    authority_read.enabled=false;
+    if(!is_client_locked() || !g_session.authoritative || g_session.host_disconnected ||
+       g_session.phase!=Phase::Race || g_session.authority_round!=g_session.game_setup.revision)return;
+    authority_read.frame=g_session.authority_frame;authority_read.token=g_session.token;
+    authority_read.round=g_session.authority_round;authority_read.enabled=true;
+}
+bool authority_get_frame(AuthorityFrame &frame) {
+    std::lock_guard lock(g_mutex);
+    if(!g_session.authoritative || g_session.host_disconnected || g_session.phase!=Phase::Race ||
+       g_session.authority_round!=g_session.game_setup.revision || !authority_read_frame_locked().stamp.tick)return false;
+    frame=authority_read_frame_locked();return true;
+}
+bool authority_get_outcome(unsigned slot,authority::Outcome &out,bool &cop_mode){
+    std::lock_guard lock(g_mutex);
+    if(slot>=kMaximumPlayers || !g_session.authoritative || g_session.host_disconnected || g_session.phase!=Phase::Race ||
+       g_session.authority_round!=g_session.game_setup.revision || !authority_read_frame_locked().stamp.tick ||
+       (!authority_read_frame_locked().riders[slot].active && !authority_read_frame_locked().outcomes[slot].valid))return false;
+    out=authority_read_frame_locked().outcomes[slot];cop_mode=authority_read_frame_locked().cop_mode!=0;return true;
+}
+
+bool authority_prepare_replay(AuthorityReplayPlan &plan) {
+    std::lock_guard lock(g_mutex);
+    if(!is_client_locked() || !g_session.authoritative || g_session.host_disconnected || g_session.phase!=Phase::Race ||
+       g_session.authority_round!=g_session.game_setup.revision || g_session.local_slot>=kMaximumPlayers ||
+       !authority_read_frame_locked().stamp.tick || g_authority_replay_ticket==UINT64_MAX)return false;
+    AuthorityReplayPlan candidate{};candidate.frame=authority_read_frame_locked();
+    const auto &stamp=candidate.frame.stamp;
+    if(!g_session.authority_client.replay_commands(stamp.round,stamp.tick,
+       stamp.acknowledged[g_session.local_slot],candidate.commands,candidate.count))return false;
+    candidate.ticket=++g_authority_replay_ticket;
+    g_session.authority_replay_stamp=stamp;
+    g_session.authority_replay_last=g_session.authority_client.last_sequence();
+    g_session.authority_replay_ticket=candidate.ticket;
+    plan=candidate;return true;
+}
+bool authority_commit_replay(std::uint64_t ticket) {
+    std::lock_guard lock(g_mutex);
+    if(!ticket || ticket!=g_session.authority_replay_ticket || !is_client_locked() ||
+       !g_session.authoritative || g_session.host_disconnected || g_session.phase!=Phase::Race || g_session.local_slot>=kMaximumPlayers ||
+       g_session.authority_round!=g_session.game_setup.revision)return false;
+    const auto &stamp=g_session.authority_replay_stamp;
+    if(!g_session.authority_client.commit_replay(stamp.round,stamp.tick,
+       stamp.acknowledged[g_session.local_slot],g_session.authority_replay_last))return false;
+    g_session.authority_replay_ticket=0;return true;
+}
+bool take_hit(HitEvent &event) {
+    std::lock_guard lock(g_mutex);reset_hits_locked();
+    if(g_session.phase!=Phase::Race || g_session.host_disconnected || g_session.hits.delivered.empty()) return false;
+    event=g_session.hits.delivered.front();g_session.hits.delivered.pop_front();return true;
+}
 
 void configure(const Config &requested) {
     std::lock_guard lock(g_mutex);
@@ -1167,6 +1640,7 @@ void configure(const Config &requested) {
     g_session.last_snapshot = now - kSnapshotInterval;
     g_session.last_race_state = now - kRaceStateInterval;
     g_session.last_race_snapshot = now - kRaceSnapshotInterval;
+    g_session.last_world_snapshot = now - kWorldSnapshotInterval;
     g_session.last_ping = now - kPingInterval;
 
     if (host) {
@@ -1224,13 +1698,24 @@ void update() {
 }
 
 Status get_status() {
+    // Isolated local replay uses its copied guest roster, never live transport
+    // ownership. Network-facing gameplay hooks then cannot send/consume live
+    // events or consult a newer session while reconstructing historical input.
+    if(prediction::active())return {};
     std::lock_guard lock(g_mutex);
     Status status{};
+    status.host_disconnected = g_session.host_disconnected;
+    if (status.host_disconnected)
+        status.host_disconnect_age_ms = static_cast<std::uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()-g_session.host_disconnected_at).count());
     status.maximum_players = g_session.config.maximum_players;
-    status.active = g_session.config.mode != Mode::Offline && g_session.socket != INVALID_SOCKET;
+    status.active = g_session.config.mode != Mode::Offline &&
+        (g_session.socket != INVALID_SOCKET || g_session.host_disconnected);
     status.connected = is_host_locked() || g_session.local_slot != kInvalidSlot;
     status.is_host = is_host_locked();
     status.replicated_riders = g_session.replicated_riders;
+    status.authoritative=g_session.authoritative && g_session.authority_round==g_session.game_setup.revision;
+    status.authority_humans=status.authoritative?g_session.authority_humans:0;
     status.local_slot = g_session.local_slot;
     status.connected_players = connected_count_locked();
     status.phase = g_session.phase;
@@ -1296,6 +1781,7 @@ bool host_set_phase(Phase phase) {
         g_session.local_voice_sequence = 0;
     }
     g_session.phase = phase;
+    if(phase!=Phase::Race){g_session.authoritative=false;g_session.authority_loaded=0;g_session.authority_released=false;}
     for (PlayerInfo &player : g_session.players) {
         if (player.connected) {
             player.ready = false;
@@ -1310,16 +1796,69 @@ bool host_set_phase(Phase phase) {
 
 bool host_commit_game_setup(const GameSetupState &setup) {
     std::lock_guard lock(g_mutex);
+    if(!local_race_options::valid_online_options(setup.race_options))return false;
     if (!is_host_locked() || g_session.phase != Phase::GameSetup) {
         return false;
     }
 
-    const std::uint32_t previous_revision = g_session.game_setup.revision;
+    g_session.riders={}; g_session.previous_riders={}; g_session.race_player_mask=0;
+    g_session.sent_rider_ticks={};g_session.sent_rider_at={};
+            g_session.world={};g_session.world_receiver.reset();
+    for(unsigned slot=0;slot<kMaximumPlayers;++slot)
+        if(g_session.players[slot].connected) g_session.race_player_mask|=1u<<slot;
     g_session.game_setup = setup;
     g_session.game_setup.valid = true;
-    g_session.game_setup.revision = std::max(setup.revision, previous_revision + 1);
+    g_session.game_setup.start_requested = 0;
+    // Remains monotonic when returning to setup within the same connection.
+    // Otherwise delayed confirmations from the previous race could look current.
+    g_session.game_setup.revision = ++g_session.setup_serial;
+    for (auto &player : g_session.players) player.selection = {};
     g_session.phase = Phase::CharacterSelect;
     g_session.message = "Host settings locked - choose your rider and bike";
+    send_snapshot_locked(Clock::now());
+    return true;
+}
+
+bool set_selection(const online_flow::Selection &selection) {
+    std::lock_guard lock(g_mutex);
+    if (!online_flow::valid(selection) || !g_session.game_setup.valid ||
+        selection.round != g_session.game_setup.revision || g_session.local_slot >= kMaximumPlayers)
+        return false;
+    auto &current = g_session.players[g_session.local_slot].selection;
+    if (g_session.phase != Phase::CharacterSelect &&
+        !(g_session.phase == Phase::TrackSelect && selection.confirmed &&
+          selection.rider == current.rider && selection.bike == current.bike)) return false;
+    current = selection;
+    g_session.players[g_session.local_slot].character=static_cast<std::uint8_t>(selection.rider);
+    return true;
+}
+
+bool host_request_race_start() {
+    std::lock_guard lock(g_mutex);
+    if (!is_host_locked() || g_session.phase != Phase::TrackSelect || !g_session.game_setup.valid) return false;
+    if (!g_session.game_setup.start_requested) {
+        g_session.game_setup.start_requested=1;
+        if (std::getenv("RR64_SYNC_LOG")) std::fprintf(stderr,"[RR64-FLOW] Host start requested round=%u\n",g_session.game_setup.revision);
+        send_snapshot_locked(Clock::now());
+    }
+    return true;
+}
+
+bool host_release_selection() {
+    std::lock_guard lock(g_mutex);
+    if (!is_host_locked() || !g_session.game_setup.valid ||
+        (g_session.phase != Phase::CharacterSelect && g_session.phase != Phase::TrackSelect)) return false;
+    unsigned count = 0;
+    for (const auto &p : g_session.players) {
+        if (!p.connected) continue;
+        ++count;
+        if (p.selection.round != g_session.game_setup.revision || !p.selection.confirmed ||
+            (g_session.phase == Phase::TrackSelect && !p.selection.loaded)) return false;
+    }
+    if (count < 2) return false;
+    if (g_session.phase == Phase::TrackSelect && !g_session.game_setup.start_requested) return false;
+    g_session.phase = g_session.phase == Phase::CharacterSelect ? Phase::TrackSelect : Phase::Race;
+    if (std::getenv("RR64_SYNC_LOG")) std::fprintf(stderr,"[RR64-FLOW] round=%u phase=%u peers=%u\n",g_session.game_setup.revision,unsigned(g_session.phase),count);
     send_snapshot_locked(Clock::now());
     return true;
 }
@@ -1330,7 +1869,8 @@ void set_local_input(std::uint16_t buttons, float stick_x, float stick_y) {
         return;
     }
     InputState &input = g_session.inputs[g_session.local_slot];
-    input.buttons = buttons;
+    input.buttons = g_session.phase == Phase::Race
+        ? online_flow::race_buttons(buttons,g_session.local_slot) : buttons;
     input.stick_x = std::clamp(stick_x, -1.0f, 1.0f);
     input.stick_y = std::clamp(stick_y, -1.0f, 1.0f);
 }
@@ -1344,7 +1884,7 @@ bool get_player_input(std::uint8_t slot, std::uint16_t &buttons, float &stick_x,
         return false;
     }
     const InputState &input = g_session.inputs[slot];
-    buttons = input.buttons;
+    buttons = g_session.phase == Phase::Race ? online_flow::race_buttons(input.buttons,slot) : input.buttons;
     stick_x = input.stick_x;
     stick_y = input.stick_y;
     return true;
@@ -1352,11 +1892,13 @@ bool get_player_input(std::uint8_t slot, std::uint16_t &buttons, float &stick_x,
 
 void set_local_rider_state(const RiderState &state) {
     std::lock_guard lock(g_mutex);
+    if(g_session.authoritative)return;
     if (g_session.local_slot >= kMaximumPlayers || !finite_rider_state(state)) {
         return;
     }
     RiderState canonical = state;
     canonical.active = true;
+    canonical.host_ai = false;
     canonical.character = g_session.players[g_session.local_slot].character;
     if (canonical.tick <= g_session.riders[g_session.local_slot].tick) {
         canonical.tick = g_session.riders[g_session.local_slot].tick + 1;
@@ -1365,9 +1907,46 @@ void set_local_rider_state(const RiderState &state) {
     g_session.riders[g_session.local_slot] = canonical;
 }
 
+// AI uses the unoccupied tail of the fixed race roster, never a controller slot.
+bool set_host_world_state(const world_sync::Snapshot &state) {
+    std::lock_guard lock(g_mutex);
+    if(g_session.authoritative || !is_host_locked() || g_session.phase!=Phase::Race ||
+        state.round!=g_session.game_setup.revision || state.tick<=g_session.world.tick || !world_sync::valid(state)) return false;
+    g_session.world=state;return true;
+}
+bool get_world_state(world_sync::Snapshot &state) {
+    std::lock_guard lock(g_mutex);
+    if(g_session.authoritative){
+        const auto &frame=authority_read_frame_locked();
+        if(g_session.host_disconnected || g_session.phase!=Phase::Race || !frame.stamp.tick ||
+           frame.stamp.round!=g_session.game_setup.revision)return false;
+        state={frame.stamp.round,frame.stamp.tick,frame.traffic};return true;
+    }
+    if(g_session.phase!=Phase::Race || !g_session.world.tick || g_session.world.round!=g_session.game_setup.revision) return false;
+    state=g_session.world;return true;
+}
+
+bool set_host_ai_rider_state(std::uint8_t slot, const RiderState &state) {
+    std::lock_guard lock(g_mutex);
+    if(g_session.authoritative)return false;
+    if (!is_host_locked() || g_session.phase!=Phase::Race || slot>=kMaximumPlayers ||
+        (g_session.race_player_mask & (1u<<slot)) || !state.active || !finite_rider_state(state)) return false;
+    auto next=state; next.host_ai=true;
+    if(next.tick<=g_session.riders[slot].tick) next.tick=g_session.riders[slot].tick+1;
+    g_session.previous_riders[slot]=g_session.riders[slot];
+    g_session.riders[slot]=next;
+    return true;
+}
+
 bool get_rider_state(std::uint8_t slot, RiderState &state) {
     std::lock_guard lock(g_mutex);
-    if (slot >= kMaximumPlayers || !g_session.players[slot].connected ||
+    if(g_session.authoritative){
+        const auto &frame=authority_read_frame_locked();
+        if(g_session.host_disconnected || g_session.phase!=Phase::Race || slot>=kMaximumPlayers ||
+           frame.stamp.round!=g_session.game_setup.revision || !frame.riders[slot].active){state={};return false;}
+        state=frame.riders[slot];return true;
+    }
+    if (slot >= kMaximumPlayers || (!g_session.authoritative && !g_session.players[slot].connected && !g_session.riders[slot].host_ai) ||
         !g_session.riders[slot].active) {
         state = {};
         return false;
@@ -1378,7 +1957,13 @@ bool get_rider_state(std::uint8_t slot, RiderState &state) {
 
 bool get_interpolated_rider_state(std::uint8_t slot, float alpha, RiderState &state) {
     std::lock_guard lock(g_mutex);
-    if (slot >= kMaximumPlayers || !g_session.players[slot].connected ||
+    if(g_session.authoritative){
+        const auto &frame=authority_read_frame_locked();
+        if(g_session.host_disconnected || g_session.phase!=Phase::Race || slot>=kMaximumPlayers ||
+           frame.stamp.round!=g_session.game_setup.revision || !frame.riders[slot].active){state={};return false;}
+        state=frame.riders[slot];return true;
+    }
+    if (slot >= kMaximumPlayers || (!g_session.authoritative && !g_session.players[slot].connected && !g_session.riders[slot].host_ai) ||
         !g_session.riders[slot].active) {
         state = {};
         return false;

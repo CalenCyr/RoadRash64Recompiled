@@ -28,9 +28,20 @@ int main() {
     }
     for(unsigned address:{0x800a6578u,0x8009db88u}) {
         write_u32(m,address,2u);
-        check(rr64::video::combined_callback(m,0x8000a310u,true)==0x8000a310u,"local multiplayer retains original video mode");
+        check(rr64::video::combined_callback(m,0x8000a310u,true)==0x8000a310u,"inconsistent player/view setup is not admitted");
         write_u32(m,address,1u);
     }
+    // A real split-screen setup changes BOTH counts. Changing only one above
+    // tests a transition, not multiplayer. All local views must remain eligible
+    // for MAX LOD while their stock layout lock protects framebuffer geometry.
+    for(unsigned views=1;views<=4;++views) {
+        write_u32(m,0x800a6578u,views);write_u32(m,0x8009db88u,views);
+        check(rr64::lod::supported_scene(m),"consistent 1-4 player scene supports actor LOD");
+        write_u32(m,0x800a4f24u,1u);
+        check(rr64::video::combined_callback(m,0x8000a310u,true)==0x8000a310u,"locked native layout retains framebuffer writer");
+        write_u32(m,0x800a4f24u,0u);
+    }
+    write_u32(m,0x800a6578u,1u);write_u32(m,0x8009db88u,1u);
     for(unsigned address:{0x800a4f24u,0x800bc9c4u,0x800bc9ccu,0x8009cc68u}) {
         const unsigned original=read(address);write_u32(m,address,1u);
         check(rr64::video::combined_callback(m,0x8000a310u,true)==0x8000a310u,"capacity, lock and callback checks");

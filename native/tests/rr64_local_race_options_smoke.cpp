@@ -11,8 +11,10 @@
 #include "rr64_engine_layout.hpp"
 #include "rr64_local_players.hpp"
 #include "rr64_netplay.hpp"
+#include "rr64_prediction_replay.hpp"
 namespace { bool online = false; }
 namespace rr64::netplay { Status get_status() { Status result{}; result.active = online; return result; } }
+namespace rr64::netplay { bool authority_get_outcome(unsigned,authority::Outcome&,bool&){return false;} }
 namespace recomp { void* alloc(unsigned char* memory, size_t size) { static size_t next = 0x700000; const size_t offset = next; next += (size + 15) & ~size_t(15); return memory + offset; } }
 namespace { bool placement_ok=false; unsigned voices=0; }
 extern "C" void func_8006B740(unsigned char* rdram,recomp_context* ctx) {
@@ -90,7 +92,7 @@ int main() {
     rr64_local_options_race(rdram); ok &= rr64_local_bike_level(0) == 6;
     ok &= rr64_local_options_visible(8, 0) == 1;
     const unsigned table = rr64_local_options_table(layout::menu_table);
-    ok &= table != layout::menu_table && get(table + 10 * 36) == 0;
+    ok &= table != layout::menu_table && get(table + 11 * 36) == 0;
     put(0x80300018, 0xBADF00D);
     rr64_local_options_text(rdram, 8, 0x80300000);
     ok &= MEM_B(0, guest_address(0x80300000)) == 'B';
@@ -120,6 +122,24 @@ int main() {
     put(layout::menu_cursor, 9); put(layout::menu_buttons, 0x40);
     rr64_local_options_input(rdram);
     ok &= rr64_custom_cop_enabled() && rr64_custom_cop_bike_count(4) == 5;
+    ok &= rr64_local_options_visible(10, 0) == 1;
+    // New setting defaults off, converts only unreserved AI police slots, and
+    // leaves the original pool intact when explicitly enabled.
+    put(layout::humans,2); rr64_custom_cop_begin(rdram,1);
+    recomp_context ai_context{}; ai_context.r29=guest_address(0x80600000);
+    const unsigned ai_pool=0x80600070;
+    put(ai_pool+5*4,3);put(ai_pool+7*4,2);ai_context.r21=2;
+    rr64_custom_cop_ai_pool(rdram,&ai_context);
+    ok &= get(ai_pool+5*4)==5 && get(ai_pool+7*4)==0 && ai_context.r21==0;
+    put(layout::menu_cursor,10);put(layout::menu_buttons,0x40);
+    ok &= rr64_local_options_input(rdram)==1;
+    put(ai_pool+5*4,3);put(ai_pool+7*4,2);ai_context.r21=2;
+    rr64_custom_cop_ai_pool(rdram,&ai_context);
+    ok &= get(ai_pool+5*4)==3 && get(ai_pool+7*4)==2 && ai_context.r21==2;
+    rr64_local_options_input(rdram); // back to default Off
+    ok &= valid_online_options(512u|1024u|10u) && !valid_online_options(2048u);
+    reset_online();ok &= !(online_options()&1024u);
+    apply_online_options(512u|1024u);ok &= online_options()==1536u;
     put(0x800A6690, 0); put(0x800A66B8, 4);
     for (unsigned i = 0; i < 4; ++i) {
         put(0x8009EF3C + i * 4, 4);
@@ -246,9 +266,15 @@ int main() {
     context.r6=0;rr64_custom_cop_control(rdram,&context);
     ok &= !(context.r6&0x20);
     context.r6=4;context.r5=4;rr64_custom_cop_control(rdram,&context);
+    ok &= !rr64_custom_cop_trick(rdram,cop) && (context.r6&4) && (context.r5&4) && !(context.r6&0x20);
+    context.r6=rr64_cop_weapon_trick_button;context.r5=rr64_cop_weapon_trick_button;rr64_custom_cop_control(rdram,&context);
+    ok &= !(context.r6&rr64_cop_weapon_trick_button) && !(context.r5&rr64_cop_weapon_trick_button);
     ok &= rr64_custom_cop_trick(rdram,cop) && (context.r6&0x20) && !(context.r6&4);
     context.r6=0;context.r5=0;rr64_custom_cop_control(rdram,&context);
     ok &= !rr64_custom_cop_trick(rdram,cop);
+    // Spoke jam must survive the shared cop input adapter, including edges.
+    context.r6=5;context.r5=5;rr64_custom_cop_control(rdram,&context);
+    ok &= (context.r6&5)==5 && (context.r5&5)==5 && !rr64_custom_cop_trick(rdram,cop);
     put(0x800D7670,0x3F800000);
     // The original eligible-racer flag stays zero for cops, without blocking recovery.
     put(0x8020304C,0);MEM_H(0x48,guest_address(0x80203000))=0;
@@ -280,6 +306,17 @@ int main() {
     MEM_H(0x4C,guest_address(0x80203100))=1;
     ok &= rr64_custom_cop_win_age(rdram)==0 && !rr64_custom_cop_finished(rdram);
     put(0x800D7670,0x40800000); // 4 seconds, announcement began at 1
+    ok &= rr64_custom_cop_finished(rdram);
+    // AI police are allies, not an impossible extra arrest requirement.
+    const unsigned ai_cop=0x800D8570+2*0x118;
+    put(ai_cop+0x20,7);put(0x800A656C,3);
+    rr64_custom_cop_begin(rdram,1);rr64_custom_cop_roles(rdram);
+    MEM_H(0x4C,guest_address(0x80203100))=0;
+    put(0x800D764C,1);
+    ok &= rr64_custom_cop_win_age(rdram)<0 && !rr64_custom_cop_finished(rdram);
+    MEM_H(0x4C,guest_address(0x80203100))=1;
+    ok &= rr64_custom_cop_win_age(rdram)==0 && !rr64_custom_cop_finished(rdram);
+    put(0x800D7670,0x40E00000); // three seconds after the announcement at four
     ok &= rr64_custom_cop_finished(rdram);
     rr64_custom_cop_reset(); ok &= !rr64_custom_cop_active();
     ok &= rr64_custom_cop_pursuit(rdram,0x80200000)==-1;
@@ -333,6 +370,30 @@ int main() {
     rr64_local_options_input(rdram);
     ok &= rr64_local_options_navigation(rdram) == -1;
     ok &= rr64_local_options_table(layout::menu_table) == layout::menu_table;
-    std::puts(ok ? "PASS local roster and menu bounds" : "FAIL local race options");
+    // Transport is disconnected above, but historical authority rules must
+    // still govern replay. One camera does not limit the human actor pool.
+    put(layout::humans, 1);
+    for (bool host : {false, true}) for (unsigned slot = 0; slot < 14; ++slot) {
+        rr64::prediction::SessionRules rules{true,true,true,host,true,0,1u << slot};
+        rr64::prediction::ReplayScope replay(rules);
+        const unsigned actor = 0x800D8570 + slot * 0x118;
+        const unsigned bike = 0x80400000, rider = 0x80401000, state = 0x80402000;
+        put(actor + 0xE0, bike); put(actor + 0xE4, rider); put(actor + 0xE8, state);
+        put(bike + 0x4F8, 0x42C80000); put(bike + 0x858, 0x41200000);
+        MEM_H(0x57C, guest_address(rider)) = 1;
+        MEM_H(0x7F6, guest_address(bike)) = 0;
+        MEM_H(0x4C, guest_address(state)) = 0;
+        ok &= rr64_local_player_roaming(rdram, actor) == 1 && get(bike + 0x858) == 0;
+        ok &= !rr64_local_player_roaming(rdram, 0x800D8570 + ((slot + 1) % 14) * 0x118);
+        MEM_H(0x7F6, guest_address(bike)) = 1;
+        ok &= !rr64_local_player_roaming(rdram, actor);
+        MEM_H(0x7F6, guest_address(bike)) = 0;
+        MEM_H(0x57C, guest_address(rider)) = 0;
+        ok &= !rr64_local_player_roaming(rdram, actor);
+        MEM_H(0x57C, guest_address(rider)) = 1;
+        MEM_H(0x4C, guest_address(state)) = 1;
+        ok &= !rr64_local_player_roaming(rdram, actor);
+    }
+    std::puts(ok ? "PASS local roster/menu and online replay roaming" : "FAIL local race options");
     return ok ? 0 : 1;
 }

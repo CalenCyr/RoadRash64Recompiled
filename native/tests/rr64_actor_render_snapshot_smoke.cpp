@@ -351,6 +351,11 @@ int main(int argc, char** argv) {
     const auto original = f.live;
     passed &= check(supported_scene(f.live.data()) && f.live == original,
         "a live one-player race accepts stale multiplayer setup count 2 without changing guest memory");
+    write_u32(f.live.data(), Fixture::race_player_count, 0u);
+    passed &= check(supported_scene(f.live.data()), "attract actors with zero humans and one camera are supported");
+    write_u32(f.live.data(), 0x8009DB88u, 2u);
+    passed &= check(!supported_scene(f.live.data()), "zero humans does not admit a stale split-screen layout");
+    f.live = original;
     passed &= check(!store->can_prepare(f.live.data(), f.bike_node, f.rider_node, 0u, 0u),
         "graph addresses and pointer spacing alone never prove allocation capacity");
     f.register_allocations(*store);

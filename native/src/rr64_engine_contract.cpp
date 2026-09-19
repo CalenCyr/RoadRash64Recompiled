@@ -1,3 +1,4 @@
+#include "rr64_prediction_replay.hpp"
 #include "rr64_engine_contract.hpp"
 
 #include <algorithm>
@@ -647,6 +648,9 @@ void capture_dynamics_boundary_impl(unsigned char *rdram, std::uint32_t function
                                     std::uint32_t boundary, std::uint32_t actor_address,
                                     const std::uint32_t *auxiliary_words,
                                     std::uint32_t auxiliary_word_count) noexcept {
+    // Replay reads historical memory; it must not consume live diagnostic
+    // budgets or change entry/exit pairing for the next real physics call.
+    if(rr64::prediction::active())return;
     const std::uint32_t boundary_value = actor_address;
     FILE *file = dynamics_trace_file();
     if (rdram == nullptr || file == nullptr || function_id == 0u ||

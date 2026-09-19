@@ -6,6 +6,13 @@
 #include <span>
 #include <string>
 #include <vector>
+#include "rr64_online_flow.hpp"
+#include "rr64_world_sync.hpp"
+#include "rr64_attack_visual.hpp"
+#include "rr64_authoritative_round.hpp"
+#include "rr64_authoritative_timing.hpp"
+#include "rr64_authoritative_outcome.hpp"
+#include "rr64_authoritative_dynamics.hpp"
 
 namespace rr64::netplay {
 
@@ -43,6 +50,10 @@ struct GameSetupState {
     bool valid = false;
     std::uint32_t revision = 0;
     std::uint16_t transition_buttons = 0;
+    // Recomp-added AI count, pedestrian density, bike tier and Custom Cop mode.
+    std::uint32_t race_options = 0;
+    std::uint32_t random_seed = 0;
+    std::uint32_t start_requested = 0;
     std::array<std::uint32_t, kGameSetupWordCount> words{};
 
     bool operator==(const GameSetupState &) const = default;
@@ -59,6 +70,7 @@ struct Config {
 };
 
 struct PlayerInfo {
+    online_flow::Selection selection{};
     bool connected = false;
     bool ready = false;
     std::uint8_t slot = kInvalidSlot;
@@ -68,9 +80,30 @@ struct PlayerInfo {
     std::string name{};
 };
 
+// Explicit pointer-free visual-root state, captured with the positions at one tick.
+struct RiderRootState {
+    AttackVisual attack{};
+    std::uint32_t valid = 0;
+    std::array<float, 4> bike_rotation{}, rider_rotation{};
+    // Alternate bike graph builder 5E880 uses these instead of the quaternion.
+    std::array<float, 3> bike_display_angles{}; // +21C, +4AC, +4B8
+    // Primary movement sources, not camera-space or LOD-derived positions.
+    std::array<float, 3> bike_origin{}, bike_velocity{}, bike_motion{}, rider_velocity{}, rider_anchor{};
+    float bike_height = 0, rider_height = 0;
+    // Native durability is float, not the legacy uint16 health placeholder.
+    float durability = 0, durability_capacity = 0;
+    // Rider +310 is depleted by native impact handling independently of bike durability.
+    float rider_impact_reserve = 0;
+    std::uint16_t equipment_valid = 0;
+    std::array<std::uint16_t,15> inventory{};
+    std::uint16_t bike_attached = 0, rider_attached = 0, ejected = 0, drive_lockout = 0;
+};
+
 struct RiderState {
+    bool host_ai = false; // Only host can publish a non-player roster actor.
     bool active = false;
     std::uint32_t tick = 0;
+    std::uint64_t sample_time_us = 0; // Owner monotonic time; not wall clock.
     float position_x = 0.0f;
     float position_y = 0.0f;
     float position_z = 0.0f;
@@ -80,6 +113,9 @@ struct RiderState {
     float rear_wheel_x = 0.0f;
     float rear_wheel_y = 0.0f;
     float rear_wheel_z = 0.0f;
+    std::uint32_t rider_position_valid = 0;
+    float rider_x = 0.0f, rider_y = 0.0f, rider_z = 0.0f;
+    RiderRootState root{};
     float bike_lean = 0.0f;
     float front_suspension = 0.0f;
     float rear_suspension = 0.0f;
@@ -91,6 +127,16 @@ struct RiderState {
     std::uint8_t bike = 0;
 };
 
+// A native contact proposal, not a damage amount invented by networking.
+struct HitEvent {
+    std::uint32_t round=0, id=0;
+    std::uint8_t attacker=0, victim=0, kind=0; // 0:61224, 1:616BC
+    float strength=0;
+    AttackVisual attack{};
+};
+bool submit_hit(HitEvent event);
+bool take_hit(HitEvent &event);
+
 struct ReceivedVoiceFrame {
     std::uint8_t speaker_slot = kInvalidSlot;
     std::uint32_t sequence = 0;
@@ -98,7 +144,56 @@ struct ReceivedVoiceFrame {
     std::array<std::uint8_t, kVoicePayloadCapacity> payload{};
 };
 
+// Internal simulation integration API; not a launcher setting.
+bool authority_start();
+// Native race initialization calls this while its update is still held. Host
+// releases only after every race participant has acknowledged this round.
+bool authority_race_gate(bool native_loaded);
+// Stock results/main-menu transitions are selected by the host. Zero means
+// no transition; the game dispatcher still owns teardown and initialization.
+bool authority_set_finish_mode(unsigned mode);
+unsigned authority_finish_mode();
+// End a failed authority session without falling back into local simulation.
+void authority_fail(const char *reason);
+bool authority_queue_input(std::uint16_t buttons,std::int8_t x,std::int8_t y);
+bool authority_queue_input_recorded(std::uint16_t buttons,std::int8_t x,std::int8_t y,authority::Command &accepted,std::uint8_t actions=0);
+bool authority_begin_step(authority::Step &step);
+bool authority_finish_step(std::uint64_t tick,authority::Stamp &stamp);
+struct AuthorityFrame {
+    authority::Stamp stamp{};
+    authority::NativeTiming timing{};
+    std::array<RiderState,kMaximumPlayers> riders{};
+    std::array<authority::Outcome,kMaximumPlayers> outcomes{};
+    std::array<authority::RiderDynamics,kMaximumPlayers> dynamics{};
+    std::array<world_sync::Traffic,world_sync::capacity> traffic{};
+    std::uint32_t cop_mode=0;
+    float cop_win_age=-1;
+};
+// Publication is allowed only for the last completed host step. Reading a
+// snapshot does not discard predicted inputs; reconciliation must do that.
+bool authority_publish_frame(const AuthorityFrame &frame);
+bool authority_get_frame(AuthorityFrame &frame);
+// Game-thread update boundary: keep rider, traffic and correction reads on one
+// complete host snapshot until the next update, despite concurrent reception.
+void authority_pin_frame();
+bool authority_get_outcome(unsigned slot,authority::Outcome &out,bool &cop_mode);
+struct AuthorityReplayPlan {
+    std::uint64_t ticket=0;
+    AuthorityFrame frame{};
+    std::array<authority::Command,authority::history_capacity> commands{};
+    std::size_t count=0;
+};
+// Prepare under the network lock, replay outside it into isolated state, then
+// commit the ticket before exposing that result on the game thread. A failed
+// ticket leaves all input history intact; never run native code under g_mutex.
+bool authority_prepare_replay(AuthorityReplayPlan &plan);
+bool authority_commit_replay(std::uint64_t ticket);
+
 struct Status {
+    bool authoritative=false;
+    std::uint32_t authority_humans=0;
+    bool host_disconnected = false;
+    std::uint32_t host_disconnect_age_ms = 0;
     std::uint8_t maximum_players = kMaximumPlayers;
     bool active = false;
     bool connected = false;
@@ -122,6 +217,9 @@ bool set_character(std::uint8_t character);
 bool set_track(std::uint8_t track);
 bool host_set_phase(Phase phase);
 bool host_commit_game_setup(const GameSetupState &setup);
+bool set_selection(const online_flow::Selection &selection);
+bool host_release_selection();
+bool host_request_race_start();
 bool all_connected_players_ready();
 
 void set_local_input(std::uint16_t buttons, float stick_x, float stick_y);
@@ -132,6 +230,9 @@ bool get_player_input(std::uint8_t slot, std::uint16_t &buttons, float &stick_x,
 // peer. Consumers may request a blend between the two newest snapshots.
 void set_local_rider_state(const RiderState &state);
 bool get_rider_state(std::uint8_t slot, RiderState &state);
+bool set_host_ai_rider_state(std::uint8_t slot, const RiderState &state);
+bool set_host_world_state(const world_sync::Snapshot &state);
+bool get_world_state(world_sync::Snapshot &state);
 bool get_interpolated_rider_state(std::uint8_t slot, float alpha, RiderState &state);
 
 // Encoded voice frames follow the same authenticated direct-connect topology:

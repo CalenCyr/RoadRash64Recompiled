@@ -54,6 +54,10 @@
       {
         "path": "ultramodern/include/ultramodern/rr64_scheduler_diagnostics.hpp",
         "sha256": "2ef012dd2af06f35093995c5a4f3d64f4c6818a5559081745abdbc1a14935f67"
+      },
+      {
+        "path": "ultramodern/include/ultramodern/rr64_snapshot_gate.hpp",
+        "sha256": "3654759917ee759757691d2e94a4b3016aa35350018fbeb65dd8ba8ec621b022"
       }
     ]
   },
@@ -205,6 +209,14 @@
       {
         "path": "src/hle/rt64_rr64_static_world_motion.h",
         "sha256": "07c8b960d345d246d43b017238825f4125e795fef88c9df0129445136820a5d0"
+      },
+      {
+        "path": "src/common/rt64_rr64_hud_view.h",
+        "sha256": "1dfb878786ee0c67bf532be12eae82578a17a6d3a54aff687dc843cdf5d9e63b"
+      },
+      {
+        "path": "src/common/rt64_sky_sampling.h",
+        "sha256": "f9bd47decaf395c8f1029494ecb207d3af0e42c0b858a18a00d3c26c3e1c45b8"
       }
     ]
   },

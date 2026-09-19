@@ -1,3 +1,4 @@
+#include "rr64_custom_cop.hpp"
 #include "recompui/startup_diagnostics.h"
 #include "rr64_popup_input.hpp"
 #include "rr64_view_width.hpp"
@@ -111,7 +112,7 @@
 #include "rr64_online_menu.hpp"
 #include "rr64_voice_chat.hpp"
 
-constexpr const char* kVersion = "1.2.0";
+constexpr const char* kVersion = "1.3.0";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -1467,7 +1468,7 @@ void apply_responsive_menu_navigation(int profile_index, uint16_t buttons, float
     }
 
     auto& state = navigation_states[static_cast<std::size_t>(profile_index)];
-    if (rr64_is_race_mode_active()) {
+    if (rr64_is_race_mode_active() && !rr64_online_host_pause_active()) {
         rr64::menu_navigation::reset(state);
         return;
     }
@@ -1505,7 +1506,7 @@ bool get_local_input_with_road_rumble(
         recompinput::profiles::get_action_input(profile_index, recompinput::GameInput::RR64_WEAPON_TRICK)) {
         // Remove the old RB/C-Down binding in existing profiles as well.
         *buttons &= ~0x0004;
-        *buttons |= rr64_custom_cop_active() ? 0x0004 : 0x0020;
+        *buttons |= rr64_custom_cop_active() ? rr64_cop_weapon_trick_button : 0x0020;
     }
     // Edge state and requests belong to the controller slot, not player one.
     if (profile_index >= 0 && profile_index < 4) {
@@ -1516,20 +1517,23 @@ bool get_local_input_with_road_rumble(
         eject_was_held[profile_index] = held;
         if (pressed && !dismissal_input_blocked && !recompinput::game_input_disabled() &&
             recompinput::game_window_focused() && rr64_are_gameplay_shortcuts_active()) {
-            rr64_request_rider_eject(profile_index);
+            const auto online=rr64::netplay::get_status();
+            rr64_request_rider_eject(rr64::online_flow::shortcut_slot(profile_index,
+                online.active && online.connected && online.phase==rr64::netplay::Phase::Race,
+                online.local_slot,online.replicated_riders));
         }
     }
-    if (profile_index == 0) {
-        static bool right_stick_was_held = false;
+    if (profile_index >= 0 && profile_index < 4) {
+        static std::array<bool, 4> right_stick_was_held{};
         const bool gameplay_shortcuts_allowed = rr64_are_gameplay_shortcuts_active() &&
             !dismissal_input_blocked && !recompinput::game_input_disabled() &&
             recompinput::game_window_focused();
         const bool right_stick_held = recompinput::profiles::get_action_input(profile_index, recompinput::GameInput::RR64_SPOKE_JAM);
-        const bool right_stick_pressed = right_stick_held && !right_stick_was_held;
-        right_stick_was_held = right_stick_held;
+        const bool right_stick_pressed = right_stick_held && !right_stick_was_held[profile_index];
+        right_stick_was_held[profile_index] = right_stick_held;
         if (got_response && buttons != nullptr && right_stick_held && gameplay_shortcuts_allowed) {
             constexpr uint16_t n64_c_right_button = 0x0001;
-            if (rr64_local_rider_has_fists_selected()) {
+            if (rr64_local_rider_has_fists_selected(static_cast<unsigned>(profile_index))) {
                 // A tap of native C-Right is the game's punch/weapon-steal
                 // path. Leave its opponent proximity and timing rules intact.
                 if (right_stick_pressed) {
@@ -1604,7 +1608,21 @@ bool get_input_with_trace(int controller_num, uint16_t* buttons, float* x, float
     }
     if (rr64::online_menu::controls_online_players()) {
         const rr64::netplay::Status status = rr64::netplay::get_status();
-        if (rr64::online_menu::host_controls_game_setup()) {
+        if (status.host_disconnected) {
+            if (buttons) *buttons=0;
+            if (x) *x=0;
+            if (y) *y=0;
+            return controller_num>=0 && controller_num<4 && status.players[controller_num].connected;
+        }
+        // Apply ownership to locally sampled controls too, not just packets.
+        struct HostPauseOnly {
+            std::uint16_t *buttons;
+            bool strip;
+            ~HostPauseOnly() { if (strip && buttons) *buttons &= ~std::uint16_t(0x1000); }
+        } pause_guard{buttons, status.phase == rr64::netplay::Phase::Race &&
+            (status.replicated_riders ? !status.is_host : controller_num != 0)};
+        if (rr64::online_menu::host_controls_game_setup() ||
+            (status.phase==rr64::netplay::Phase::Race && rr64_online_host_pause_active())) {
             if (controller_num != 0) {
                 if (buttons != nullptr) *buttons = 0;
                 if (x != nullptr) *x = 0.0f;
@@ -1616,6 +1634,17 @@ bool get_input_with_trace(int controller_num, uint16_t* buttons, float* x, float
             if (status.is_host) {
                 const bool got_response =
                     get_local_input_with_road_rumble(0, 0, buttons, x, y);
+                if (status.phase == rr64::netplay::Phase::TrackSelect) {
+                    // The stock Rumble Pak prompt remains between selection
+                    // and loading. Accept A or Start, latch the host command
+                    // in snapshots, and let late clients advance it too.
+                    if (got_response && buttons && (*buttons & 0x9000))
+                        rr64::netplay::host_request_race_start();
+                    if (buttons) *buttons=rr64::online_flow::start_prompt_buttons(rr64::netplay::get_status().game_setup.start_requested,
+                        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+                    if (x) *x=0;
+                    if (y) *y=0;
+                }
                 rr64::netplay::set_local_input(
                     got_response && buttons != nullptr ? *buttons : 0,
                     got_response && x != nullptr ? *x : 0.0f,
@@ -1627,16 +1656,31 @@ bool get_input_with_trace(int controller_num, uint16_t* buttons, float* x, float
             float host_x = 0.0f;
             float host_y = 0.0f;
             const bool got_host = rr64::netplay::get_player_input(0, host_buttons, host_x, host_y);
-            if (status.phase >= rr64::netplay::Phase::CharacterSelect && status.game_setup.valid) {
+            if (status.phase == rr64::netplay::Phase::CharacterSelect && status.game_setup.valid) {
                 // Keep the host's final accept edge visible until this guest
                 // reaches the same character/bike screen. This closes the
                 // short UDP timing window around the setup transition.
                 host_buttons |= status.game_setup.transition_buttons;
             }
+            if (status.phase == rr64::netplay::Phase::TrackSelect) {
+                host_buttons=rr64::online_flow::start_prompt_buttons(status.game_setup.start_requested,
+                    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+                host_x=host_y=0;
+            }
             if (buttons != nullptr) *buttons = host_buttons;
             if (x != nullptr) *x = host_x;
             if (y != nullptr) *y = host_y;
-            return got_host || host_buttons != 0;
+            return got_host || host_buttons != 0 || status.phase == rr64::netplay::Phase::TrackSelect;
+        }
+
+        if (status.phase == rr64::netplay::Phase::CharacterSelect ||
+            status.phase == rr64::netplay::Phase::TrackSelect) {
+            if (buttons) *buttons=0;
+            if (x) *x=0;
+            if (y) *y=0;
+            if (controller_num != 0) return false;
+            if (status.phase == rr64::netplay::Phase::TrackSelect) return true;
+            return get_local_input_with_road_rumble(0,0,buttons,x,y);
         }
 
         if (status.replicated_riders) {
@@ -1851,12 +1895,6 @@ void init_recompui_config() {
                 rr64::local_players::set_name(slot, std::get<std::string>(value));
             });
     }
-    general_config.add_bool_option("rr64_local_keyboard", "Keyboard Player in Local Multiplayer",
-        "Adds the keyboard to an available local player slot. Connected controllers are detected automatically; empty slots remain disconnected.", false);
-    general_config.add_option_change_callback("rr64_local_keyboard",
-        [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
-            rr64::local_players::keyboard_enabled.store(std::get<bool>(value));
-        });
     general_config.add_bool_option(
         kControllerRumbleEnabledOption,
         "Controller Rumble",
@@ -1958,7 +1996,7 @@ void init_recompui_config() {
     sound_config.add_bool_option(
         kProximityVoiceEnabledOption,
         "Proximity Voice Chat",
-        "Uses the default microphone during online races. Nearby riders are clear, then fade naturally with distance; lobby and single-player audio are never transmitted.",
+        "Directional voice during online races: nearby riders are clear and distant riders fade out. Configure your microphone below. Lobby and single-player audio are never transmitted.",
         true
     );
     sound_config.add_option_change_callback(
@@ -1969,10 +2007,13 @@ void init_recompui_config() {
             rr64_log("[RR64-VOICE] Proximity voice enabled=%d.\n", enabled ? 1 : 0);
         }
     );
+    rr64::voice_chat::configure(sound_config);
     rr64_log("[RR64-CONFIG] Creating Mods tab.\n");
     recompui::config::create_mods_tab("Mods");
     rr64_log("[RR64-CONFIG] Finalizing RecompFrontend configuration.\n");
     recompui::config::finalize();
+    rr64::voice_chat::apply_config(sound_config);
+    rr64::voice_chat::set_enabled(std::get<bool>(sound_config.get_option_value(kProximityVoiceEnabledOption)));
     recompui::register_player_name_callbacks(
         [](int slot) { return rr64::local_players::snapshot().at(slot); },
         [](int slot, const std::string& name) {
@@ -2139,7 +2180,7 @@ void on_ui_update() {
     g_ui_thread_id.compare_exchange_strong(expected_ui_thread, GetCurrentThreadId());
 #endif
     rr64::netplay::update();
-    recompinput::players::refresh_connected_players(rr64::local_players::keyboard_enabled.load());
+    recompinput::players::refresh_connected_players(false); // Keyboard is assigned explicitly in Controls.
     rr64::online_menu::update_ui();
     rr64::local_race_options::flush();
     rr64::music::update_ui();
@@ -2504,7 +2545,15 @@ extern "C" void rr64_record_interpolation_workload(
     }
 }
 
+#include "rr64_sync_log.hpp"
+
 int main(int argc, char** argv) {
+    if(argc>=2 && std::strcmp(argv[1],"--replay-case")==0){
+        if(argc!=4 && argc!=5)return EXIT_FAILURE;
+        if(argc==5 && std::strcmp(argv[4],"--live-baseline")!=0)return EXIT_FAILURE;
+        return rr64_prediction_run_case(argv[2],argv[3],argc==5);
+    }
+    rr64::sync_log::initialize();
     initialize_runtime_diagnostics();
 
 #ifdef _WIN32
@@ -2612,13 +2661,15 @@ int main(int argc, char** argv) {
     // configuration tabs to exist before recomp::start() launches the graphics
     // and event threads. Working RecompFrontend ports initialize and finalize
     // these tabs before registering the launcher callback.
+    // Enumerate input devices only after SDL audio initialization; this opens
+    // no microphone. Actual capture remains confined to enabled online races.
+    const int audio_init_result = SDL_InitSubSystem(SDL_INIT_AUDIO);
     init_recompui_config();
     recompui::register_update_callback(on_ui_update);
     recompui::register_launcher_init_callback(on_launcher_init);
     recompui::register_launcher_update_callback(on_launcher_update);
 
     rr64_log("[RR64-STAGE] Initializing SDL audio subsystem.\n");
-    const int audio_init_result = SDL_InitSubSystem(SDL_INIT_AUDIO);
     rr64_log("[RR64-STAGE] SDL audio init returned %d (%s).\n", audio_init_result, SDL_GetError());
     if (audio_init_result < 0) {
         rr64_log("[RR64] SDL audio initialization failed: %s\n", SDL_GetError());
@@ -2756,9 +2807,25 @@ int main(int argc, char** argv) {
 
     rr64_log("[RR64] Starting N64ModernRuntime/RecompFrontend.\n");
     rr64_log("[RR64-STAGE] Entering recomp::start.\n");
+    // Achievement unlocks at race results must not do disk I/O on the UI or
+    // network thread. The worker coalesces changes and orderly exit flushes
+    // the last snapshot, including unlocks not yet shown as a toast.
+    std::jthread progress_service_thread([](std::stop_token stop_token) {
+        while (!stop_token.stop_requested()) {
+            rr64::achievements::flush_progress();
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+    });
     std::jthread netplay_service_thread([](std::stop_token stop_token) {
         while (!stop_token.stop_requested()) {
             rr64::netplay::update();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    });
+    // Audio-device opening and codec work must not stall movement servicing.
+    // Voice still has one owner; join it before destroying its device/codecs.
+    std::jthread voice_service_thread([](std::stop_token stop_token) {
+        while (!stop_token.stop_requested()) {
             rr64::voice_chat::update();
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -2787,8 +2854,13 @@ int main(int argc, char** argv) {
         rr64::netplay::shutdown();
         std::quick_exit(EXIT_FAILURE);
     }
+    voice_service_thread.request_stop();
     netplay_service_thread.request_stop();
+    progress_service_thread.request_stop();
+    voice_service_thread.join();
     netplay_service_thread.join();
+    progress_service_thread.join();
+    rr64::achievements::flush_progress();
     rr64::voice_chat::shutdown();
     rr64::netplay::shutdown();
     rr64_log("[RR64-STAGE] recomp::start returned. window=%d renderer=%d launcher=%d update=%d\n",
@@ -2819,6 +2891,7 @@ int main(int argc, char** argv) {
     timeEndPeriod(1);
 #endif
     rr64_log("[RR64] Native probe exiting normally.\n");
+    rr64_prediction_flush_cases();
     if (g_runtime_log != nullptr) {
         std::fclose(g_runtime_log);
         g_runtime_log = nullptr;

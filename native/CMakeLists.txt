@@ -251,7 +251,24 @@ if(RT64_SDL_WINDOW_VULKAN)
     target_compile_definitions(recompui PUBLIC PLUME_SDL_VULKAN_ENABLED)
 endif()
 
+set(RR64_REPLAY_RESOURCE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/rr64_replay_resource_worker.cpp")
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(RR64_REPLAY_FRAME_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/rr64_replay_native_frame.cpp")
+file(GLOB RR64_REPLAY_INPUTS "${RECOMPILED_DIR}/funcs_*.c")
+add_custom_command(OUTPUT "${RR64_REPLAY_FRAME_SOURCE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_prediction_frame.py"
+        "${RECOMPILED_DIR}" "${RR64_REPLAY_FRAME_SOURCE}"
+    DEPENDS ${RR64_REPLAY_INPUTS} "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_prediction_frame.py"
+    VERBATIM)
+add_custom_command(OUTPUT "${RR64_REPLAY_RESOURCE_SOURCE}"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${RECOMPILED_DIR}/funcs_1.c"
+        "-DOUTPUT=${RR64_REPLAY_RESOURCE_SOURCE}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateReplayResourceWorker.cmake"
+    DEPENDS "${RECOMPILED_DIR}/funcs_1.c" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateReplayResourceWorker.cmake"
+    VERBATIM)
 add_executable(RoadRash64Recompiled
+    "${RR64_REPLAY_FRAME_SOURCE}"
+    "${RR64_REPLAY_RESOURCE_SOURCE}"
     src/main.cpp
     src/rr64_weapon_render.cpp
     src/register_overlays.cpp
@@ -285,7 +302,20 @@ add_executable(RoadRash64Recompiled
     src/rr64_netplay.cpp
     src/rr64_online_menu.cpp
     src/rr64_online_race_sync.cpp
+    src/rr64_online_traffic.cpp
+    src/rr64_online_combat.cpp
+    src/rr64_authoritative_native.cpp
+    src/rr64_authoritative_step.cpp
+    src/rr64_prediction_capture.cpp
+    src/rr64_prediction_reconcile.cpp
+    src/rr64_prediction_reconcile_entry.cpp
+    src/rr64_prediction_verify.cpp
+    src/rr64_online_guest_flow.cpp
+    src/rr64_online_ready.cpp
     src/rr64_runtime_shims.cpp
+    src/rr64_sky_sprites.cpp
+    src/rr64_hud_widgets.cpp
+    src/rr64_roaming_route.cpp
     src/rr64_voice_chat.cpp
 )
 
@@ -318,6 +348,9 @@ if(MSVC)
     )
     # Keep function identities distinct; useful for later patch/mod work.
     target_link_options(RoadRash64Recompiled PRIVATE /OPT:NOICF
+        # Keep this as a linker argument: ClangCL's VS task drops the
+        # GenerateMapFile property produced by CMake's /MAP translation.
+        "-map:$<TARGET_FILE_DIR:RoadRash64Recompiled>/RoadRash64Recompiled.map"
         "$<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS>"
         "$<$<NOT:$<CONFIG:Debug>>:/ENTRY:mainCRTStartup>")
 else()
@@ -724,6 +757,17 @@ if(RR64_TEST_POWERSHELL)
             "${N64MODERN_RUNTIME_ROOT}/thirdparty")
         target_compile_options(${target} PRIVATE ${RR64_ACTOR_MATH_OPTIONS})
     endfunction()
+    rr64_generated_world_test(RR64CombatCreditSmoke generate_combat_credit_fixture.ps1
+        rr64_combat_credit_smoke.cpp)
+    set(RR64_ACHIEVEMENT_FIXTURE "${CMAKE_CURRENT_BINARY_DIR}/generated/achievements/rr64_achievement_flush.hpp")
+    add_custom_command(OUTPUT "${RR64_ACHIEVEMENT_FIXTURE}"
+        COMMAND "${RR64_TEST_POWERSHELL}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_achievement_persistence_fixture.ps1"
+            -OutputPath "${RR64_ACHIEVEMENT_FIXTURE}"
+        DEPENDS tests/generate_achievement_persistence_fixture.ps1 src/rr64_achievements.cpp VERBATIM)
+    add_executable(RR64AchievementPersistenceSmoke EXCLUDE_FROM_ALL
+        tests/rr64_achievement_persistence_smoke.cpp "${RR64_ACHIEVEMENT_FIXTURE}")
+    target_include_directories(RR64AchievementPersistenceSmoke PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/achievements")
     rr64_generated_world_test(RR64ActorFinishBlendSmoke generate_actor_finish_fixture.ps1
         rr64_actor_finish_blend_smoke.cpp src/rr64_actor_render_runtime.cpp
         src/rr64_actor_render_snapshot.cpp src/rr64_actor_pose.cpp src/rr64_actor_held_pose.cpp)
@@ -910,7 +954,39 @@ target_link_libraries(RR64ActionBindingsSmoke PRIVATE recompinput)
 target_include_directories(RR64ActionBindingsSmoke PRIVATE $<TARGET_PROPERTY:recompinput,INCLUDE_DIRECTORIES>)
 
 add_executable(RR64WeaponRenderSmoke EXCLUDE_FROM_ALL tests/rr64_weapon_render_smoke.cpp src/rr64_weapon_render.cpp)
+add_executable(RR64SkySpritesSmoke EXCLUDE_FROM_ALL tests/rr64_sky_sprites_smoke.cpp src/rr64_sky_sprites.cpp)
+add_executable(RR64HUDWidgetsSmoke EXCLUDE_FROM_ALL tests/rr64_hud_widgets_smoke.cpp src/rr64_hud_widgets.cpp)
+add_executable(RR64RoamingRouteSmoke EXCLUDE_FROM_ALL tests/rr64_roaming_route_smoke.cpp src/rr64_roaming_route.cpp)
+target_include_directories(RR64RoamingRouteSmoke PRIVATE $<TARGET_PROPERTY:RR64WeaponRenderSmoke,INCLUDE_DIRECTORIES>)
+target_compile_features(RR64RoamingRouteSmoke PRIVATE cxx_std_20)
+# Exercise the actual generated progress accumulator, not a second translation
+# of its arithmetic. Only curve-length lookup is supplied by the straight-road
+# fixture; these three native functions are extracted unchanged at configure.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_16.c" RR64_ROUTE_NATIVE)
+set(RR64_ROUTE_FIXTURE "#include \"funcs.h\"\n")
+foreach(RR64_ROUTE_FUNC 80066D70 80066DA0 8006736C)
+    string(FIND "${RR64_ROUTE_NATIVE}" "RECOMP_FUNC void func_${RR64_ROUTE_FUNC}(" RR64_ROUTE_START)
+    if(RR64_ROUTE_START LESS 0)
+        message(FATAL_ERROR "Missing native roaming test function ${RR64_ROUTE_FUNC}; regenerate source")
+    endif()
+    string(SUBSTRING "${RR64_ROUTE_NATIVE}" ${RR64_ROUTE_START} -1 RR64_ROUTE_TAIL)
+    string(SUBSTRING "${RR64_ROUTE_TAIL}" 1 -1 RR64_ROUTE_REST)
+    string(FIND "${RR64_ROUTE_REST}" "RECOMP_FUNC" RR64_ROUTE_END)
+    math(EXPR RR64_ROUTE_END "${RR64_ROUTE_END}+1")
+    string(SUBSTRING "${RR64_ROUTE_TAIL}" 0 ${RR64_ROUTE_END} RR64_ROUTE_BODY)
+    string(APPEND RR64_ROUTE_FIXTURE "${RR64_ROUTE_BODY}\n")
+endforeach()
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rr64_roaming_native_fixture.cpp" CONTENT "${RR64_ROUTE_FIXTURE}" @ONLY)
+target_sources(RR64RoamingRouteSmoke PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/rr64_roaming_native_fixture.cpp")
+target_include_directories(RR64RoamingRouteSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs")
+target_include_directories(RR64HUDWidgetsSmoke PRIVATE $<TARGET_PROPERTY:RR64WeaponRenderSmoke,INCLUDE_DIRECTORIES>)
+target_compile_features(RR64HUDWidgetsSmoke PRIVATE cxx_std_20)
+target_include_directories(RR64SkySpritesSmoke PRIVATE $<TARGET_PROPERTY:RR64WeaponRenderSmoke,INCLUDE_DIRECTORIES>)
+target_compile_features(RR64SkySpritesSmoke PRIVATE cxx_std_20)
 add_executable(RR64MenuEjectSmoke EXCLUDE_FROM_ALL tests/rr64_menu_eject_smoke.cpp)
+add_executable(RR64AutotestControlSmoke EXCLUDE_FROM_ALL tests/rr64_autotest_control_smoke.cpp)
+target_include_directories(RR64AutotestControlSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_features(RR64AutotestControlSmoke PRIVATE cxx_std_20)
 # Developer-only traffic recorder; no production hooks or recorder thread.
 add_executable(RR64TrafficTraceSmoke EXCLUDE_FROM_ALL tests/rr64_traffic_trace_smoke.cpp src/rr64_traffic_trace.cpp)
 target_include_directories(RR64TrafficTraceSmoke PRIVATE $<TARGET_PROPERTY:RR64MenuEjectSmoke,INCLUDE_DIRECTORIES>)

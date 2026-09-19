@@ -1,8 +1,27 @@
 #pragma once
+#include "rr64_roaming_route.hpp"
+#include "rr64_custom_cop.hpp"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+void rr64_sky_queue_begin(unsigned char *);
+void rr64_sky_queue_end(unsigned char *);
+void rr64_hud_widgets_begin(unsigned char *);
+void rr64_hud_widgets_end(unsigned char *);
+void rr64_hud_label_begin(unsigned char *, unsigned);
+void rr64_hud_label_end(unsigned char *);
+void rr64_hud_widgets_clear(unsigned char *);
+void rr64_hud_countdown_begin(unsigned char *);
+void rr64_hud_countdown_end(unsigned char *);
+void rr64_online_private_selection_begin(unsigned char *);
+void rr64_online_private_selection_end(unsigned char *);
+int rr64_online_selection_commit(unsigned char *);
+void rr64_online_hud_begin(unsigned char *);
+void rr64_online_hud_end(unsigned char *);
+int rr64_online_wait_for_race(unsigned char *, unsigned);
+int rr64_online_host_pause_active();
+void rr64_online_seed_race(unsigned char *);
 
 unsigned int rr64_lod_racer_view(unsigned char *, unsigned int, unsigned int);
 void rr64_trace_guest_stage(const char *stage);
@@ -125,7 +144,8 @@ int rr64_is_rumble_enabled();
 void rr64_request_rider_eject(unsigned int slot);
 int rr64_traffic_within_draw_distance(unsigned char*, unsigned int, unsigned int, unsigned int, int);
 unsigned int rr64_traffic_spawn_distance(unsigned char*, unsigned int);
-int rr64_local_rider_has_fists_selected();
+int rr64_local_rider_has_fists_selected(unsigned slot);
+void rr64_custom_cop_ai_pool(unsigned char *memory, void *context);
 unsigned int rr64_audio_timeline_epoch();
 void rr64_set_maximum_view_distance_enabled(int enabled);
 int rr64_is_maximum_view_distance_enabled();
@@ -139,41 +159,25 @@ void rr64_trace_terrain_scene(unsigned char *rdram);
 void rr64_trace_lod_node(unsigned char *rdram, unsigned int kind, unsigned int node);
 unsigned int rr64_online_menu_route_mode(unsigned int requested_mode);
 void rr64_online_main_menu_draw(unsigned char *memory, void *context);
+void rr64_online_ready_draw(unsigned char *memory, void *context);
+void rr64_online_disconnect_draw(unsigned char *memory, void *context);
+void rr64_online_pause_owner(unsigned char *memory);
+unsigned rr64_online_player_count_label(unsigned original);
+unsigned rr64_online_race_choice(unsigned guest, unsigned original, unsigned bike);
+unsigned rr64_online_graphics_layout(unsigned original);
+unsigned rr64_online_graphics_viewport(unsigned char *memory, unsigned original);
+void rr64_online_graphics_viewport_end(unsigned char *memory);
+unsigned rr64_online_render_loop_continue(unsigned original);
+void rr64_online_render_begin(unsigned char *memory);
+void rr64_online_logical_viewports(unsigned char *memory);
+void rr64_online_render_end(unsigned char *memory);
 void rr64_online_menu_apply_pending_guest_input(unsigned char *rdram);
 void rr64_online_game_setup_before_update(unsigned char *rdram);
 void rr64_online_game_setup_after_update(unsigned char *rdram);
 unsigned int rr64_online_requested_racer_count(unsigned int original_count);
 void rr64_restore_manual_eject_health(unsigned char *, unsigned);
-int rr64_custom_cop_roaming(unsigned char *, unsigned);
 int rr64_local_player_roaming(unsigned char *, unsigned);
-int rr64_custom_cop_can_recover(unsigned char *, unsigned);
-int rr64_custom_cop_trick(unsigned char *, unsigned);
-float rr64_custom_cop_win_age(unsigned char *);
-void rr64_custom_cop_post(unsigned char *, void *, unsigned);
-int rr64_custom_cop_pursuit(unsigned char *, unsigned);
-void rr64_custom_cop_control(unsigned char *, void *);
-int rr64_custom_cop_siren(unsigned char *, unsigned);
-float rr64_custom_cop_cue(unsigned char *, unsigned);
-void rr64_custom_cop_hud(unsigned char *, void *);
-int rr64_custom_cop_enabled();
-int rr64_custom_cop_active();
-void rr64_custom_cop_notification(unsigned char *memory, unsigned stats, unsigned event,
-                                  unsigned name);
-void rr64_custom_cop_equipment(unsigned char *memory, unsigned actor);
-void rr64_custom_cop_spawn(unsigned char *memory, unsigned slot, unsigned offsets);
-void rr64_custom_cop_bust_message(unsigned char *memory, unsigned attacker, unsigned victim);
 
-void rr64_custom_cop_begin(unsigned char *memory, int enabled);
-void rr64_custom_cop_reset();
-unsigned rr64_custom_cop_bike_count(unsigned stock);
-unsigned rr64_custom_cop_bike_entry(unsigned char *memory, unsigned player, unsigned stock);
-unsigned rr64_custom_cop_rider(unsigned char *memory, unsigned player, unsigned selected);
-void rr64_custom_cop_roles(unsigned char *memory);
-int rr64_custom_cop_arrest(unsigned char *memory, unsigned attacker, unsigned victim);
-int rr64_custom_cop_finished(unsigned char *memory);
-int rr64_custom_cop_can_start(unsigned char *memory);
-int rr64_custom_cop_confirm(unsigned char *memory);
-void rr64_custom_cop_selection_hint(unsigned char *memory, void *context);
 
 int rr64_local_options_input(unsigned char *memory);
 void rr64_local_options_menu_begin(unsigned char *memory);
@@ -217,3 +221,56 @@ void rr64_achievement_campaign_completed(unsigned char *rdram);
 #endif
 
 void rr64_register_overlays();
+
+#ifdef __cplusplus
+extern "C"
+#endif
+void rr64_online_sync_before_pose(unsigned char *rdram);
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+void rr64_online_traffic_prepare(unsigned char *rdram);
+void rr64_online_traffic_finish(unsigned char *rdram,void *context);
+int rr64_online_traffic_owned(void);
+void rr64_online_traffic_model(void *context);
+#ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
+extern "C"
+#endif
+void rr64_online_attack_pose_begin(unsigned char *rdram);
+#ifdef __cplusplus
+extern "C"
+#endif
+void rr64_online_attack_pose_end(unsigned char *rdram);
+
+#ifdef __cplusplus
+extern "C"
+#endif
+void rr64_online_presentation_matrix(unsigned char *,unsigned,unsigned,unsigned,unsigned);
+
+#ifdef __cplusplus
+extern "C"
+#endif
+unsigned rr64_online_hud_actor_pointer(unsigned char *,unsigned,unsigned);
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+int rr64_online_hit(unsigned char*,void*,unsigned);
+int rr64_valid_combat_statistics(unsigned int address);
+void rr64_online_combat_drain(unsigned char*,void*);
+int rr64_authority_step_begin(unsigned char*,void*);
+int rr64_authority_translate(unsigned char*,void*);
+void rr64_authority_step_finish(unsigned char*);
+void rr64_authority_actor_route(void*,unsigned);
+void rr64_prediction_verify_streaming(unsigned char*,void*);
+void rr64_prediction_verify_random(unsigned char*,unsigned);
+void rr64_prediction_flush_cases();
+int rr64_prediction_run_case(const char*,const char*,int);
+#ifdef __cplusplus
+}
+#endif

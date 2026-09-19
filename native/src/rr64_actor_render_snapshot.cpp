@@ -227,7 +227,10 @@ bool supported_scene(unsigned char *rdram) noexcept {
     return read_u32(rdram, globals::main_mode, mode) &&
            read_u32(rdram, globals::pending_mode, pending) && retained_actor_scene(mode, pending) &&
            read_u32(rdram, viewport_count, views) && views >= 1u && views <= 4u &&
-           read_u32(rdram, race_player_count, local) && local == views &&
+           // Attract setup (72068) has zero human riders but one camera.
+           // Admit that actor scene without changing its AI/player count.
+           read_u32(rdram, race_player_count, local) &&
+           (local == views || (local == 0u && views == 1u)) &&
            read_u16(rdram, compiled_renderer, compiled) && compiled != 0u;
 }
 

@@ -603,7 +603,7 @@ index 0be1513..9facf31 100644
 +    _return<s32>(ctx, valid_pfs(rdram, pfs) ? kPfsOk : kPfsErrNoPack);
  }
 diff --git a/librecomp/src/recomp.cpp b/librecomp/src/recomp.cpp
-index 1200f77..c36d982 100644
+index 1200f77..3c82cea 100644
 --- a/librecomp/src/recomp.cpp
 +++ b/librecomp/src/recomp.cpp
 @@ -243,6 +243,19 @@ const recomp::Version& recomp::get_project_version() {
@@ -626,6 +626,23 @@ index 1200f77..c36d982 100644
  bool recomp::Version::from_string(const std::string& str, Version& out) {
      std::array<size_t, 2> period_indices;
      size_t cur_pos = 0;
+@@ -841,12 +854,12 @@ void recomp::start(
+     uint8_t* rdram;
+     bool alloc_failed;
+ #ifdef _WIN32
+-    rdram = reinterpret_cast<uint8_t*>(VirtualAlloc(nullptr, allocation_size, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS));
+-    DWORD old_protect = 0;
++    // Keep the 4 GiB guest address window, but charge commit only for usable
++    // RDRAM. Committing the inaccessible guard needlessly costs 3.5 GiB.
++    rdram = reinterpret_cast<uint8_t*>(VirtualAlloc(nullptr, allocation_size, MEM_RESERVE, PAGE_NOACCESS));
+     alloc_failed = (rdram == nullptr);
+     if (!alloc_failed) {
+-        // VirtualProtect returns 0 on failure.
+-        alloc_failed = (VirtualProtect(rdram, mem_size, PAGE_READWRITE, &old_protect) == 0);
++        alloc_failed = (VirtualAlloc(rdram, mem_size, MEM_COMMIT, PAGE_READWRITE) == nullptr);
+         if (alloc_failed) {
+             VirtualFree(rdram, 0, MEM_RELEASE);
+         }
 diff --git a/ultramodern/include/ultramodern/config.hpp b/ultramodern/include/ultramodern/config.hpp
 index 2f22456..5d3a7c0 100644
 --- a/ultramodern/include/ultramodern/config.hpp
@@ -696,10 +713,15 @@ index 3198be0..919c935 100644
 +    return audio_remaining_bytes_for_game(actual_buffered_frames, sample_rate);
  }
 diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
-index 090cc42..47b9d27 100644
+index 090cc42..66ce384 100644
 --- a/ultramodern/src/events.cpp
 +++ b/ultramodern/src/events.cpp
-@@ -8,6 +8,7 @@
+@@ -1,3 +1,4 @@
++#include "ultramodern/rr64_snapshot_gate.hpp"
+ #include <thread>
+ #include <atomic>
+ #include <chrono>
+@@ -8,6 +9,7 @@
  #include <mutex>
  #include <queue>
  #include <cstring>
@@ -707,7 +729,7 @@ index 090cc42..47b9d27 100644
  
  #include "blockingconcurrentqueue.h"
  
-@@ -17,6 +18,9 @@
+@@ -17,8 +19,16 @@
  
  #include "ultramodern/rsp.hpp"
  #include "ultramodern/renderer_context.hpp"
@@ -716,8 +738,15 @@ index 090cc42..47b9d27 100644
 +namespace scheduler_diagnostics = ultramodern::rr64_diagnostics;
  
  static ultramodern::events::callbacks_t events_callbacks{};
++static ultramodern::rr64::SnapshotGate snapshot_gate;
++bool ultramodern::rr64::copy_guest_snapshot(unsigned char *rdram,unsigned char *destination,std::size_t size) {
++    if(ultramodern::this_thread()==0 || size!=0x800000)return false;
++    return snapshot_gate.copy(rdram,destination,size);
++}
  
-@@ -26,10 +30,12 @@ void ultramodern::events::set_callbacks(const ultramodern::events::callbacks_t&
+ void ultramodern::events::set_callbacks(const ultramodern::events::callbacks_t& callbacks) {
+     events_callbacks = callbacks;
+@@ -26,10 +36,12 @@ void ultramodern::events::set_callbacks(const ultramodern::events::callbacks_t&
  
  struct SpTaskAction {
      OSTask task;
@@ -730,7 +759,7 @@ index 090cc42..47b9d27 100644
  };
  
  struct UpdateConfigAction {
-@@ -187,6 +193,8 @@ void vi_thread_func() {
+@@ -187,6 +199,8 @@ void vi_thread_func() {
      using namespace std::chrono_literals;
  
      int remaining_retraces = 1;
@@ -739,7 +768,7 @@ index 090cc42..47b9d27 100644
  
      while (!exited) {
          // Determine the next VI time (more accurate than adding 16ms each VI interrupt)
-@@ -206,9 +214,26 @@ void vi_thread_func() {
+@@ -206,9 +220,26 @@ void vi_thread_func() {
          }
          ultramodern::sleep_until(next);
          auto time_now = ultramodern::time_since_start();
@@ -766,7 +795,7 @@ index 090cc42..47b9d27 100644
              //printf("Skipped % " PRId64 " frames in VI interupt thread!\n", new_total_vis - total_vis - 1);
          }
          total_vis = new_total_vis;
-@@ -249,19 +274,24 @@ void vi_thread_func() {
+@@ -249,19 +280,24 @@ void vi_thread_func() {
              }
          }
  
@@ -791,8 +820,25 @@ index 090cc42..47b9d27 100644
      uint8_t* rdram = events_context.rdram;
      std::lock_guard lock{ events_context.message_mutex };
      ultramodern::enqueue_external_message(events_context.dp.mq, events_context.dp.msg, false, true);
-@@ -359,20 +389,27 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+@@ -283,11 +319,13 @@ void task_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_r
+             return;
+         }
+ 
++        auto memory_access=snapshot_gate.worker();
+         if (!ultramodern::rsp::run_task(PASS_RDRAM task)) {
+             fprintf(stderr, "Failed to execute task type: %" PRIu32 "\n", task->t.type);
+             ULTRAMODERN_QUICK_EXIT();
+         }
+ 
++        memory_access.unlock();
+         // Tell the game that the RSP has completed
+         sp_complete();
+     }
+@@ -357,22 +395,30 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+         // Try to pull an action from the queue
+         Action action;
          if (events_context.action_queue.wait_dequeue_timed(action, 1ms)) {
++            auto memory_access=snapshot_gate.worker();
              // Determine the action type and act on it
              if (const auto* task_action = std::get_if<SpTaskAction>(&action)) {
 -                // Tell the game that the RSP completed instantly. This will allow it to queue other task types, but it won't
@@ -825,7 +871,7 @@ index 090cc42..47b9d27 100644
                  dp_complete();
                  // TODO hook the parsed event up to the actual parsing point when a callback is added to RT64.
                  ultramodern::extensions::on_displaylist_parsed(displaylist);
-@@ -380,8 +417,13 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+@@ -380,8 +426,13 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
                  // printf("Renderer ProcessDList time: %d us\n", static_cast<u32>(std::chrono::duration_cast<std::chrono::microseconds>(renderer_end - renderer_start).count()));
              }
              else if (const auto* screen_update_action = std::get_if<ScreenUpdateAction>(&action)) {
@@ -840,7 +886,7 @@ index 090cc42..47b9d27 100644
                  display_refresh_rate = renderer_context->get_display_framerate();
                  resolution_scale = renderer_context->get_resolution_scale();
              }
-@@ -571,7 +613,10 @@ void ultramodern::submit_rsp_task(RDRAM_ARG PTR(OSTask) task_) {
+@@ -571,7 +622,10 @@ void ultramodern::submit_rsp_task(RDRAM_ARG PTR(OSTask) task_) {
  }
  
  void ultramodern::send_si_message() {

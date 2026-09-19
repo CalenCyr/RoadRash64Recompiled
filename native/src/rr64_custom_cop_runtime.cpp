@@ -1,4 +1,8 @@
+#include "rr64_prediction_replay.hpp"
+#include "rr64_prediction_rules.hpp"
+#include "rr64_prediction_cop_state.hpp"
 #include "rr64_custom_cop.hpp"
+#include "rr64_custom_cop_roster.hpp"
 #include "rr64_engine_layout.hpp"
 #include "recomp.h"
 #include <array>
@@ -9,12 +13,13 @@
 extern "C" void func_8006B740(unsigned char *, recomp_context *);
 namespace {
 using namespace rr64::engine;
-struct Post {
-    bool placed = false, pursuit = false, muted = true, shout_held = false, hold_toggled = false,
-         trick = false;
-    float distance = 0, cue = -100, shout_started = 0;
-};
-std::array<Post, 4> posts;
+using Post = rr64::prediction::CopPostState;
+rr64::prediction::CopPostsState live_posts;
+thread_local rr64::prediction::CopPostsState replay_posts;
+thread_local std::uint64_t replay_posts_epoch = 0;
+auto &cop_posts() {
+    return rr64::prediction::isolated_state(live_posts, replay_posts, replay_posts_epoch);
+}
 unsigned word(unsigned char *m, unsigned a) {
     unsigned v = 0;
     read_u32(m, a, v);
@@ -33,23 +38,49 @@ unsigned bits(float v) {
 int slot_for(unsigned char *m, unsigned bike) {
     if (!rr64_custom_cop_active())
         return -1;
-    const unsigned humans = word(m, 0x800A6578);
-    if (humans > 4)
+    const unsigned humans = rr64::custom_cop::human_mask(m, rr64::prediction::status_for_rules());
+    if (!humans)
         return -1;
-    for (unsigned i = 0; i < humans; ++i) {
+    for (unsigned i = 0; i < 14; ++i) {
+        if (!(humans & (1u << i)))
+            continue;
         const unsigned a = 0x800D8570 + i * 0x118;
         if (word(m, a + 0xE0) == bike && word(m, a + 0x20) == 7)
             return int(i);
     }
     return -1;
 }
+} // namespace
+bool rr64::prediction::capture_cop_posts(CopPostsState &out) {
+    if (active())
+        return false;
+    out = live_posts;
+    return true;
 }
+void rr64::prediction::commit_cop_posts(const CopPostsState &state) noexcept {
+    if (!active())
+        live_posts = state;
+}
+bool rr64::prediction::seed_cop_posts(const CopPostsState &historical) {
+    if (!active())
+        return false;
+    replay_posts = historical;
+    replay_posts_epoch = replay_epoch;
+    return true;
+}
+bool rr64::prediction::replay_cop_posts(CopPostsState &out) {
+    if (!active() || replay_posts_epoch != replay_epoch)
+        return false;
+    out = replay_posts;
+    return true;
+}
+
 // Run after each player's original initialization, before camera preparation.
 // Reuse Big Game's route/shoulder placement and its human-safe initialization.
 extern "C" void rr64_custom_cop_post(unsigned char *rdram, void *context, unsigned slot) {
     if (slot == 0)
-        posts = {};
-    if (!context || slot >= 4 || !rr64_custom_cop_active())
+        cop_posts() = {};
+    if (!context || slot >= cop_posts().size() || !rr64_custom_cop_active())
         return;
     const unsigned a = 0x800D8570 + slot * 0x118, bike = word(rdram, a + 0xE0);
     if (slot_for(rdram, bike) != int(slot))
@@ -78,8 +109,8 @@ extern "C" void rr64_custom_cop_post(unsigned char *rdram, void *context, unsign
         func_8006B740(rdram, &call);
         if (call.r2) {
             rr64_custom_cop_equipment(rdram, a);
-            posts[slot].placed = true;
-            posts[slot].distance = number(rdram, order);
+            cop_posts()[slot].placed = true;
+            cop_posts()[slot].distance = number(rdram, order);
             return;
         }
         // The original routine updates route state before rejecting unsuitable road.
@@ -95,7 +126,7 @@ extern "C" int rr64_custom_cop_pursuit(unsigned char *m, unsigned bike) {
     const int slot = slot_for(m, bike);
     if (slot < 0)
         return -1;
-    auto &p = posts[slot];
+    auto &p = cop_posts()[slot];
     if (!p.placed)
         return 0;
     const unsigned total = word(m, 0x800A656C);
@@ -124,20 +155,22 @@ extern "C" void rr64_custom_cop_control(unsigned char *rdram, void *context) {
     auto &c = *static_cast<recomp_context *>(context);
     // Guest ABI: a1 is newly pressed, a2 is held (80040968/8004096C).
     const unsigned a = unsigned(c.r4), bike = word(rdram, a + 0xE0);
+    // Keep directional attacks (including C-Down/backhand and the jam chord)
+    // intact. The dedicated trick action has its own replicated input bit.
+    const bool trick_held = (c.r6 & rr64_cop_weapon_trick_button) != 0;
+    const bool trick_pressed = (c.r5 & rr64_cop_weapon_trick_button) != 0;
+    c.r6 &= ~rr64_cop_weapon_trick_button;
+    c.r5 &= ~rr64_cop_weapon_trick_button;
     const int slot = slot_for(rdram, bike);
     if (slot < 0) {
-        if (c.r6 & 4) {
-            c.r6 = (c.r6 & ~4) | 0x20;
-            if (c.r5 & 4)
-                c.r5 = (c.r5 & ~4) | 0x20;
-        }
+        if (trick_held)
+            c.r6 |= 0x20;
+        if (trick_pressed)
+            c.r5 |= 0x20;
         return;
     }
-    auto &p = posts[slot];
-    p.trick = (c.r6 & 0x4) != 0;
-    const bool trick_pressed = (c.r5 & 0x4) != 0;
-    c.r6 &= ~0x4;
-    c.r5 &= ~0x4;
+    auto &p = cop_posts()[slot];
+    p.trick = trick_held;
     // Delay the stock shout until release so a long press never also shouts.
     const float now = number(rdram, 0x800A1820);
     const bool held = (c.r6 & 0x20) != 0;
@@ -179,20 +212,39 @@ extern "C" void rr64_custom_cop_control(unsigned char *rdram, void *context) {
     }
 }
 extern "C" int rr64_custom_cop_siren(unsigned char *m, unsigned bike) {
+    const auto status = rr64::prediction::status_for_rules();
+    if (!rr64::prediction::active() && status.active && status.connected && status.authoritative &&
+        !status.is_host) {
+        const unsigned total = word(m, 0x800a656c);
+        if (total > 14)
+            return -1;
+        for (unsigned guest = 0; guest < total; ++guest)
+            if (word(m, 0x800d8570 + guest * 0x118 + 0xe0) == bike) {
+                const unsigned network = rr64::online_flow::mapped_slot(guest, status.local_slot,
+                                                                        status.replicated_riders);
+                rr64::authority::Outcome outcome;
+                bool mode = false;
+                return rr64::netplay::authority_get_outcome(network, outcome, mode) && mode &&
+                               outcome.role == 7
+                           ? static_cast<int>(outcome.siren)
+                           : -1;
+            }
+        return -1;
+    }
     const int slot = slot_for(m, bike);
-    return slot < 0 ? -1 : posts[slot].muted ? 0 : 1;
+    return slot < 0 ? -1 : cop_posts()[slot].muted ? 0 : 1;
 }
 extern "C" float rr64_custom_cop_cue(unsigned char *m, unsigned slot) {
-    if (slot >= 4 || !rr64_custom_cop_active() || !posts[slot].pursuit)
+    if (slot >= cop_posts().size() || !rr64_custom_cop_active() || !cop_posts()[slot].pursuit)
         return -1;
-    const float age = number(m, 0x800D7670) - posts[slot].cue;
+    const float age = number(m, 0x800D7670) - cop_posts()[slot].cue;
     return age >= 0 && age < 4 ? age : -1;
 }
 
 // Let the native weapon flourish execute for cops instead of its cop-shout branch.
 extern "C" int rr64_custom_cop_trick(unsigned char *m, unsigned actor) {
     const int slot = slot_for(m, word(m, actor + 0xE0));
-    return slot >= 0 && posts[slot].trick;
+    return slot >= 0 && cop_posts()[slot].trick;
 }
 
 // Cops are excluded from race placement (state+48 == 0), but a human cop

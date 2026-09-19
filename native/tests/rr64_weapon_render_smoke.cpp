@@ -7,6 +7,9 @@
 #include <cstdio>
 #include <cstring>
 static unsigned calls=0,expectedSource=2;static bool enabled=true;
+// This fixture exercises local attachment matrices. Online presentation has its
+// own coherence tests; its offline behavior is an identity transform.
+extern "C" void rr64_online_presentation_matrix(unsigned char*,unsigned,unsigned,unsigned,unsigned) {}
 static bool preparedAvailable=false;
 static unsigned preparedSource=1;
 static std::array<unsigned,7> preparedRoot{};

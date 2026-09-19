@@ -6,6 +6,11 @@ namespace rr64::local_race_options {
 // UI-thread persistence; guest hooks never perform disk I/O.
 void initialize(const std::filesystem::path &directory);
 void flush();
+// Session-only online preferences never overwrite this machine's local preset.
+void reset_online();
+unsigned online_options();
+void apply_online_options(unsigned bits);
+constexpr bool valid_online_options(unsigned bits){return bits<=2047u&&(bits&15u)<=10u;}
 // Candidate roster ceiling, not the size of the engine's actor allocation.
 constexpr unsigned max_ai(unsigned humans) {
     return humans >= 1 && humans <= 4 ? 11u - humans : 0u;
@@ -15,8 +20,8 @@ constexpr unsigned roster(unsigned ai, unsigned humans, unsigned stock) {
                                       : stock;
 }
 constexpr unsigned next_row(unsigned row, int direction, unsigned mask) {
-    for (unsigned attempts = 0; attempts < 10; ++attempts) {
-        row = (row + (direction < 0 ? 9u : 1u)) % 10u;
+    for (unsigned attempts = 0; attempts < 11; ++attempts) {
+        row = (row + (direction < 0 ? 10u : 1u)) % 11u;
         if (mask & (1u << row))
             return row;
     }
@@ -25,6 +30,7 @@ constexpr unsigned next_row(unsigned row, int direction, unsigned mask) {
 }
 
 extern "C" {
+void rr64_custom_cop_ai_pool(unsigned char *memory, void *context);
 int rr64_local_player_roaming(unsigned char *memory, unsigned actor);
 void rr64_local_options_menu_begin(unsigned char *memory);
 void rr64_local_options_reset_race();

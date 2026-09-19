@@ -1,6 +1,11 @@
 #pragma once
 
+// Reserved N64 button bit carried with input snapshots, consumed before native controls.
+#ifdef __cplusplus
+inline constexpr unsigned rr64_cop_weapon_trick_button = 0x0040;
+
 extern "C" {
+#endif
 int rr64_custom_cop_roaming(unsigned char *, unsigned);
 int rr64_custom_cop_can_recover(unsigned char *, unsigned);
 int rr64_custom_cop_trick(unsigned char *, unsigned);
@@ -30,4 +35,6 @@ int rr64_custom_cop_finished(unsigned char *memory);
 int rr64_custom_cop_can_start(unsigned char *memory);
 int rr64_custom_cop_confirm(unsigned char *memory);
 void rr64_custom_cop_selection_hint(unsigned char *memory, void *context);
+#ifdef __cplusplus
 }
+#endif
