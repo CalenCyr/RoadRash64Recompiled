@@ -55,3 +55,7 @@ No top-level license file was found at these pinned dependency roots. A parent o
 - native/lib/rt64/src/contrib/dxc
 - native/lib/rt64/src/contrib/mupen64plus-win32-deps
 - native/lib/RecompFrontend
+
+## Controller mappings
+
+8BitDo 64 mappings from [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB), commit `5a12daa568d19344f9b6e9286ef5929833b25c7c`, under the zlib license. See `licenses/SDL_GameControllerDB-LICENSE.txt`.

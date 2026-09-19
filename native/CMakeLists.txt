@@ -484,6 +484,14 @@ add_executable(RR64PipelineDiagnosticsSmoke EXCLUDE_FROM_ALL
 target_compile_features(RR64PipelineDiagnosticsSmoke PRIVATE cxx_std_17)
 target_include_directories(RR64PipelineDiagnosticsSmoke PRIVATE "${RT64_ROOT}/src")
 add_executable(RR64LocalPlayersSmoke EXCLUDE_FROM_ALL tests/rr64_local_players_smoke.cpp)
+add_executable(RR64ControllerSmoke EXCLUDE_FROM_ALL tests/rr64_controller_smoke.cpp
+    lib/RecompFrontend/recompinput/src/input_binding.cpp)
+target_compile_features(RR64ControllerSmoke PRIVATE cxx_std_20)
+target_include_directories(RR64ControllerSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/RecompFrontend/recompinput/include/recompinput"
+    $<TARGET_PROPERTY:recompinput,INCLUDE_DIRECTORIES> "${RR64_SDL2_INCLUDE_DIRS}")
+target_link_directories(RR64ControllerSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
+target_link_libraries(RR64ControllerSmoke PRIVATE ${RR64_SDL2_TARGET})
 add_executable(RR64LocalRaceOptionsSmoke EXCLUDE_FROM_ALL tests/rr64_local_race_options_smoke.cpp src/rr64_local_race_options.cpp src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp)
 target_compile_features(RR64LocalRaceOptionsSmoke PRIVATE cxx_std_20)
 target_include_directories(RR64LocalRaceOptionsSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"

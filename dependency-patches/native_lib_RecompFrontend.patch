@@ -1,3 +1,15 @@
+diff --git a/recompinput/include/recompinput/input_binding.h b/recompinput/include/recompinput/input_binding.h
+index f39ad89..403fd40 100644
+--- a/recompinput/include/recompinput/input_binding.h
++++ b/recompinput/include/recompinput/input_binding.h
+@@ -7,6 +7,7 @@ namespace recompinput {
+         void start_scanning(int player_index, recompinput::GameInput game_input, int binding_index, recompinput::InputDevice device);
+         void stop_scanning();
+         bool is_binding();
++        bool is_cancel_button(int button);
+         bool is_controller_being_bound(SDL_JoystickID joystick_id);
+         void set_scanned_input(recompinput::InputField value);
+         recompinput::InputDevice get_scanning_device();
 diff --git a/recompinput/include/recompinput/input_state.h b/recompinput/include/recompinput/input_state.h
 index 1961e29..7796c1d 100644
 --- a/recompinput/include/recompinput/input_state.h
@@ -111,8 +123,35 @@ index 855ec2e..9a70053 100644
  
  namespace recompinput {
      constexpr size_t max_num_players_supported = 128;
+diff --git a/recompinput/src/input_binding.cpp b/recompinput/src/input_binding.cpp
+index 45d55a7..2e20a17 100644
+--- a/recompinput/src/input_binding.cpp
++++ b/recompinput/src/input_binding.cpp
+@@ -65,6 +65,22 @@ namespace recompinput {
+         return false;
+     }
+ 
++    bool binding::is_cancel_button(int button) {
++        // Use the profile being edited, not profile zero (which may be a
++        // keyboard). An axis/scancode with the same numeric ID is not a button.
++        // Let users rebind the menu button itself; Escape still cancels.
++        if (!BindingState.active || BindingState.device != InputDevice::Controller ||
++            BindingState.game_input == GameInput::TOGGLE_MENU) return false;
++        const int profile = profiles::get_input_profile_for_player(
++            BindingState.player_index, BindingState.device);
++        if (profile < 0) return false;
++        for (size_t i = 0; i < num_bindings_per_input; ++i) {
++            const auto input = profiles::get_input_binding(profile, GameInput::TOGGLE_MENU, i);
++            if (input.input_type == InputType::ControllerDigital && input.input_id == button) return true;
++        }
++        return false;
++    }
++
+     void binding::set_scanned_input(recompinput::InputField value) {
+         profiles::set_input_binding(
+             profiles::get_input_profile_for_player(BindingState.player_index, BindingState.device),
 diff --git a/recompinput/src/input_events.cpp b/recompinput/src/input_events.cpp
-index c76a1dc..9faa929 100644
+index c76a1dc..7cdce78 100644
 --- a/recompinput/src/input_events.cpp
 +++ b/recompinput/src/input_events.cpp
 @@ -1,3 +1,8 @@
@@ -175,7 +214,7 @@ index c76a1dc..9faa929 100644
  
          // Skip repeated events when not in the menu
          if (!recompui::is_context_capturing_input() &&
-@@ -72,38 +114,73 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -72,38 +114,83 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
      break;
      case SDL_EventType::SDL_CONTROLLERDEVICEADDED:
      {
@@ -204,6 +243,16 @@ index c76a1dc..9faa929 100644
 +                SDL_GameControllerGetPlayerIndex(controller),
 +                static_cast<int>(SDL_JoystickHasRumble(joystick)),
 +                SDL_JoystickPath(joystick));
++            if (hotplug_diagnostics()) {
++                char guid[33]{};
++                SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
++                char* mapping = SDL_GameControllerMapping(controller);
++                std::fprintf(stderr, "[RR64-CONTROLLER] guid=%s vendor=%04x product=%04x buttons=%d axes=%d hats=%d mapping=%s\n",
++                    guid, SDL_GameControllerGetVendor(controller), SDL_GameControllerGetProduct(controller),
++                    SDL_JoystickNumButtons(joystick), SDL_JoystickNumAxes(joystick), SDL_JoystickNumHats(joystick),
++                    mapping ? mapping : "<none>");
++                SDL_free(mapping);
++            }
              recompinput::add_controller_state(SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)), controller);
  
 +            HotplugTiming sensors{"enable-sensors"};
@@ -260,15 +309,23 @@ index c76a1dc..9faa929 100644
      case SDL_EventType::SDL_QUIT: {
          if (!ultramodern::is_game_started()) {
              ultramodern::quit();
-@@ -122,6 +199,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -122,13 +209,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
      queue_if_enabled(event);
      break;
      case SDL_EventType::SDL_CONTROLLERBUTTONDOWN:
 +        recompinput::mark_controller_active(event->cbutton.which);
          if (binding::is_binding() && binding::is_controller_being_bound(event->cbutton.which)) {
-             // TODO: Needs the controller profile index.
-             auto menuToggleBinding0 = profiles::get_input_binding(0, GameInput::TOGGLE_MENU, 0);
-@@ -152,6 +230,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+-            // TODO: Needs the controller profile index.
+-            auto menuToggleBinding0 = profiles::get_input_binding(0, GameInput::TOGGLE_MENU, 0);
+-            auto menuToggleBinding1 = profiles::get_input_binding(0, GameInput::TOGGLE_MENU, 1);
+-            // note - magic number: 0 is InputType::None
+-            if ((menuToggleBinding0.input_type != InputType::None && event->cbutton.button == menuToggleBinding0.input_id) ||
+-                (menuToggleBinding1.input_type != InputType::None && event->cbutton.button == menuToggleBinding1.input_id)) {
++            if (binding::is_cancel_button(event->cbutton.button)) {
+                 binding::stop_scanning();
+             }
+             else if (binding::get_scanning_device() == InputDevice::Controller) {
+@@ -152,6 +235,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
          }
          break;
      case SDL_EventType::SDL_CONTROLLERAXISMOTION:
@@ -278,7 +335,7 @@ index c76a1dc..9faa929 100644
          if (binding::is_controller_being_bound(event->caxis.which)) {
              GameInput scanning_game_input = binding::get_scanning_game_input();
              if (scanning_game_input == GameInput::TOGGLE_MENU ||
-@@ -250,7 +331,7 @@ void handle_events() {
+@@ -250,7 +336,7 @@ void handle_events() {
      SDL_Event cur_event;
      static bool started = false;
      static bool exited = false;
@@ -287,7 +344,7 @@ index c76a1dc..9faa929 100644
          exited = sdl_event_filter(nullptr, &cur_event);
  
          bool has_mouse_sensitivity = recompui::config::general::has_mouse_sensitivity_option();
-@@ -270,6 +351,10 @@ void handle_events() {
+@@ -270,6 +356,10 @@ void handle_events() {
  
      binding::stop_skipping_events();
  

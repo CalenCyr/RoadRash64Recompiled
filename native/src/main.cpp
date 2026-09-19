@@ -1,3 +1,4 @@
+#include "rr64_controller_mappings.hpp"
 #include "rr64_custom_cop.hpp"
 #include "recompui/startup_diagnostics.h"
 #include "rr64_popup_input.hpp"
@@ -112,7 +113,7 @@
 #include "rr64_online_menu.hpp"
 #include "rr64_voice_chat.hpp"
 
-constexpr const char* kVersion = "1.3.0";
+constexpr const char* kVersion = "1.3.1";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -617,6 +618,12 @@ ultramodern::gfx_callbacks_t::gfx_data_t create_gfx() {
     rr64_log("[RR64-STAGE] SDL_Init returned %d (%s).\n", init_result, SDL_GetError());
     if (init_result < 0) {
         fatal_sdl("SDL video/input initialization failed");
+    }
+
+    // Register before the first device-added event is processed, including
+    // controllers already connected when the launcher starts.
+    if (!rr64_register_controller_mappings()) {
+        rr64_log("[RR64-INPUT] Controller mapping registration failed: %s\n", SDL_GetError());
     }
 
     const char* video_driver = SDL_GetCurrentVideoDriver();

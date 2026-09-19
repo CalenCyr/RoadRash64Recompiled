@@ -84,11 +84,11 @@ Code contributions are welcome as focused pull requests. Explain the problem, im
 
 ## Optional texture conversion
 
-Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. Version 1.2 provided an **RT64 conversion of that original Jabo texture pack** for Road Rash 64 Recompiled. The clean 1.3 package does not bundle it. All credit for the original mod and artwork belongs to its creator; the recompilation project does not claim authorship of those textures or endorsement by the creator.
+Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. The 1.3.1 Windows package restores the optional **RT64 conversion of that original Jabo texture pack** for Road Rash 64 Recompiled that was omitted from 1.3. All credit for the original mod and artwork belongs to its creator; the recompilation project does not claim authorship of those textures or endorsement by the creator.
 
 [Original creator and project page](https://crisaty.tumblr.com/post/113116999840/road-rash-64-remastered-edition)
 
-If you have the optional RTZ, install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.
+The optional RTZ is in `optional-mods`. Install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.
 
 See [current local race options and controls](docs/LOCAL_RACE_OPTIONS_RELEASE.md). Release 1.3 retains these options. See [release notes](RELEASE_NOTES.md).
 
