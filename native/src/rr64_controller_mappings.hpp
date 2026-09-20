@@ -33,6 +33,15 @@ inline constexpr const char* rr64_controller_mappings[] = {
     "03000000c82d00001930000001000000,8BitDo 64,a:b0,b:b1,back:b10,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b6,leftstick:b13,lefttrigger:b8,leftx:a0,lefty:a1,rightshoulder:b7,righttrigger:b9,rightx:a2,righty:a3,start:b11,platform:Mac OS X,",
     "03000000c82d00001930000011010000,8BitDo 64,a:b0,b:b1,back:b10,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b6,leftstick:b13,lefttrigger:b8,leftx:a0,lefty:a1,rightshoulder:b7,righttrigger:b9,rightx:a2,righty:a3,start:b11,platform:Linux,",
     "05000000c82d00001930000001000000,8BitDo 64,a:b0,b:b1,back:b10,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b6,leftstick:b13,lefttrigger:b8,leftx:a0,lefty:a1,rightshoulder:b7,righttrigger:b9,rightx:a2,righty:a3,start:b11,platform:Linux,",
+    // Switch-mode raw USB/Bluetooth and Linux hid-nintendo identities.
+    // Local extension: expose the spare raw stick-click slot b11 as L3 on
+    // generic HID layouts. Kernel N64 layouts do not expose a thumb button;
+    // do not guess an index there (b11 is Start). Hardware confirmation pending.
+    "030000007e0500001920000000000000,NSO N64 Controller,+rightx:b8,+righty:b2,-rightx:b3,-righty:b7,a:b1,b:b0,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b4,leftstick:b11,lefttrigger:b6,leftx:a0,lefty:a1,misc1:b13,rightshoulder:b5,righttrigger:b10,start:b9,platform:Windows,",
+    "030000007e0500001920000001000000,NSO N64 Controller,+rightx:b8,+righty:b7,-rightx:b3,-righty:b2,a:b1,b:b0,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b4,leftstick:b11,lefttrigger:b6,leftx:a0,lefty:a1,misc1:b13,rightshoulder:b5,righttrigger:b10,start:b9,platform:Mac OS X,",
+    "030000007e0500001920000011810000,NSO N64 Controller,+rightx:b2,+righty:b3,-rightx:b4,-righty:b10,a:b0,b:b1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b6,lefttrigger:b8,leftx:a0,lefty:a1,misc1:b5,rightshoulder:b7,righttrigger:b9,start:b11,platform:Linux,",
+    "050000007e0500001920000001000000,NSO N64 Controller,+rightx:b8,+righty:b7,-rightx:b3,-righty:b2,a:b1,b:b0,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b4,leftstick:b11,lefttrigger:b6,leftx:a0,lefty:a1,misc1:b13,rightshoulder:b5,righttrigger:b10,start:b9,platform:Linux,",
+    "050000007e0500001920000001800000,NSO N64 Controller,+rightx:b2,+righty:b3,-rightx:b4,-righty:b10,a:b0,b:b1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b6,lefttrigger:b8,leftx:a0,lefty:a1,misc1:b5,rightshoulder:b7,righttrigger:b9,start:b11,platform:Linux,",
 };
 
 inline bool rr64_register_controller_mappings() {

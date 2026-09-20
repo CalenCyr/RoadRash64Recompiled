@@ -151,10 +151,10 @@ index 45d55a7..2e20a17 100644
          profiles::set_input_binding(
              profiles::get_input_profile_for_player(BindingState.player_index, BindingState.device),
 diff --git a/recompinput/src/input_events.cpp b/recompinput/src/input_events.cpp
-index c76a1dc..7cdce78 100644
+index c76a1dc..867bb00 100644
 --- a/recompinput/src/input_events.cpp
 +++ b/recompinput/src/input_events.cpp
-@@ -1,3 +1,8 @@
+@@ -1,6 +1,12 @@
 +#include <cstdio>
 +#include <chrono>
 +#include <cstdlib>
@@ -163,7 +163,11 @@ index c76a1dc..7cdce78 100644
  #include "recompinput/recompinput.h"
  #include "recompinput/input_binding.h"
  #include "recompinput/input_events.h"
-@@ -11,6 +16,42 @@ static struct {
++#include "recompinput/rr64_n64_switch_mapping.h"
+ #include "recompinput/profiles.h"
+ #include "recompui/config.h"
+ #include "ultramodern/ultramodern.hpp"
+@@ -11,6 +17,60 @@ static struct {
  
  namespace recompinput {
  
@@ -188,9 +192,27 @@ index c76a1dc..7cdce78 100644
 +    }
 +};
 +int poll_event_with_timing(SDL_Event* event) {
-+    if (!hotplug_diagnostics()) return SDL_PollEvent(event);
-+    const auto begin = std::chrono::steady_clock::now();
++    const auto begin = hotplug_diagnostics() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 +    const int result = SDL_PollEvent(event);
++    // Separate opt-in, bounded button-only trace for controller reports that
++    // are swallowed by a mapping. No keyboard, axis spam or gameplay logging.
++    static const bool trace_buttons = [] {
++        const char* value = std::getenv("RR64_CONTROLLER_BUTTON_TRACE");
++        return value && std::strcmp(value, "1") == 0;
++    }();
++    static unsigned button_reports = 0;
++    if (result && trace_buttons && button_reports < 256 &&
++        (event->type == SDL_JOYBUTTONDOWN || event->type == SDL_JOYBUTTONUP ||
++         event->type == SDL_CONTROLLERBUTTONDOWN || event->type == SDL_CONTROLLERBUTTONUP)) {
++        ++button_reports;
++        const bool raw = event->type == SDL_JOYBUTTONDOWN || event->type == SDL_JOYBUTTONUP;
++        std::fprintf(stderr,"[RR64-BUTTON] tick=%llu raw=%d device=%d button=%u state=%u\n",
++            static_cast<unsigned long long>(SDL_GetTicks64()),raw,
++            raw ? event->jbutton.which : event->cbutton.which,
++            unsigned(raw ? event->jbutton.button : event->cbutton.button),
++            unsigned(raw ? event->jbutton.state : event->cbutton.state));
++    }
++    if (!hotplug_diagnostics()) return result;
 +    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-begin).count();
 +    static unsigned reports = 0;
 +    // SDL/OS device discovery may block before an ADDED event reaches us.
@@ -206,7 +228,7 @@ index c76a1dc..7cdce78 100644
  void queue_if_enabled(SDL_Event* event) {
      if (!recompinput::all_input_disabled() && !binding::should_skip_events()) {
          recompui::queue_event(*event);
-@@ -43,6 +84,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -43,6 +103,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
      case SDL_EventType::SDL_KEYDOWN:
      {
          SDL_KeyboardEvent* keyevent = &event->key;
@@ -214,7 +236,7 @@ index c76a1dc..7cdce78 100644
  
          // Skip repeated events when not in the menu
          if (!recompui::is_context_capturing_input() &&
-@@ -72,38 +114,83 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -72,38 +133,88 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
      break;
      case SDL_EventType::SDL_CONTROLLERDEVICEADDED:
      {
@@ -222,6 +244,11 @@ index c76a1dc..7cdce78 100644
          SDL_ControllerDeviceEvent* controller_event = &event->cdevice;
 -        SDL_GameController* controller = SDL_GameControllerOpen(controller_event->which);
 -        printf("Controller added: %d\n", controller_event->which);
++        // HIDAPI identities include the driver/subtype; do not apply this raw
++        // layout to a kernel/DirectInput device with the same vendor/product.
++        if (rr64::input::register_n64_hidapi_mapping(SDL_JoystickGetDeviceGUID(controller_event->which)) < 0 && hotplug_diagnostics()) {
++            std::fprintf(stderr, "[RR64-CONTROLLER] N64 Switch mapping failed: %s\n", SDL_GetError());
++        }
 +        SDL_GameController* controller = nullptr;
 +        {
 +            HotplugTiming open{"open-device"};
@@ -309,7 +336,7 @@ index c76a1dc..7cdce78 100644
      case SDL_EventType::SDL_QUIT: {
          if (!ultramodern::is_game_started()) {
              ultramodern::quit();
-@@ -122,13 +209,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -122,13 +233,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
      queue_if_enabled(event);
      break;
      case SDL_EventType::SDL_CONTROLLERBUTTONDOWN:
@@ -325,7 +352,7 @@ index c76a1dc..7cdce78 100644
                  binding::stop_scanning();
              }
              else if (binding::get_scanning_device() == InputDevice::Controller) {
-@@ -152,6 +235,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -152,6 +259,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
          }
          break;
      case SDL_EventType::SDL_CONTROLLERAXISMOTION:
@@ -335,7 +362,7 @@ index c76a1dc..7cdce78 100644
          if (binding::is_controller_being_bound(event->caxis.which)) {
              GameInput scanning_game_input = binding::get_scanning_game_input();
              if (scanning_game_input == GameInput::TOGGLE_MENU ||
-@@ -250,7 +336,7 @@ void handle_events() {
+@@ -250,7 +360,7 @@ void handle_events() {
      SDL_Event cur_event;
      static bool started = false;
      static bool exited = false;
@@ -344,7 +371,7 @@ index c76a1dc..7cdce78 100644
          exited = sdl_event_filter(nullptr, &cur_event);
  
          bool has_mouse_sensitivity = recompui::config::general::has_mouse_sensitivity_option();
-@@ -270,6 +356,10 @@ void handle_events() {
+@@ -270,6 +380,10 @@ void handle_events() {
  
      binding::stop_skipping_events();
  

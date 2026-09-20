@@ -378,6 +378,10 @@
       {
         "path": "recompui/include/recompui/startup_diagnostics.h",
         "sha256": "2f66a5eea12ac371b13b88d3ceea6f7fe22b8ae291948cf99f052db95f38d910"
+      },
+      {
+        "path": "recompinput/include/recompinput/rr64_n64_switch_mapping.h",
+        "sha256": "19e9f05bff024962b8baaa93939467f009dc2c10173b42c53ba773eca8010afc"
       }
     ]
   },
