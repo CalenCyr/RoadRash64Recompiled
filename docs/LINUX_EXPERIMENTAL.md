@@ -1,8 +1,11 @@
-# Road Rash 64 Recompiled 1.3 — Experimental Linux download
+# Road Rash 64 Recompiled 1.4.0 — Experimental Linux download
 
-This package integrates CalenCyr's native Linux contribution with the RoadRash64Recompiled 1.3 source. It is a separate Linux build, not the
-Windows executable running through Wine. No ROM is included; select your own
-supported Road Rash 64 USA v1.0 ROM at startup.
+This native Linux package builds on CalenCyr's contribution and the current
+1.4.0 source. Select your own supported Road Rash 64 USA v1.0 ROM at startup.
+The optional texture mod is included in the ZIP, and the AppImage contains a
+native MK64 importer with its own Python/NumPy runtime. Importing requires your
+own supported Mario Kart 64 USA ROM. Neither ROM nor generated course data is
+distributed. The existing achievement badges and branded launcher art remain.
 
 ## Running
 
@@ -16,6 +19,11 @@ FUSE support may be needed; where unavailable, try
 Place optional custom tracks in a `music` folder beside the AppImage. The mounted
 AppImage itself is read-only. FFmpeg libraries are bundled; installing a system
 FFmpeg player or codec package is not required to use this download.
+
+Use **Settings > Mods > MK64 Race Pack > Import MK64 ROM** for the optional course
+pack. Generated tracks are stored beside the writable AppImage; the importer
+itself stays inside the image. No Python or compiler installation is needed.
+Both platforms use converter `1.0.1-c39`; corrected RC4–RC6 packs stay compatible.
 
 This integration is intended for community testing. The contributor reported
 Fedora and Steam Deck testing of their earlier fork; that does not establish
@@ -50,7 +58,8 @@ libfuse2. See BUILDING.md for ROM staging and code generation. For the native st
 cmake -S native -B native/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12
 cmake --build native/build --target RoadRash64Recompiled --parallel 6
-python3 scripts/build_appimage.py
+# Build/freeze the native importer first, following BUILDING.md.
+python3 scripts/build_appimage.py --mk64-importer-bundle build/mk64-importer-bundle/bundle.json
 ```
 
 `RR64MusicSmoke` uses generated Linux fixtures instead of the Windows Media
@@ -63,4 +72,8 @@ them is possible by extracting the AppImage and rebuilding compatible libraries.
 The exact FFmpeg configuration is in native/CMakeLists.txt. Do not publish a
 repackaged binary without updating its source and license materials.
 
-Online and proximity voice are experimental. Maximum Draw Distance can load all race areas on the map; start around 50-60%, particularly for split screen. This 1.3 integration has not been gameplay-tested on Linux.
+Course-enabled packages reject a missing importer manifest. The packager verifies
+all frozen tool files and preserves executable permissions. Library resolution,
+ROM-to-pack parity, archive contents and offline smoke tests are release checks;
+none substitutes for Linux graphics, audio, controller or Internet gameplay
+testing. Do not claim that earlier Linux controller feedback verified this build.

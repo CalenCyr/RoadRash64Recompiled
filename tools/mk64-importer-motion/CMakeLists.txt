@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.20)
+project(RR64MK64Motion LANGUAGES C)
+set(CMAKE_C_STANDARD 17)
+add_executable(rr64-mk64-motion EXCLUDE_FROM_ALL motion.c)
+if(MSVC)
+    # Strict arithmetic is part of the converter format. Avoid a CRT prerequisite.
+    set_property(TARGET rr64-mk64-motion PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(rr64-mk64-motion PRIVATE /Od /fp:strict /D_CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(rr64-mk64-motion PRIVATE -O0 -ffp-contract=off -frounding-math)
+    target_link_libraries(rr64-mk64-motion PRIVATE m)
+endif()

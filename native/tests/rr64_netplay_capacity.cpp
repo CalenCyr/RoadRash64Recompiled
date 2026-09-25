@@ -59,8 +59,15 @@ int main(int argc, char** argv) {
             }
             rr64::netplay::host_commit_game_setup(setup);
         }
-        if (host && status.phase == rr64::netplay::Phase::CharacterSelect) {
-            rr64::netplay::host_set_phase(rr64::netplay::Phase::Race);
+        if (status.phase == rr64::netplay::Phase::CharacterSelect || status.phase == rr64::netplay::Phase::TrackSelect) {
+            if(!rr64::netplay::acknowledge_course(status.game_setup.revision,status.game_setup.course))return 5;
+            const rr64::online_flow::Selection selection{status.game_setup.revision,
+                unsigned(status.local_slot)+1,unsigned(status.local_slot)%4,1,
+                status.phase==rr64::netplay::Phase::TrackSelect?1u:0u};
+            if(!rr64::netplay::set_selection(selection))return 6;
+            if(host && status.phase==rr64::netplay::Phase::TrackSelect)
+                rr64::netplay::host_request_race_start();
+            if(host)rr64::netplay::host_release_selection();
         }
         const rr64::netplay::Status race_status = rr64::netplay::get_status();
         if (race_status.phase == rr64::netplay::Phase::Race &&

@@ -1,0 +1,184 @@
+{
+  "FC127E24 FFFFF3F9": [
+    "gsDPSetCombineMode",
+    [
+      "G_CC_MODULATEIDECALA",
+      "G_CC_MODULATEIDECALA"
+    ]
+  ],
+  "B900031D 00553078": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_AA_ZB_TEX_EDGE",
+      "G_RM_AA_ZB_TEX_EDGE2"
+    ]
+  ],
+  "BA000E02 00008000": [
+    "gsDPSetTextureLUT",
+    [
+      "G_TT_RGBA16"
+    ]
+  ],
+  "BA000E02 00000000": [
+    "gsDPSetTextureLUT",
+    [
+      "G_TT_NONE"
+    ]
+  ],
+  "FC121824 FF33FFFF": [
+    "gsDPSetCombineMode",
+    [
+      "G_CC_MODULATEIA",
+      "G_CC_MODULATEIA"
+    ]
+  ],
+  "FCFFFFFF FFFE793C": [
+    "gsDPSetCombineMode",
+    [
+      "G_CC_SHADE",
+      "G_CC_SHADE"
+    ]
+  ],
+  "B900031D 00552078": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_AA_ZB_OPA_SURF",
+      "G_RM_AA_ZB_OPA_SURF2"
+    ]
+  ],
+  "FC127E24 FFFFF9FC": [
+    "gsDPSetCombineMode",
+    [
+      "G_CC_MODULATEI",
+      "G_CC_MODULATEI"
+    ]
+  ],
+  "B900031D 00504B50": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_ZB_CLD_SURF",
+      "G_RM_ZB_CLD_SURF2"
+    ]
+  ],
+  "BA001402 00000000": [
+    "gsDPSetCycleType",
+    [
+      "G_CYC_1CYCLE"
+    ]
+  ],
+  "B9000002 00000000": [
+    "gsDPSetAlphaCompare",
+    [
+      "G_AC_NONE"
+    ]
+  ],
+  "BA001402 00100000": [
+    "gsDPSetCycleType",
+    [
+      "G_CYC_2CYCLE"
+    ]
+  ],
+  "FC127FFF FFFFF838": [
+    "gsDPSetCombineMode",
+    [
+      "G_CC_MODULATEI",
+      "G_CC_PASS2"
+    ]
+  ],
+  "B900031D C8112078": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_FOG_SHADE_A",
+      "G_RM_AA_ZB_OPA_SURF2"
+    ]
+  ],
+  "B900031D 004045D8": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_AA_ZB_XLU_INTER",
+      "G_RM_NOOP2"
+    ]
+  ],
+  "FCFFFFFF FFFCF87C": [
+    "gsDPSetCombineMode",
+    [
+      "G_CC_DECALRGB",
+      "G_CC_DECALRGB"
+    ]
+  ],
+  "FCFFFFFF FFFCF279": [
+    "gsDPSetCombineMode",
+    [
+      "G_CC_DECALRGBA",
+      "G_CC_DECALRGBA"
+    ]
+  ],
+  "B900031D C8113078": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_FOG_SHADE_A",
+      "G_RM_AA_ZB_TEX_EDGE2"
+    ]
+  ],
+  "FCFFFFFF FFFCF238": [
+    "gsDPSetCombineMode",
+    [
+      "G_CC_DECALRGBA",
+      "G_CC_PASS2"
+    ]
+  ],
+  "B900031D 00504DD8": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_AA_ZB_XLU_DECAL",
+      "G_RM_AA_ZB_XLU_DECAL2"
+    ]
+  ],
+  "B900031D 005049F8": [
+    "gsDPSetRenderMode",
+    [
+      "AA_EN | Z_CMP | Z_UPD | IM_RD | CLR_ON_CVG | CVG_DST_WRAP | ZMODE_XLU | FORCE_BL | GBL_c1(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)",
+      "AA_EN | Z_CMP | Z_UPD | IM_RD | CLR_ON_CVG | CVG_DST_WRAP | ZMODE_XLU | FORCE_BL | GBL_c2(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)"
+    ]
+  ],
+  "FC147E28 44FE793C": [
+    "gsDPSetCombineMode",
+    [
+      "G_CC_BLENDRGBA",
+      "G_CC_BLENDRGBA"
+    ]
+  ],
+  "BA000C02 00002000": [
+    "gsDPSetTextureFilter",
+    [
+      "G_TF_BILERP"
+    ]
+  ],
+  "BA001301 00080000": [
+    "gsDPSetTexturePersp",
+    [
+      "G_TP_PERSP"
+    ]
+  ],
+  "B900031D 005049D8": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_AA_ZB_XLU_SURF",
+      "G_RM_AA_ZB_XLU_SURF2"
+    ]
+  ],
+  "B900031D 00442D58": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_AA_ZB_OPA_DECAL",
+      "G_RM_AA_ZB_OPA_DECAL"
+    ]
+  ],
+  "B900031D 00404DD8": [
+    "gsDPSetRenderMode",
+    [
+      "G_RM_AA_ZB_XLU_DECAL",
+      "G_RM_AA_ZB_XLU_DECAL"
+    ]
+  ]
+}

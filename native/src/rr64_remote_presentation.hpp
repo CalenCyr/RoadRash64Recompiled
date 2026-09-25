@@ -22,7 +22,8 @@ class RemotePresentation {
         const float dx=b.position_x-a.position_x,dy=b.position_y-a.position_y,dz=b.position_z-a.position_z;
         return a.character!=b.character || a.bike!=b.bike ||
             a.root.bike_attached!=b.root.bike_attached || a.root.rider_attached!=b.root.rider_attached ||
-            a.root.ejected!=b.root.ejected || a.root.drive_lockout!=b.root.drive_lockout || dx*dx+dy*dy+dz*dz>512.f*512.f;
+            a.root.ejected!=b.root.ejected || a.root.drive_lockout!=b.root.drive_lockout ||
+            a.root.vault_latch!=b.root.vault_latch || dx*dx+dy*dy+dz*dz>512.f*512.f;
     }
 public:
     void reset() { count_=next_=0; last_observed_us_=-1; playback_started_=false; playback_us_=0; }
@@ -90,9 +91,9 @@ public:
             }
             break;
         }
-        // Keep native crash/eject motion exact. Only mounted rider/bike pairs
+        // Keep native crash/eject/vault motion exact. Only mounted rider/bike pairs
         // receive a common world-space translation; no invented trajectory.
-        if (!latest.root.bike_attached || !latest.root.rider_attached || latest.root.ejected || latest.root.drive_lockout) return latest;
+        if (!latest.root.bike_attached || !latest.root.rider_attached || latest.root.ejected || latest.root.drive_lockout || latest.root.vault_latch) return latest;
         auto result=latest;
         result.root.attack=position.root.attack;
         const float dx=position.position_x-latest.position_x,dy=position.position_y-latest.position_y,dz=position.position_z-latest.position_z;

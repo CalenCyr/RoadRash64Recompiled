@@ -1,0 +1,431 @@
+{
+  "format": "rr64-mk64-authored-atlas-layout",
+  "version": 1,
+  "stages": [
+    {
+      "scale": 0.05,
+      "placements": {
+        "mario_raceway": [
+          -29000,
+          -29000,
+          0
+        ],
+        "choco_mountain": [
+          -29000,
+          -25000,
+          0
+        ],
+        "bowsers_castle": [
+          -29000,
+          -21000,
+          0
+        ],
+        "banshee_boardwalk": [
+          -29000,
+          -17000,
+          0
+        ],
+        "yoshi_valley": [
+          -29000,
+          28000,
+          0
+        ],
+        "frappe_snowland": [
+          -25000,
+          -29000,
+          0
+        ],
+        "koopa_troopa_beach": [
+          -25000,
+          -24000,
+          0
+        ],
+        "royal_raceway": [
+          -25000,
+          -20000,
+          0
+        ],
+        "luigi_raceway": [
+          -21000,
+          -29000,
+          0
+        ],
+        "moo_moo_farm": [
+          -21000,
+          -25000,
+          0
+        ],
+        "toads_turnpike": [
+          -21000,
+          -21000,
+          0
+        ],
+        "kalimari_desert": [
+          -17000,
+          -29000,
+          0
+        ],
+        "sherbet_land": [
+          -17000,
+          -25000,
+          0
+        ],
+        "rainbow_road": [
+          -13000,
+          -23000,
+          0
+        ],
+        "wario_stadium": [
+          -8000,
+          -29000,
+          0
+        ],
+        "dks_jungle_parkway": [
+          0,
+          -29000,
+          0
+        ]
+      }
+    },
+    {
+      "scale": 0.12,
+      "placements": {
+        "mario_raceway": [
+          -30000,
+          -30000,
+          0
+        ],
+        "choco_mountain": [
+          -25000,
+          30000,
+          0
+        ],
+        "bowsers_castle": [
+          -30000,
+          29000,
+          0
+        ],
+        "banshee_boardwalk": [
+          -16000,
+          -25000,
+          0
+        ],
+        "yoshi_valley": [
+          -22000,
+          -22000,
+          0
+        ],
+        "frappe_snowland": [
+          -15000,
+          -30000,
+          0
+        ],
+        "koopa_troopa_beach": [
+          9000,
+          -30000,
+          0
+        ],
+        "royal_raceway": [
+          15000,
+          -30000,
+          0
+        ],
+        "luigi_raceway": [
+          -31000,
+          -15000,
+          0
+        ],
+        "moo_moo_farm": [
+          -31000,
+          -9000,
+          0
+        ],
+        "toads_turnpike": [
+          20000,
+          -24000,
+          0
+        ],
+        "kalimari_desert": [
+          -29000,
+          -22000,
+          0
+        ],
+        "sherbet_land": [
+          21000,
+          -30000,
+          0
+        ],
+        "rainbow_road": [
+          -21000,
+          -29000,
+          0
+        ],
+        "wario_stadium": [
+          -8000,
+          -30000,
+          0
+        ],
+        "dks_jungle_parkway": [
+          26000,
+          -24000,
+          0
+        ]
+      }
+    },
+    {
+      "scale": 0.15,
+      "placements": {
+        "mario_raceway": [
+          -30000,
+          29000,
+          0
+        ],
+        "choco_mountain": [
+          -28000,
+          -17000,
+          0
+        ],
+        "bowsers_castle": [
+          -23000,
+          -23000,
+          0
+        ],
+        "banshee_boardwalk": [
+          -31000,
+          -16000,
+          0
+        ],
+        "yoshi_valley": [
+          22000,
+          -23000,
+          0
+        ],
+        "frappe_snowland": [
+          -29000,
+          -22000,
+          0
+        ],
+        "koopa_troopa_beach": [
+          -20000,
+          -29000,
+          0
+        ],
+        "royal_raceway": [
+          23000,
+          -30000,
+          0
+        ],
+        "luigi_raceway": [
+          -31000,
+          -11000,
+          0
+        ],
+        "moo_moo_farm": [
+          26000,
+          -18000,
+          0
+        ],
+        "toads_turnpike": [
+          27000,
+          -25000,
+          0
+        ],
+        "kalimari_desert": [
+          10000,
+          -29000,
+          0
+        ],
+        "sherbet_land": [
+          28000,
+          -30000,
+          0
+        ],
+        "rainbow_road": [
+          -30000,
+          -29000,
+          0
+        ],
+        "wario_stadium": [
+          28000,
+          -13000,
+          0
+        ],
+        "dks_jungle_parkway": [
+          17000,
+          -29000,
+          0
+        ]
+      }
+    },
+    {
+      "scale": 0.1875,
+      "placements": {
+        "mario_raceway": [
+          -29000,
+          29000,
+          0
+        ],
+        "choco_mountain": [
+          -8000,
+          -30000,
+          0
+        ],
+        "bowsers_castle": [
+          -28000,
+          -30000,
+          0
+        ],
+        "banshee_boardwalk": [
+          -22000,
+          -30000,
+          0
+        ],
+        "yoshi_valley": [
+          -16000,
+          -28000,
+          0
+        ],
+        "frappe_snowland": [
+          12000,
+          -29000,
+          0
+        ],
+        "koopa_troopa_beach": [
+          -23000,
+          -22000,
+          0
+        ],
+        "royal_raceway": [
+          27000,
+          -16000,
+          0
+        ],
+        "luigi_raceway": [
+          -31000,
+          -9000,
+          0
+        ],
+        "moo_moo_farm": [
+          -30000,
+          -17000,
+          0
+        ],
+        "toads_turnpike": [
+          28000,
+          -30000,
+          0
+        ],
+        "kalimari_desert": [
+          20000,
+          -28000,
+          0
+        ],
+        "sherbet_land": [
+          24000,
+          -21000,
+          0
+        ],
+        "rainbow_road": [
+          28000,
+          -23000,
+          0
+        ],
+        "wario_stadium": [
+          28000,
+          -11000,
+          0
+        ],
+        "dks_jungle_parkway": [
+          -29000,
+          -24000,
+          0
+        ]
+      }
+    },
+    {
+      "scale": 0.234375,
+      "placements": {
+        "mario_raceway": [
+          -21000,
+          -23000,
+          0
+        ],
+        "choco_mountain": [
+          -1000,
+          -31000,
+          0
+        ],
+        "bowsers_castle": [
+          30000,
+          -30000,
+          0
+        ],
+        "banshee_boardwalk": [
+          28000,
+          31000,
+          0
+        ],
+        "yoshi_valley": [
+          10000,
+          -29000,
+          0
+        ],
+        "frappe_snowland": [
+          -29000,
+          -21000,
+          0
+        ],
+        "koopa_troopa_beach": [
+          -15000,
+          -28000,
+          0
+        ],
+        "royal_raceway": [
+          23000,
+          -30000,
+          0
+        ],
+        "luigi_raceway": [
+          -31000,
+          -10000,
+          0
+        ],
+        "moo_moo_farm": [
+          -21000,
+          -30000,
+          0
+        ],
+        "toads_turnpike": [
+          -29000,
+          -30000,
+          0
+        ],
+        "kalimari_desert": [
+          28000,
+          -21000,
+          0
+        ],
+        "sherbet_land": [
+          21000,
+          -24000,
+          0
+        ],
+        "rainbow_road": [
+          30000,
+          -11000,
+          0
+        ],
+        "wario_stadium": [
+          16000,
+          -28000,
+          0
+        ],
+        "dks_jungle_parkway": [
+          -29000,
+          29000,
+          0
+        ]
+      }
+    }
+  ]
+}

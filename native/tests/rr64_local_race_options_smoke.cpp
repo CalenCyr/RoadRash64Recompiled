@@ -1,6 +1,8 @@
 #include "rr64_local_race_options.hpp"
+#include "rr64_offline_modifiers.hpp"
 #include "rr64_custom_cop_rules.hpp"
 #include "rr64_custom_cop.hpp"
+#include "rr64_thrash_options.hpp"
 #include <cstdio>
 #include <fstream>
 #include <thread>
@@ -8,12 +10,18 @@
 #include <cstdlib>
 #include "recomp.h"
 #include <vector>
+#include <utility>
 #include "rr64_engine_layout.hpp"
 #include "rr64_local_players.hpp"
 #include "rr64_netplay.hpp"
 #include "rr64_prediction_replay.hpp"
-namespace { bool online = false; }
-namespace rr64::netplay { Status get_status() { Status result{}; result.active = online; return result; } }
+namespace { bool online = false, online_connected = false, online_host = false; }
+// This pre-existing roster regression exercises the normal cheats-OFF path.
+// Dedicated modifier fixtures separately cover enabled and online rejection.
+namespace rr64::offline_modifiers { bool enabled(Flag) { return false; } }
+extern "C" int rr64_offline_bikes_active(unsigned char*, unsigned) { return 0; }
+extern "C" unsigned rr64_offline_bikes_entry(unsigned char*, unsigned, unsigned original) { return original; }
+namespace rr64::netplay { Status get_status() { Status result{}; result.active = online; result.connected = online_connected; result.is_host = online_host; return result; } }
 namespace rr64::netplay { bool authority_get_outcome(unsigned,authority::Outcome&,bool&){return false;} }
 namespace recomp { void* alloc(unsigned char* memory, size_t size) { static size_t next = 0x700000; const size_t offset = next; next += (size + 15) & ~size_t(15); return memory + offset; } }
 namespace { bool placement_ok=false; unsigned voices=0; }
@@ -83,11 +91,16 @@ int main() {
     put(layout::menu_cursor, 8); put(0x800A6418, 4);
     for (unsigned level = 1; level <= 7; ++level) {
         rr64_local_options_input(rdram);
+        // Preview uses current options even before the race snapshot is taken.
+        for (unsigned map = 0; map < 15; ++map)
+            ok &= rr64_local_bike_menu_level(map) == level - 1;
         rr64_local_options_race(rdram);
         ok &= rr64_local_bike_level(4) == level - 1 && get(0x800A6418) == 4;
     }
     rr64_local_options_input(rdram); rr64_local_options_race(rdram);
-    ok &= rr64_local_bike_level(3) == 3; // Match Track after Level 7.
+    ok &= rr64_local_bike_level(3) == 3; // Match Track after Insanity.
+    for (unsigned map = 0; map < 15; ++map)
+        ok &= rr64_local_bike_menu_level(map) == map;
     put(layout::menu_buttons, 0x20); rr64_local_options_input(rdram);
     rr64_local_options_race(rdram); ok &= rr64_local_bike_level(0) == 6;
     ok &= rr64_local_options_visible(8, 0) == 1;
@@ -111,12 +124,47 @@ int main() {
     MEM_B(10, guest_address(donor)) = 23;
     MEM_B(13, guest_address(donor)) = 38;
     MEM_B(8, guest_address(donor + 16)) = 12;
+    put(0x800D8570 + 0x18, 23); // Native selector commits the chosen Scooter.
     const unsigned profile = rr64_local_bike_profile(rdram, 0x800D8570, original);
     ok &= profile != original && MEM_B(10, guest_address(profile)) == 23;
     ok &= MEM_B(13, guest_address(profile)) == 38;
     ok &= MEM_B(11, guest_address(profile)) == 11 && MEM_B(14, guest_address(profile)) == 14;
     ok &= MEM_B(10, guest_address(original)) == 10 && get(0x800D8588) == 23;
     ok &= rr64_local_bike_profile(rdram, 0x800D8571, original) == original;
+    // Donor availability is distinct from track category demand. Insanity has
+    // no category 2, Scooter no category 4. Keep total and police count intact;
+    // preserve populated families and surrounding native stack data exactly.
+    recomp_context pool_context{};
+    pool_context.r29 = guest_address(0x80500000);
+    const unsigned pool_stack = 0x80500000;
+    for (unsigned missing : {2u, 4u}) {
+        for (unsigned i = 0; i < 9; ++i) {
+            put(pool_stack + 0x48 + i * 4, i == 1 || i == 3 || i == 7 ? 2 : 0);
+            put(pool_stack + 0x70 + i * 4, 0);
+        }
+        put(pool_stack + 0x44, 0xBADF00D);
+        put(pool_stack + 0x94, 0xC0FFEE);
+        put(pool_stack + 0x70 + missing * 4, 5);
+        put(pool_stack + 0x70 + 7 * 4, 2);
+        pool_context.r21 = 2;
+        rr64_local_bike_ai_pool(rdram, &pool_context);
+        ok &= get(pool_stack + 0x70 + missing * 4) == 0;
+        ok &= get(pool_stack + 0x70 + (missing - 1) * 4) == 5;
+        ok &= get(pool_stack + 0x70 + 7 * 4) == 2 && pool_context.r21 == 2;
+        ok &= get(pool_stack + 0x44) == 0xBADF00D && get(pool_stack + 0x94) == 0xC0FFEE;
+        ok &= get(pool_stack + 0x48 + missing * 4) == 0; // Do not invent donors.
+        rr64_local_bike_ai_pool(rdram, &pool_context);
+        ok &= get(pool_stack + 0x70 + (missing - 1) * 4) == 5; // Idempotent.
+    }
+    // Session options drive the same preview on connected peers, while leaving
+    // this machine's saved local Scooter preference alone.
+    online = online_connected = true;
+    apply_online_options(7u << 6);
+    ok &= rr64_local_bike_menu_level(0) == 6;
+    online_connected = false;
+    ok &= rr64_local_bike_menu_level(2) == 2;
+    online = false;
+    ok &= rr64_local_bike_menu_level(0) == 5;
     // Exercise the actual guest-memory bridge in every local slot. Snapshot
     // unrelated controller/profile fields and unlocks across role assignment.
     put(layout::menu_cursor, 9); put(layout::menu_buttons, 0x40);
@@ -137,12 +185,16 @@ int main() {
     rr64_custom_cop_ai_pool(rdram,&ai_context);
     ok &= get(ai_pool+5*4)==3 && get(ai_pool+7*4)==2 && ai_context.r21==2;
     rr64_local_options_input(rdram); // back to default Off
-    ok &= valid_online_options(512u|1024u|10u) && !valid_online_options(2048u);
+    ok &= valid_online_options(512u|1024u|10u) && valid_online_options(2048u) &&
+          !valid_online_options(0x08000000u);
     reset_online();ok &= !(online_options()&1024u);
     apply_online_options(512u|1024u);ok &= online_options()==1536u;
-    put(0x800A6690, 0); put(0x800A66B8, 4);
+    // Appended cop slot follows the effective bike list, not the map's list.
+    put(0x800A6690, 0); put(0x800A66B8, 4); put(0x800A66B8 + 5 * 4, 1);
     for (unsigned i = 0; i < 4; ++i) {
-        put(0x8009EF3C + i * 4, 4);
+        put(0x8009EF3C + i * 4, 0);
+        ok &= rr64_custom_cop_bike_entry(rdram, i, 123) == 123;
+        put(0x8009EF3C + i * 4, 1);
         ok &= rr64_custom_cop_bike_entry(rdram, i, 123) == 0x800A684C;
     }
     put(0x800A77D8, 0);
@@ -193,7 +245,7 @@ int main() {
     // Every police profile remains selectable on each local controller.
     put(layout::menu_humans, 4); put(0x800A6690, 0); put(0x800A66B8, 4);
     for (unsigned i = 0; i < 4; ++i) {
-        put(0x8009EF3C + i * 4, 4);
+        put(0x8009EF3C + i * 4, 1); // Cop slot after the single Scooter.
         put(0x8009E238 + i * 4, 8);
         ok &= rr64_custom_cop_rider(rdram, i, 0) == 40;
         for (unsigned variant = 40; variant <= 44; ++variant)
@@ -394,6 +446,326 @@ int main() {
         MEM_H(0x4C, guest_address(state)) = 1;
         ok &= !rr64_local_player_roaming(rdram, actor);
     }
-    std::puts(ok ? "PASS local roster/menu and online replay roaming" : "FAIL local race options");
+    // The single-player preset and selector have their own ownership. Exercise
+    // these bridges with local multiplayer explicitly disabled and its menu
+    // arrays left populated, as after returning from a four-player race.
+    unsigned solo_checks = 0;
+    const auto check_solo = [&](bool condition, const char* description) {
+        ++solo_checks;
+        if (!condition) {
+            std::printf("FAIL Thrash: %s\n", description);
+            ok = false;
+        }
+    };
+    online = online_connected = false;
+    rr64::local_players::active.store(false);
+    rr64_thrash_options_mode(32);
+    rr64_local_options_reset_race();
+    reset_online();
+    const unsigned multiplayer_preset = online_options();
+    const auto enter_thrash = [&] {
+        rr64_thrash_options_mode(33);
+        put(globals::main_mode, 33);
+        rr64_thrash_options_begin(rdram);
+    };
+    check_solo(thrash_options() == 10, "first solo preset retains ten stock AI racers");
+    check_solo(thrash_stock_options() == unknown_thrash_stock,
+               "first visit has no saved stock options");
+    check_solo(!rr64_thrash_options_active(), "main menu clears solo ownership");
+    enter_thrash();
+    check_solo(rr64_thrash_options_active(), "native mode 33 enters offline Thrash");
+    check_solo(!rr64::local_players::active.load(), "solo context does not enable multiplayer");
+    put(0x8009ECA0, 0); // Native options stage, before character selection.
+    put(layout::menu_cursor, 4); put(layout::menu_buttons, 0);
+    put(0x8009EABC, 2); put(0x8009EAC4, 3); put(0x8009EAC8, 1);
+    rr64_thrash_options_input(rdram);
+    check_solo(get(0x8009EABC) == 2 && get(0x8009EAC4) == 3 && get(0x8009EAC8) == 1,
+               "first visit preserves unsaved native difficulty/traffic/police");
+    put(layout::menu_humans, 4); put(layout::humans, 1);
+    put(0x8009EAC0, 3); // Original density is not the new 0..10 count.
+    put(layout::menu_buttons, 0x40);
+    for (unsigned ai = 0; ai <= 10; ++ai) {
+        check_solo(rr64_thrash_options_input(rdram) == 1 && (thrash_options() & 15u) == ai,
+                   "solo AI row cycles all eleven counts despite stale four-player menu");
+        check_solo(get(0x8009EAC0) == 3, "AI row never writes extended count into native density");
+    }
+    const unsigned solo_table = rr64_thrash_options_table(0x8009EB4C);
+    check_solo(solo_table != 0x8009EB4C && get(solo_table + 11 * 36) == 0,
+               "solo menu uses an extended table with bounded terminator");
+    check_solo(get(solo_table + 10 * 36) == 0, "AI-cop row stays hidden when custom cop is off");
+    put(layout::menu_cursor, 9); put(layout::menu_buttons, 0x10);
+    check_solo(rr64_thrash_options_navigation(rdram) == 0,
+               "navigation wraps past hidden AI-cop row");
+    put(layout::menu_cursor, 9); put(layout::menu_buttons, 0x40);
+    rr64_thrash_options_input(rdram);
+    check_solo((thrash_options() & 512u) && get(solo_table + 10 * 36) != 0,
+               "enabling custom cop exposes its AI-cop row immediately");
+    put(layout::menu_buttons, 0x10);
+    check_solo(rr64_thrash_options_navigation(rdram) == 10,
+               "navigation reaches enabled AI-cop row");
+    put(0x80300018, 0xBADF00D);
+    rr64_thrash_options_text(rdram, 8, 0x80300000);
+    check_solo(MEM_B(0, guest_address(0x80300000)) == 'B' && get(0x80300018) == 0xBADF00D,
+               "solo label fits the native stack buffer");
+    put(0x8009ECA0, 1); put(layout::menu_buttons, 0x40);
+    const unsigned before_selector_options = thrash_options();
+    const auto before_selector_memory = memory;
+    check_solo(!rr64_thrash_options_input(rdram) &&
+                   rr64_thrash_options_navigation(rdram) == -1 &&
+                   rr64_thrash_options_table(0x8009EB4C) == 0x8009EB4C,
+               "options adapter is dormant during native character selection");
+    check_solo(memory == before_selector_memory && thrash_options() == before_selector_options,
+               "character selection input cannot mutate race options");
+    for (unsigned mode : {17u, 18u, 19u, 20u, 21u}) {
+        rr64_thrash_options_mode(mode);
+        check_solo(rr64_thrash_options_active(), "Thrash selector/race/results retain ownership");
+    }
+    // These are distinct preferences even while the solo selector is active.
+    set_thrash_options(512u | (6u << 6) | 10u);
+    const unsigned solo_preset = thrash_options();
+    for (unsigned invalid : {11u, 15u, 0x08000000u, 0xFFFFFFFFu}) {
+        set_thrash_options(invalid);
+        check_solo(thrash_options() == solo_preset, "invalid solo bits do not replace preset");
+    }
+    set_thrash_stock_options(4u | (3u << 3) | (2u << 5));
+    const unsigned solo_stock_preset = thrash_stock_options();
+    for (unsigned invalid : {5u, 7u, 128u, 0xFFFFFFFFu}) {
+        set_thrash_stock_options(invalid);
+        check_solo(thrash_stock_options() == solo_stock_preset,
+                   "invalid stock bits do not replace preset");
+    }
+    enter_thrash();
+    put(0x8009ECA0, 0); put(layout::menu_cursor, 3); put(layout::menu_buttons, 0);
+    put(0x8009EABC, 0); put(0x8009EAC4, 0); put(0x8009EAC8, 0);
+    rr64_thrash_options_input(rdram);
+    check_solo(get(0x8009EABC) == 4 && get(0x8009EAC4) == 3 && get(0x8009EAC8) == 2,
+               "reentering Thrash restores its independent stock settings");
+    put(0x8009EABC, 1); put(0x8009EAC4, 2); put(0x8009EAC8, 3); put(0x8009EACC, 1);
+    rr64_thrash_options_finish(rdram);
+    check_solo(thrash_stock_options() == (1u | (2u << 3) | (3u << 5)) &&
+                   ((thrash_options() >> 4) & 3u) == 1,
+               "finishing menu captures native stock choices in solo preset");
+    reset_online();
+    check_solo(online_options() == multiplayer_preset, "solo settings preserve multiplayer preset");
+    apply_online_options(3u | (2u << 6));
+    check_solo(thrash_options() == (solo_preset | 16u), "session settings preserve solo preset");
+
+    put(layout::humans, 1);
+    put(layout::menu_humans, 4); // Stale local multiplayer must not own this roster.
+    for (unsigned ai = 0; ai <= 10; ++ai) {
+        set_thrash_options(ai);
+        put(layout::racers, 99);
+        rr64_local_options_race(rdram);
+        check_solo(get(layout::racers) == ai + 1, "solo race uses exactly one human plus chosen AI");
+        check_solo(get(layout::humans) == 1 && get(layout::menu_humans) == 4,
+                   "solo race leaves human/controller ownership intact");
+        set_thrash_options(512u | ai);
+        put(layout::racers, 99);
+        rr64_local_options_race(rdram);
+        check_solo(get(layout::racers) == ai + 1 && rr64_custom_cop_active(),
+                   "custom cop supports every solo AI count");
+    }
+    for (unsigned choice = 0; choice <= 7; ++choice) {
+        set_thrash_options(choice << 6);
+        const unsigned expected_level = choice ? choice - 1 : 3;
+        check_solo(rr64_local_bike_menu_level(3) == expected_level,
+                   "every solo bike preset drives native selection preview");
+        rr64_local_options_race(rdram);
+        check_solo(rr64_local_bike_level(3) == expected_level,
+                   "every solo bike preset survives race initialization");
+    }
+    set_thrash_options(6u << 6);
+    rr64_local_options_race(rdram);
+    put(cop + 0x18, 23);
+    const unsigned solo_profile = rr64_local_bike_profile(rdram, cop, original);
+    check_solo(solo_profile != original && MEM_B(10, guest_address(solo_profile)) == 23 &&
+                   MEM_B(13, guest_address(solo_profile)) == 38,
+               "solo Scooter uses the stock donor bike and physics");
+    check_solo(MEM_B(11, guest_address(solo_profile)) == 11 &&
+                   MEM_B(14, guest_address(solo_profile)) == 14 &&
+                   MEM_B(10, guest_address(original)) == 10,
+               "solo bike substitution preserves rider stats and original profile");
+    put(cop + 0x18, 13); // Unmatched committed model must not turn into Scooter.
+    check_solo(rr64_local_bike_profile(rdram, cop, original) == original &&
+                   get(cop + 0x18) == 13, "no unrelated donor fallback");
+    set_thrash_options(512u | (6u << 6));
+    rr64_local_options_race(rdram);
+    put(cop + 0x18, 31);
+    const auto before_cop_profile = memory;
+    check_solo(rr64_local_bike_profile(rdram, cop, original) == original &&
+                   memory == before_cop_profile,
+               "special bike preset cannot replace committed solo police equipment");
+    for (unsigned allow_ai_cops : {0u, 1024u}) {
+        set_thrash_options(512u | 10u | allow_ai_cops);
+        rr64_local_options_race(rdram);
+        put(ai_pool + 5 * 4, 3); put(ai_pool + 7 * 4, 2); ai_context.r21 = 2;
+        rr64_custom_cop_ai_pool(rdram, &ai_context);
+        check_solo(get(ai_pool + 5 * 4) == (allow_ai_cops ? 3u : 5u) &&
+                       get(ai_pool + 7 * 4) == (allow_ai_cops ? 2u : 0u) &&
+                       ai_context.r21 == (allow_ai_cops ? 2u : 0u),
+                   "solo AI-cop preference governs only unreserved AI profiles");
+    }
+    // The appended cop choice follows the native single selector A66B0, even
+    // when every multiplayer cursor points to the opposite kind of bike.
+    set_thrash_options(512u | (6u << 6));
+    put(0x800A6690, 0);
+    put(0x800A66B8, 4);
+    put(0x800A66B8 + 5 * 4, 1); // Scooter effective tier has one stock bike.
+    put(0x800A77D8, 0);
+    for (unsigned count = 1; count <= 4; ++count) {
+        put(0x800A66B8 + 5 * 4, count);
+        for (unsigned slot = 0; slot < 4; ++slot)
+            put(0x8009EF3C + slot * 4, count);
+        put(0x800A66B0, 0);
+        check_solo(rr64_custom_cop_bike_entry(rdram, 0, 123) == 123,
+                   "stale multiplayer cop cursor cannot select solo cop bike");
+        for (unsigned slot = 0; slot < 4; ++slot)
+            put(0x8009EF3C + slot * 4, 0);
+        put(0x800A66B0, count);
+        check_solo(rr64_custom_cop_bike_entry(rdram, 0, 123) == 0x800A684C,
+                   "native solo cursor appends cop after effective tier");
+        check_solo(rr64_custom_cop_bike_count(count) == count + 1,
+                   "solo cop extends each valid bike-list length");
+        for (unsigned slot = 1; slot <= 4; ++slot)
+            check_solo(rr64_custom_cop_bike_entry(rdram, slot, 123) == 123,
+                       "solo cop entry is owned only by player zero");
+    }
+    for (unsigned invalid : {0u, 5u, 0xFFFFFFFFu}) {
+        put(0x800A66B8 + 5 * 4, invalid);
+        put(0x800A66B0, invalid);
+        check_solo(rr64_custom_cop_bike_entry(rdram, 0, 123) == 123,
+                   "invalid effective bike-list bounds reject appended entry");
+    }
+    put(0x800A66B8 + 5 * 4, 1);
+    put(0x800A66B0, 1);
+    check_solo(rr64_custom_cop_rider(rdram, 0, 0) == 40 &&
+                   rr64_custom_cop_rider(rdram, 0, 39) == 44,
+               "cop selection wraps both ends of native five-rider list");
+    for (unsigned slot = 0; slot < 4; ++slot) {
+        put(0x8009F660 + slot * 4, 31);
+        put(0x8009F400 + slot * 4, 44);
+        put(0x8009EF2C + slot * 4, 2);
+    }
+    // At 26F1C the native selector has committed F660/F400. The pending menu
+    // F670 value and stale multiplayer count/ready rows are not confirmation.
+    for (unsigned stale_humans : {0u, 1u, 4u, 0xFFFFFFFFu}) {
+        put(layout::menu_humans, stale_humans);
+        for (unsigned variant = 40; variant <= 44; ++variant) {
+            put(0x8009F660, 31); put(0x8009F400, variant); put(0x8009F670, 0);
+            const auto before = memory;
+            check_solo(rr64_custom_cop_rider(rdram, 0, variant) == variant,
+                       "all five native solo police profiles remain selectable");
+            check_solo(rr64_custom_cop_can_start(rdram) && rr64_custom_cop_confirm(rdram),
+                       "committed solo cop starts independently of multiplayer rows");
+            check_solo(memory == before, "successful solo selection checks never write guest memory");
+        }
+        for (const auto selection : {std::pair{0u, 40u}, std::pair{31u, 0u},
+                                    std::pair{31u, 39u}, std::pair{31u, 45u}}) {
+            put(0x8009F660, selection.first); put(0x8009F400, selection.second);
+            put(0x8009F670, 40); // A pending cop does not repair a non-cop commit.
+            const auto before = memory;
+            check_solo(!rr64_custom_cop_can_start(rdram) && !rr64_custom_cop_confirm(rdram),
+                       "cop bike and rider must both belong to the sole human");
+            check_solo(memory == before, "rejected solo start leaves multiplayer ready rows untouched");
+        }
+    }
+    put(0x800A66B0, 0);
+    check_solo(rr64_custom_cop_rider(rdram, 0, 44) == 0,
+               "locked police profile normalizes on an ordinary solo bike");
+    MEM_H(0, guest_address(0x800A77D8)) = 1;
+    check_solo(rr64_custom_cop_rider(rdram, 0, 44) == 44,
+               "existing native police unlock still applies on an ordinary bike");
+    check_solo(MEM_HU(0, guest_address(0x800A77D8)) == 1,
+               "selection preserves native unlock value");
+    put(0x800A77D8, 0);
+
+    // Role setup remains functional with local multiplayer disabled. A cop
+    // alone is free play, while a cop plus AI has the original arrest objective.
+    for (unsigned ai : {0u, 1u, 10u}) {
+        set_thrash_options(512u | ai);
+        put(layout::humans, 1); put(0x800A656C, ai + 1);
+        put(cop + 0x18, 31); put(cop + 0x1C, 40); put(cop + 4, 0);
+        put(cop + 8, 0); put(cop + 0x108, 0x12345678);
+        for (unsigned slot = 1; slot <= ai; ++slot)
+            put(cop + slot * 0x118 + 0x20, 5);
+        rr64_local_options_race(rdram);
+        rr64_custom_cop_roles(rdram);
+        put(0x800D764C, ai);
+        check_solo(rr64_custom_cop_active() && get(cop + 0x20) == 7,
+                   "solo selection becomes a native police role");
+        check_solo(get(cop + 4) == 0 && get(cop + 8) == 0 && get(cop + 0x108) == 0x12345678,
+                   "role setup preserves sole controller, viewport and profile");
+        check_solo(!rr64_custom_cop_finished(rdram), "zero-AI free play or unbusted AI does not finish");
+        check_solo(bool(rr64_custom_cop_arrest(rdram, cop, target)) == (ai != 0),
+                   "solo arrest requires an existing opposing racer");
+    }
+
+    // Leaving Thrash drops all custom ownership before any shared native race
+    // helper can see Big Game, demos, or another menu. No new unlocks, roster,
+    // selections, or profile changes are permitted in those contexts.
+    for (unsigned mode : {0u, 9u, 10u, 22u, 23u, 24u, 25u, 28u, 29u, 30u, 32u, 34u}) {
+        enter_thrash();
+        set_thrash_options(512u | (7u << 6) | 10u);
+        rr64_thrash_options_mode(mode);
+        put(globals::main_mode, mode);
+        put(layout::humans, 1); put(layout::racers, 6);
+        const auto before = memory;
+        check_solo(!rr64_thrash_options_active() && !rr64_custom_cop_enabled(),
+                   "campaign/demo/non-Thrash mode clears custom ownership");
+        rr64_local_options_race(rdram);
+        check_solo(!rr64_custom_cop_active() && rr64_custom_cop_can_start(rdram),
+                   "campaign/demo never require custom cop equipment");
+        check_solo(rr64_local_bike_menu_level(3) == 3 && rr64_local_bike_level(3) == 3 &&
+                       rr64_local_bike_profile(rdram, cop, original) == original,
+                   "campaign/demo preserve stock bike lists and profiles");
+        check_solo(rr64_custom_cop_bike_entry(rdram, 0, 123) == 123 &&
+                       rr64_custom_cop_rider(rdram, 0, 44) == 44,
+                   "campaign/demo preserve stock selection behavior");
+        check_solo(memory == before, "campaign/demo shared helpers do not write guest memory");
+    }
+    enter_thrash();
+    online = online_connected = true;
+    check_solo(!rr64_thrash_options_active(), "online session suppresses solo context");
+    rr64_thrash_options_mode(33);
+    online = online_connected = false;
+    check_solo(!rr64_thrash_options_active(), "online mode entry cannot arm a later offline context");
+    reset_online();
+    check_solo(online_options() == multiplayer_preset, "solo session leaves multiplayer preset unchanged");
+    // The music preference follows MK64 course changes, never pedestrian
+    // density. Retain historical bit assignments and host-only online edits.
+    unsigned all_music = 0;
+    for (auto id : music_courses) {
+        const unsigned bit = course_music_bit(id);
+        check_solo(bit && !(all_music & bit), "unique stable music preference bit");
+        all_music |= bit;
+        check_solo(valid_online_options(bit | 10u), "music option survives setup validator");
+    }
+    check_solo(all_music == 0x07FFF800u && !course_music_bit("stock"),
+               "all16 courses covered, unknown course rejected");
+    online = online_connected = online_host = true;
+    apply_online_options(512u | 1024u | 10u);
+    toggle_course_music("rainbow_road");
+    check_solo(course_music_enabled("rainbow_road") && course_music_enabled("mario_raceway"),
+               "music preference follows another course");
+    check_solo((online_options() & 2047u) == 1546u, "music preserves gameplay options");
+    const auto host_choices = online_options();
+    online_host = false;
+    toggle_course_music("rainbow_road");
+    check_solo(online_options() == host_choices, "guest cannot toggle host race music");
+    apply_online_options((host_choices & ~all_music) | course_music_bit("mario_raceway"));
+    check_solo(course_music_enabled("rainbow_road"), "legacy host music choice follows another course");
+    apply_online_options(0x08000000u);
+    check_solo(course_music_enabled("mario_raceway"), "invalid setup ignored");
+    online = online_connected = online_host = false;
+    enter_thrash();
+    const auto solo_before_music = thrash_options();
+    toggle_course_music("bowsers_castle");
+    check_solo(thrash_options() == (solo_before_music | course_music_mask),
+               "Thrash has independent music preferences");
+    rr64_thrash_options_mode(0);
+    reset_online();
+    check_solo(online_options() == multiplayer_preset, "solo and online music preserve local preset");
+    std::printf("Thrash regression checks: %u\n", solo_checks);
+    std::puts(ok ? "PASS local roster/menu, solo Thrash and online replay roaming" : "FAIL local race options");
     return ok ? 0 : 1;
 }

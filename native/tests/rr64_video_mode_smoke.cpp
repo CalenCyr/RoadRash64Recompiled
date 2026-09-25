@@ -63,6 +63,44 @@ int main() {
         check(std::abs((320.0f*scale/240.0f)-target)<0.00001f,"VI television viewport presents at 16:9");
     }
     check(RT64::RR64Video::sourceAspect(false,512u,240u)==512.0f/240.0f,"legacy renderer aspect is unchanged");
+    for (unsigned width : {320u, 512u, 640u}) {
+        check(RT64::RR64Video::adjustPairAspect(false, true, float(width), 240, 4.f/3.f,
+            width, width, 240), "native menu output uses VI pixel dimensions at every resolution");
+        check(!RT64::RR64Video::adjustPairAspect(false, true, float(width)/2, 240, 4.f/3.f,
+            width, width, 240), "partial menu pair is not a full output projection");
+        check(RT64::RR64Video::adjustPairAspect(true, false, float(width)/2, 120, 4.f/3.f,
+            width, width, 240), "live split-screen cameras keep their accepted projection");
+    }
+    check(!RT64::RR64Video::adjustPairAspect(false,false,512,240,4.f/3.f,512,512,240),
+        "legacy presentation comparison is retained");
+    check(!RT64::RR64Video::adjustPairAspect(false,true,512,240,4.f/3.f,512,640,240),
+        "unrelated framebuffer width keeps generic comparison");
+    check(!RT64::RR64Video::adjustPairAspect(false,true,640,0,4.f/3.f,640,640,240),
+        "empty pair cannot authorize aspect correction");
+    // Changing video size while retaining layout zero must invalidate the
+    // native region cache. Stable layouts must not disturb viewport/HUD state.
+    for (unsigned layout=0;layout<3;++layout) {
+        const unsigned columns=layout==2?2:1, rows=layout?2:1;
+        write_u32(m,0x8009db8cu+layout*4,columns);
+        write_u32(m,0x8009db98u+layout*4,rows);
+        write_u32(m,0x8009db80u,layout);
+        write_u32(m,0x800b0808u,320);write_u32(m,0x800b080cu,240);
+        write_u32(m,0x800b74a8u,320/columns);write_u32(m,0x800b74acu,240/rows);
+        write_u16(m,0x8009dba4u,0);
+        const auto stable=f.live;
+        check(!rr64::video::refresh_viewport_dimensions(m,layout) && stable==f.live,
+            "same-size single/split viewport caches remain byte-identical");
+        for (unsigned address:{0x800b0808u,0x800b080cu}) {
+            const unsigned original=read(address);
+            write_u32(m,address,original*2);
+            const auto before=f.live;
+            check(rr64::video::refresh_viewport_dimensions(m,layout),"size change invalidates native cached dimensions");
+            auto expected=before;
+            write_u16(expected.data(),0x8009dba4u,1);
+            check(expected==f.live,"refresh changes only the native cache-dirty flag");
+            write_u32(m,address,original);write_u16(m,0x8009dba4u,0);
+        }
+    }
     const std::array<float,16> identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
     auto model=identity;model[12]=1.6f;
     const std::array<float,3> low{-.01f,-.01f,-.01f},high{.01f,.01f,.01f};

@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
             rr64::netplay::host_commit_game_setup(setup);
         }
         if (status.phase == rr64::netplay::Phase::CharacterSelect || status.phase == rr64::netplay::Phase::TrackSelect) {
+            if (!rr64::netplay::acknowledge_course(status.game_setup.revision,status.game_setup.course)) return 8;
             rr64::online_flow::Selection selection{status.game_setup.revision,
                 unsigned(status.local_slot)+1, unsigned(status.local_slot)%4,1,
                 status.phase==rr64::netplay::Phase::TrackSelect ? 1u:0u};

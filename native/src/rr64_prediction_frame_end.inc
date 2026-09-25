@@ -44,6 +44,8 @@ bool replay_native_order(Resources &resources,const FrameInput &input){
     // Without an explicit seed, isolated_state would clone TODAY's live cop
     // state into this historical transaction on its first notification.
     if(!scope.valid() || !seed_cop_rules(input.rules))return fail_frame("order cop state unavailable");
+    if(!rr64::online_terrain::bind_replay(resources.memory(),resources.rom()))
+        return fail_frame("historical collision bank unavailable");
     struct Binding {
         Binding(Resources &r){frame_resources=&r;frame_blocks=2000000;}
         ~Binding(){frame_resources=nullptr;frame_blocks=0;}
@@ -78,6 +80,8 @@ bool replay_native_frame(Resources& resources,const FrameInput& input,FrameOutpu
     ReplayScope scope(input.session);
     if(!scope.valid() || !seed_cop_rules(input.rules) || !seed_cop_posts(input.posts) ||
        !seed_manual_eject(input.eject))return fail_frame("native shadow state unavailable");
+    if(!rr64::online_terrain::bind_replay(resources.memory(),resources.rom()))
+        return fail_frame("historical collision bank unavailable");
     std::uint16_t actor_ai=0;
     if(input.actor<0x800d8570u || (input.actor-0x800d8570u)%0x118u ||
        (input.actor-0x800d8570u)/0x118u>=14 ||

@@ -8,14 +8,147 @@
 #include <regex>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include "hle/rt64_rr64_frame_pacing.h"
+#include "hle/rt64_rr64_present_config.h"
+#include "common/rt64_timer.h"
 
 namespace {
 void require(bool condition, const char* message) {
     if (!condition) {
         std::cerr << "RR64 frame-pacing smoke failure: " << message << '\n';
         std::exit(EXIT_FAILURE);
+    }
+}
+
+std::string compactSource(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    require(input.is_open(), "the production source must be available for its wiring contract");
+    std::string source((std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    source = std::regex_replace(source,
+        std::regex(R"(//[^\r\n]*|/\*[\s\S]*?\*/)"), "");
+    source.erase(std::remove_if(source.begin(), source.end(),
+        [](unsigned char c) { return std::isspace(c) != 0; }), source.end());
+    return source;
+}
+
+std::size_t blockEnd(const std::string& source, std::size_t opening) {
+    require(opening < source.size() && source[opening] == '{',
+        "the source contract must identify an opening brace");
+    std::size_t depth = 1;
+    auto end = opening + 1;
+    while (end < source.size() && depth != 0) {
+        if (source[end] == '{') { ++depth; }
+        if (source[end] == '}') { --depth; }
+        ++end;
+    }
+    require(depth == 0, "the source contract must identify the complete block");
+    return end;
+}
+
+void verifyProductionVsyncRequest() {
+    const auto nativePath = std::filesystem::path(__FILE__).parent_path().parent_path();
+    const auto frontend = compactSource(nativePath /
+        "lib/RecompFrontend/recompui/src/renderer/rt64_render_context.cpp");
+    const auto update = frontend.find("renderer::RT64Context::update_config(");
+    require(update != std::string::npos, "runtime graphics configuration must be identifiable");
+    const auto updateOpen = frontend.find('{', update);
+    const auto updateBody = frontend.substr(updateOpen, blockEnd(frontend, updateOpen) - updateOpen);
+    const auto windowBlock = updateBody.find("if(window_mode_changed){");
+    require(windowBlock != std::string::npos,
+        "window changes must keep their separate swapchain synchronization block");
+    const auto windowOpen = updateBody.find('{', windowBlock);
+    const auto windowEnd = blockEnd(updateBody, windowOpen);
+    const auto windowBody = updateBody.substr(windowOpen, windowEnd - windowOpen);
+    require(windowBody.find("app->presentQueue->threadMutex") != std::string::npos &&
+        windowBody.find("app->setFullScreen(") != std::string::npos,
+        "window changes retain the present mutex around their native window mutation");
+    constexpr std::string_view request =
+        "app->presentQueue->requestVsync(new_config.vsync_enabled);";
+    const auto requestAt = updateBody.find(request);
+    require(requestAt != std::string::npos && requestAt >= windowEnd &&
+        updateBody.find(request, requestAt + request.size()) == std::string::npos &&
+        updateBody.find("setVsyncEnabled(") == std::string::npos,
+        "runtime VSync must enqueue once outside the window lock, without direct swapchain mutation");
+
+    const auto queue = compactSource(nativePath / "lib/rt64/src/hle/rt64_present_queue.cpp");
+    const auto loop = queue.find("voidPresentQueue::threadLoop(){");
+    require(loop != std::string::npos, "the presenter loop must be identifiable");
+    const auto loopOpen = queue.find('{', loop);
+    const auto loopBody = queue.substr(loopOpen, blockEnd(queue, loopOpen) - loopOpen);
+    const auto lock = loopBody.find("threadLock(threadMutex);");
+    const auto consume = loopBody.find(".consume(", lock);
+    const auto apply = loopBody.find("ext.swapChain->setVsyncEnabled(", consume);
+    const auto resize = loopBody.find("ext.swapChain->needsResize()", lock);
+    require(lock != std::string::npos && consume != std::string::npos &&
+        apply != std::string::npos && resize != std::string::npos &&
+        lock < consume && consume < apply && apply < resize,
+        "the presenter consumes and applies VSync under its mutex before checking for a Vulkan rebuild");
+    require(loopBody.substr(consume, apply - consume).find("isVsyncEnabled()") ==
+        std::string::npos,
+        "a request must update Vulkan's desired mode even if a delayed rebuild still reports the old mode");
+}
+
+void verifyPendingVsyncChanges() {
+    using RT64::RR64FramePacing::PendingVsyncChange;
+    PendingVsyncChange pending;
+    bool selected = true;
+    require(!pending.consume(selected) && selected,
+        "startup has no pending VSync request and must preserve the caller's value");
+    pending.request(false);
+    require(pending.consume(selected) && !selected,
+        "VSync off is a real request, not an empty sentinel");
+    require(!pending.consume(selected) && !selected,
+        "a consumed off request must not be replayed");
+    pending.request(true);
+    require(pending.consume(selected) && selected,
+        "VSync can be re-enabled after an earlier request was consumed");
+    pending.request(false);
+    pending.request(true);
+    pending.request(false);
+    require(pending.consume(selected) && !selected,
+        "rapid toggles apply only their latest pending state");
+    pending.request(true);
+    pending.reset();
+    require(!pending.consume(selected) && !selected,
+        "reset discards a pending change without changing the caller's value");
+
+    // Exercise overlapping stores/exchanges with bounded work. Coalescing is
+    // intentional, so intermediate requests need not all be observed. After
+    // joining the producer, however, its final request must either have been
+    // consumed already or still be pending; it cannot vanish in a clear race.
+    for (const bool finalSelection : {false, true}) {
+        pending.reset();
+        constexpr unsigned requests = 100'000;
+        bool applied = !finalSelection;
+        unsigned consumed = 0;
+        std::thread producer([&] {
+            for (unsigned index = 0; index < requests; ++index) {
+                pending.request((index & 1u) != 0);
+            }
+            pending.request(finalSelection);
+        });
+        for (unsigned attempt = 0; attempt < requests; ++attempt) {
+            bool value = applied;
+            if (pending.consume(value)) {
+                applied = value;
+                ++consumed;
+            }
+            else {
+                require(value == applied, "empty concurrent consume must not mutate its output");
+            }
+        }
+        producer.join();
+        if (pending.consume(applied)) { ++consumed; }
+        require(consumed > 0 && consumed <= requests + 1 && applied == finalSelection,
+            "concurrent coalescing must preserve the final posted VSync selection");
+        require(!pending.consume(applied) && applied == finalSelection,
+            "draining the final request leaves the mailbox empty without altering the selection");
+        pending.request(!finalSelection);
+        require(pending.consume(applied) && applied != finalSelection,
+            "a new request after consumption must remain independently deliverable");
     }
 }
 
@@ -64,7 +197,16 @@ void verifyProductionMatchingGate() {
 int main(int argc, char** argv) {
     using namespace RT64::RR64FramePacing;
 
+    static_assert(RT64::Timestamp::clock::is_steady);
+    const auto timerStart = RT64::Timer::current();
+    RT64::Timer::preciseSleepUntil(timerStart - std::chrono::seconds(1));
+    const auto timerAfter = RT64::Timer::current();
+    require(timerAfter >= timerStart, "presentation clock is monotonic");
+    require(RT64::Timer::deltaMicroseconds(timerStart, timerStart + std::chrono::milliseconds(3)) == 3000,
+        "presentation time deltas remain in microseconds");
     verifyProductionMatchingGate();
+    verifyProductionVsyncRequest();
+    verifyPendingVsyncChanges();
     require(!requiresFrameMatching(true, false, 60, 60) &&
         !requiresFrameMatching(true, false, 60, 0) &&
         !requiresFrameMatching(true, false, 30, 60) &&
@@ -148,6 +290,60 @@ int main(int argc, char** argv) {
     require(usePresentWait(true, true, true, false, false),
         "the disabled candidate retains the maintenance control wait");
 
+    // Full-rate FIFO must not wait on a second software clock. Preserve caps
+    // below refresh and the legacy comparison path, including startup.
+    for (uint32_t hz : {30u, 60u, 75u, 120u, 144u, 165u, 240u}) {
+        require(!useSoftwarePacing(true, false, true, true, hz, hz, 30, false),
+            "Vulkan FIFO at refresh has one clock from the first frame");
+        require(!useSoftwarePacing(true, false, true, true, hz * 2, hz, 30, true),
+            "Vulkan FIFO above refresh does not add software sleeps");
+        require(useSoftwarePacing(true, false, true, true, hz / 2, hz, 30, true),
+            "Vulkan lower frame cap is preserved");
+        require(useSoftwarePacing(true, false, true, false, hz, hz, 30, true),
+            "Vulkan immediate mode remains capped");
+        require(useSoftwarePacing(true, false, true, true, hz, 0, 30, true),
+            "unknown display rate retains software cap");
+        require(!useSoftwarePacing(true, true, false, true, hz, hz, 30, true),
+            "D3D12 VSync path unchanged");
+        require(useSoftwarePacing(true, true, false, false, hz, hz, 30, false),
+            "D3D12 tearing path remains capped on cold start");
+    }
+    require(!useSoftwarePacing(false, false, true, true, 60, 60, 60, true) &&
+        useSoftwarePacing(false, false, true, true, 120, 60, 60, true),
+        "disabled stable presentation retains legacy Vulkan timing");
+    require(!useSoftwarePacing(true, false, true, true, 0, 60, 30, true),
+        "native output does not invent a software cap");
+    require(waitBeforeSoftwarePacing(true, true) &&
+        !waitBeforeSoftwarePacing(false, true) && !waitBeforeSoftwarePacing(true, false),
+        "only stable Vulkan moves its queue throttle before the deadline");
+
+    for (bool stable : {false, true}) for (bool d3d : {false, true}) {
+        if (stable && !d3d) continue; // Only stable Vulkan intentionally changes.
+        for (bool vsync : {false, true}) for (bool previous : {false, true}) {
+            for (uint32_t target : {0u, 30u, 60u, 120u, 144u}) {
+                for (uint32_t source : {0u, 30u, 60u}) {
+                    const bool oldPolicy = !(d3d && vsync) && target > 0 &&
+                        (stable || (previous && target > source));
+                    require(useSoftwarePacing(stable, d3d, !d3d, vsync,
+                        target, 60, source, previous) == oldPolicy,
+                        "D3D12 and disabled stable control preserve previous pacing");
+                }
+            }
+        }
+    }
+
+    // A queue wait can consume the whole cap interval. It must be included in
+    // schedule(now) so a ready late image is submitted immediately, not delayed
+    // for another interval. No real display or claimed FPS gain is simulated.
+    for (int64_t queueWait : {0LL, 8'000'000LL, 16'666'667LL, 33'333'334LL, 100'000'000LL}) {
+        StableDeadlinePacer cap;
+        cap.schedule(0, 60);
+        const int64_t ready = 2'000'000 + queueWait;
+        const auto afterWait = cap.schedule(ready, 60);
+        require(afterWait.deadlineNanoseconds == std::max<int64_t>(16'666'666, ready),
+            "queue wait consumes cap budget without extra post-deadline wait");
+    }
+
     StableDeadlinePacer deadlinePacer;
     DeadlineDecision deadline = deadlinePacer.schedule(1'000'000'000LL, 60);
     require(deadline.deadlineNanoseconds == 1'000'000'000LL && deadline.rebased,
@@ -187,6 +383,56 @@ int main(int argc, char** argv) {
     deadline = deadlinePacer.schedule(10'003'000'000LL, 60);
     require(deadline.rebased && deadline.deadlineNanoseconds == 10'003'000'000LL,
         "disabling the target clock must reset its next activation");
+
+    // Tiny positive timer or submission errors are unavoidable. The previous
+    // implementation added each one to the next deadline, so even a constant
+    // 1 us error accumulated 36 ms of phase drift in ten minutes at 60 Hz.
+    // Exercise both pre-schedule readiness and post-sleep submission jitter,
+    // including varying errors, instead of only exact wakes and large stalls.
+    for (uint32_t rate : {30u, 60u, 120u, 144u, 240u, 1000u}) {
+        const int64_t period = 1'000'000'000LL / rate;
+        const int64_t maximumJitter = std::min<int64_t>(100'000, period / 200);
+        for (bool jitterBeforeSchedule : {false, true}) {
+            StableDeadlinePacer jitterPacer;
+            constexpr int64_t initialPhase = 4'000'000;
+            int64_t previousActual = initialPhase;
+            for (uint64_t frame = 0; frame <= 36'000; ++frame) {
+                const int64_t idealDeadline = initialPhase + int64_t(frame) * period;
+                const int64_t jitter = int64_t((frame * 13u) % 17u) * maximumJitter / 16;
+                const int64_t ready = frame == 0 ? initialPhase :
+                    (jitterBeforeSchedule ? idealDeadline + jitter : previousActual + period / 4);
+                const auto scheduled = jitterPacer.schedule(ready, rate);
+                const int64_t actual = std::max(ready, scheduled.deadlineNanoseconds) +
+                    (jitterBeforeSchedule ? 0 : jitter);
+                jitterPacer.recordPresent(actual);
+                require(scheduled.deadlineNanoseconds == idealDeadline,
+                    "bounded readiness/wake jitter must not accumulate into the deadline phase");
+                require(frame == 0 || !scheduled.rebased,
+                    "bounded scheduler jitter must not rebase the stable phase");
+                require(actual - idealDeadline <= maximumJitter,
+                    "actual presentation phase error must remain bounded over a long run");
+                if (frame > 0) {
+                    require((actual - previousActual) * 100 >= period * 99 &&
+                        actual - previousActual >= period - 250'000,
+                        "phase recovery must retain at least 99% of a frame interval and recover at most 250 us");
+                }
+                previousActual = actual;
+            }
+        }
+
+        for (bool missBeforeSchedule : {false, true}) {
+            StableDeadlinePacer stallPacer;
+            stallPacer.schedule(0, rate);
+            stallPacer.recordPresent(0);
+            const int64_t stalledPresent = period + 1'000'000;
+            const auto stalled = stallPacer.schedule(missBeforeSchedule ? stalledPresent : period / 4, rate);
+            stallPacer.recordPresent(stalledPresent);
+            const auto resumed = stallPacer.schedule(stalledPresent + period / 4, rate);
+            require(stalled.rebased == missBeforeSchedule &&
+                resumed.deadlineNanoseconds == stalledPresent + period,
+                "a real readiness/wake delay must discard debt and leave a full following interval");
+        }
+    }
 
     // Exercise the host deadline stream for 24 hours at 60 Hz. Inject a
     // scheduler miss once a minute and prove that the following deadline is a

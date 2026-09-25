@@ -34,7 +34,7 @@ class MovementCorrection {
                vector(body+0x10c,s.rotation) && add(body+0x60,s.flags,2);
     }
     bool pair(unsigned actor,const netplay::RiderState &s,const authority::RiderDynamics &d){
-        if(!s.root.valid || !s.rider_position_valid || !authority::valid_dynamics(d))return false;
+        if(!s.root.valid || !s.rider_position_valid || s.root.vault_latch>3 || !authority::valid_dynamics(d))return false;
         unsigned bike=0,rider=0,owner=0,model=0,character=0;
         std::uint16_t active=0;
         if(!engine::read_u16(mapping_,actor+0x24,active) || !active ||
@@ -64,6 +64,7 @@ class MovementCorrection {
            !number(bike+engine::bike::durability_current,r.durability) ||
            !number(bike+engine::bike::durability_capacity,r.durability_capacity) ||
            !add(bike+engine::bike::drive_control_lockout,r.drive_lockout,2) ||
+           !add(bike+0x818,r.vault_latch,2) ||
            !add(bike+engine::bike::rider_attached,r.bike_attached,2) ||
            !add(rider+engine::rider::bike_attached,r.rider_attached,2) ||
            !add(rider+engine::rider::ejected,r.ejected,2))return false;

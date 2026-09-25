@@ -1,4 +1,6 @@
 #include "rr64_local_race_options.hpp"
+#include "rr64_offline_modifiers.hpp"
+#include "rr64_thrash_options.hpp"
 #include "rr64_custom_cop.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_local_players.hpp"
@@ -8,6 +10,7 @@
 #include <atomic>
 #include <fstream>
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cmath>
 
@@ -16,20 +19,32 @@ using namespace rr64::engine;
 namespace layout = rr64::engine::local_race;
 std::atomic<unsigned> saved{0}, revision{0};
 std::atomic<unsigned> online_saved{0};
+std::atomic<unsigned> solo_saved{10}, solo_revision{0};
+std::atomic<unsigned> solo_stock{rr64::local_race_options::unknown_thrash_stock};
 unsigned choices() {
-    return rr64::netplay::get_status().active ? online_saved.load(std::memory_order_acquire)
-                                              : saved.load(std::memory_order_acquire);
+    if (rr64::netplay::get_status().active)
+        return online_saved.load(std::memory_order_acquire);
+    return rr64_thrash_options_active() ? solo_saved.load(std::memory_order_acquire)
+                                       : saved.load(std::memory_order_acquire);
 }
 unsigned written_revision = 0;
+unsigned solo_written_revision = 0;
 std::filesystem::path settings_path;
+std::filesystem::path solo_settings_path;
 bool initialized = false, menu_active = false, restore_choices = true;
 // Packed preferences: AI count [0:3], pedestrian density [4:5], bike choice
 // [6:8], Custom Cop Mode [9], allow AI cops [10] (off for old presets). Bike choice 0 follows the
-// track; 1..7 use stock indices 0..6.
+// track; 1..5 are normal tiers, 6 is Scooter and 7 is Insanity.
 unsigned race_bike_choice = 0;
+unsigned char* bike_profile_owner = nullptr;
+unsigned bike_profile_copies = 0;
 void save(unsigned bits) {
     if (rr64::netplay::get_status().active) {
         online_saved.store(bits, std::memory_order_release);
+        return;
+    }
+    if (rr64_thrash_options_active()) {
+        rr64::local_race_options::set_thrash_options(bits);
         return;
     }
     if (saved.exchange(bits, std::memory_order_acq_rel) != bits)
@@ -58,9 +73,12 @@ bool local() {
     const auto status = rr64::netplay::get_status();
     if (status.active)
         return status.connected && !status.replicated_riders;
-    return rr64::local_players::active.load(std::memory_order_acquire);
+    return rr64_thrash_options_active() ||
+           rr64::local_players::active.load(std::memory_order_acquire);
 }
 unsigned menu_humans(unsigned char *rdram) {
+    if (rr64_thrash_options_active())
+        return 1;
     const unsigned count = read(rdram, layout::menu_humans);
     return count >= 1 && count <= 4 ? count : read(rdram, layout::humans);
 }
@@ -106,6 +124,28 @@ bool make_table(unsigned char *rdram) {
 } // namespace
 
 namespace rr64::local_race_options {
+bool course_music_enabled(std::string_view course) {
+    return course_music_bit(course) != 0 && (choices() & course_music_mask) != 0;
+}
+void toggle_course_music(std::string_view course) {
+    const auto status = netplay::get_status();
+    if (status.active && !status.is_host) return;
+    if (!course_music_bit(course)) return;
+    const auto bits = choices();
+    // Keep the preference across race selection and race teardown. Retain the
+    // existing solo/local/session ownership and all unrelated gameplay bits.
+    save((bits & course_music_mask) ? bits & ~course_music_mask : bits | course_music_mask);
+}
+unsigned thrash_options() { return solo_saved.load(std::memory_order_acquire); }
+void set_thrash_options(unsigned bits) {
+    if (valid_online_options(bits) && solo_saved.exchange(bits, std::memory_order_acq_rel) != bits)
+        solo_revision.fetch_add(1, std::memory_order_release);
+}
+unsigned thrash_stock_options() { return solo_stock.load(std::memory_order_acquire); }
+void set_thrash_stock_options(unsigned bits) {
+    if (valid_thrash_stock(bits) && solo_stock.exchange(bits, std::memory_order_acq_rel) != bits)
+        solo_revision.fetch_add(1, std::memory_order_release);
+}
 void reset_online() {
     online_saved.store(saved.load(std::memory_order_acquire), std::memory_order_release);
     restore_choices = true;
@@ -120,6 +160,17 @@ void initialize(const std::filesystem::path &directory) {
         return;
     initialized = true;
     settings_path = directory / "local-race-options.cfg";
+    solo_settings_path = directory / "thrash-race-options.cfg";
+    {
+        unsigned version = 0, bits = 0, stock = unknown_thrash_stock;
+        std::ifstream solo_file(solo_settings_path);
+        if (solo_file >> version >> bits >> stock && (version == 1 || version == 2) &&
+            (version != 1 || bits <= 2047u) && valid_online_options(bits) &&
+            (valid_thrash_stock(stock) || stock == unknown_thrash_stock)) {
+            solo_saved.store(bits, std::memory_order_release);
+            solo_stock.store(stock, std::memory_order_release);
+        }
+    }
     unsigned version = 0, bits = 0;
     std::ifstream file(settings_path);
     if (file >> version >> bits) {
@@ -127,21 +178,32 @@ void initialize(const std::filesystem::path &directory) {
             // Preserve the old Off/full-field and Match Track/Level 1 choices.
             saved.store((bits & 1 ? 10u : 0u) | (((bits >> 1) & 3) << 4) | ((bits & 8) ? 64u : 0u));
             revision.fetch_add(1);
-        } else if ((version == 2 || version == 3 || version == 4) &&
+        } else if ((version == 2 || version == 3 || version == 4 || version == 5) &&
                    bits <= (version == 2   ? 511u
                             : version == 3 ? 1023u
-                                           : 2047u) &&
+                            : version == 4 ? 2047u : 0x07FFFFFFu) &&
                    (bits & 15) <= 10) {
             saved.store(bits);
         }
     }
 }
 void flush() {
+    if (!initialized)
+        return;
+    const unsigned solo_current = solo_revision.load(std::memory_order_acquire);
+    if (solo_current != solo_written_revision) {
+        std::ofstream file(solo_settings_path, std::ios::trunc);
+        file << "2 " << solo_saved.load(std::memory_order_acquire) << ' '
+             << solo_stock.load(std::memory_order_acquire) << '\n';
+        file.close();
+        if (file)
+            solo_written_revision = solo_current;
+    }
     const unsigned current = revision.load(std::memory_order_acquire);
     if (!initialized || current == written_revision)
         return;
     std::ofstream file(settings_path, std::ios::trunc);
-    file << "4 " << saved.load(std::memory_order_acquire) << '\n';
+    file << "5 " << saved.load(std::memory_order_acquire) << '\n';
     file.close();
     if (file)
         written_revision = current;
@@ -193,7 +255,9 @@ extern "C" void rr64_local_options_menu_begin(unsigned char *rdram) {
     if (read(rdram, globals::multiplayer_stage) != 1)
         restore_choices = true;
 }
-extern "C" int rr64_custom_cop_enabled() { return local() && (choices() & 512u); }
+extern "C" int rr64_custom_cop_enabled() {
+    return local() && (choices() & 512u);
+}
 // Native 516B8 has already reserved human profiles at this point. Its remaining
 // category counts at sp+70 drive AI profile selection, including police (7).
 // Replace that category with regular racers before models/physics are built;
@@ -224,6 +288,12 @@ extern "C" void rr64_custom_cop_ai_pool(unsigned char *rdram, void *context) {
 extern "C" void rr64_local_options_reset_race() {
     race_bike_choice = 0;
     rr64_custom_cop_reset();
+}
+extern "C" void rr64_local_bike_profiles_reset() {
+    // Called once at ROM initialization, including a reused RDRAM mapping.
+    // The runtime owns heap teardown; no pointer from the old heap survives.
+    bike_profile_owner = nullptr;
+    bike_profile_copies = 0;
 }
 extern "C" int rr64_local_options_input(unsigned char *rdram) {
     menu_active = local() && make_table(rdram);
@@ -339,8 +409,88 @@ extern "C" void rr64_local_options_race(unsigned char *rdram) {
     race_bike_choice = (bits >> 6) & 7;
     restore_choices = true;
 }
+// Thrash's legacy density menu can select twelve racers. Replace that count
+// before the native police-capacity calculation, and again before allocation.
+// At most eleven race entrants plus three AI police fit the fourteen actors.
+extern "C" void rr64_local_options_thrash_roster(unsigned char *rdram) {
+    if (!rdram || !rr64_thrash_options_active())
+        return;
+    const unsigned bits = rr64::local_race_options::thrash_options();
+    const unsigned racers = 1 + ai_count(bits, 1);
+    unsigned police = std::min(read(rdram, 0x8009EAC8), 3u);
+    if ((bits & 512u) && !(bits & 1024u))
+        police = 0;
+    write(rdram, layout::racers, racers);
+    write(rdram, 0x800A6570, police);
+}
+extern "C" void rr64_local_options_thrash_race(unsigned char *rdram) {
+    if (!rdram || !rr64_thrash_options_active())
+        return;
+    // 6C414 reads the roster before it writes its own human count. Do not let
+    // a prior split-screen session choose this race's human mask or allocation.
+    write(rdram, layout::humans, 1);
+    rr64_local_options_race(rdram);
+    rr64_local_options_thrash_roster(rdram);
+}
 extern "C" unsigned rr64_local_bike_level(unsigned original) {
     return race_bike_choice && local() ? race_bike_choice - 1 : original;
+}
+
+extern "C" unsigned rr64_local_bike_menu_level(unsigned original) {
+    // Selection happens before race initialization takes its settings snapshot.
+    // Change only the bike-list index, never the map level or permanent unlocks.
+    const unsigned choice = (choices() >> 6) & 7;
+    return choice && local() ? choice - 1 : original;
+}
+
+extern "C" void rr64_local_bike_ai_pool(unsigned char *rdram, void *context) {
+    if (!context || !local() || (!race_bike_choice && !rr64_custom_cop_active()))
+        return;
+    auto &c = *static_cast<recomp_context *>(context);
+    const unsigned stack = static_cast<unsigned>(c.r29);
+    if (!valid_guest_range(stack + 0x48, 0x50))
+        return;
+
+    // Native 516B8 has now built the actual tier's donor lists. Track templates
+    // can still request an absent family: Insanity has no family 2, Scooter no
+    // family 4. Custom Cop's general groups (5/6/8) also need concrete donors.
+    // A positive demand with zero donors otherwise selects [0, -1] and hands
+    // native 51E24 a null profile. Redirect only unsupported demands, before
+    // stock RNG, speed ordering and actor construction use the lists.
+    std::array<unsigned, 9> available{}, demand{};
+    unsigned total = 0;
+    for (unsigned family = 0; family < available.size(); ++family) {
+        available[family] = read(rdram, stack + 0x48 + family * 4);
+        demand[family] = read(rdram, stack + 0x70 + family * 4);
+        if (available[family] > 15 || demand[family] > kMaximumRacers)
+            return;
+        total += demand[family];
+    }
+    if (total > kMaximumRacers)
+        return;
+    unsigned fallback = 0;
+    for (unsigned family : {1u, 2u, 3u, 4u})
+        if (available[family]) {
+            fallback = family;
+            break;
+        }
+    if (!fallback)
+        return;
+    for (unsigned family = 1; family < demand.size(); ++family) {
+        if (!demand[family] || available[family])
+            continue;
+        // Keep light/heavy family preferences used by the native human
+        // reservation code. Never turn a regular racer into an AI cop.
+        const unsigned first = family == 3 || family == 4 || family == 6 ? 3 : 1;
+        const unsigned recipient = available[first] ? first
+                                   : available[first + 1] ? first + 1 : fallback;
+        demand[recipient] += demand[family];
+        if (family == 7)
+            c.r21 = 0; // No police donors: exclude them from the speed partition.
+        demand[family] = 0;
+    }
+    for (unsigned family = 1; family < demand.size(); ++family)
+        write(rdram, stack + 0x70 + family * 4, demand[family]);
 }
 
 // The first four profile records are mutable human selections. Keep their
@@ -353,8 +503,18 @@ extern "C" unsigned rr64_local_bike_profile(unsigned char *rdram, unsigned racer
     const unsigned offset = racer - 0x800D8570u;
     if (offset % 0x118 || offset / 0x118 >= 4 || !valid_guest_range(profile, 16))
         return profile;
+    if (rr64::offline_modifiers::enabled(rr64::offline_modifiers::Flag::AllBikes) &&
+        MEM_HU(0x26, guest_address(racer)) == 0 && read(rdram, racer + 8) < 4)
+        return profile; // Retain the human's selected model and native physics profile.
     if (rr64_custom_cop_active() && read(rdram, racer + 0x18) == 31)
         return profile;
+    // 6CB8C has already committed the menu/network choice to actor+18.
+    // 6CF60 copies that choice to the mutable profile only AFTER this hook
+    // returns (6D0AC..6D0B0). Its old byte10 can name a previous race's bike;
+    // matching against that byte silently replaces the current selection with
+    // the first donor in the chosen tier. This ordering applies to stock and
+    // imported tracks alike. Never substitute an unrelated model as fallback.
+    const unsigned selected_bike = read(rdram, racer + 0x18);
     unsigned donor = 0;
     for (unsigned i = 4; i < 160; ++i) {
         const unsigned entry = 0x800A3460u + i * 16;
@@ -363,9 +523,7 @@ extern "C" unsigned rr64_local_bike_profile(unsigned char *rdram, unsigned racer
             break;
         if (tier != race_bike_choice || MEM_B(9, guest_address(entry)) == 7)
             continue;
-        if (!donor)
-            donor = entry;
-        if (MEM_B(10, guest_address(entry)) == MEM_B(10, guest_address(profile))) {
+        if (static_cast<unsigned char>(MEM_B(10, guest_address(entry))) == selected_bike) {
             donor = entry;
             break;
         }
@@ -375,19 +533,17 @@ extern "C" unsigned rr64_local_bike_profile(unsigned char *rdram, unsigned racer
     if (profile < 0x800A3460u || profile >= 0x800A34A0u)
         return profile;
     // Keep the original selection intact for Match Track and later races.
-    static unsigned char *owner = nullptr;
-    static unsigned copies = 0;
-    if (owner != rdram) {
-        owner = rdram;
-        copies = 0;
+    if (bike_profile_owner != rdram) {
+        bike_profile_owner = rdram;
+        bike_profile_copies = 0;
     }
-    if (!copies) {
+    if (!bike_profile_copies) {
         auto *host = static_cast<unsigned char *>(recomp::alloc(rdram, 4 * 16));
         if (!host)
             return profile;
-        copies = 0x80000000u + static_cast<unsigned>(host - rdram);
+        bike_profile_copies = 0x80000000u + static_cast<unsigned>(host - rdram);
     }
-    const unsigned copy = copies + offset / 0x118 * 16;
+    const unsigned copy = bike_profile_copies + offset / 0x118 * 16;
     for (unsigned i = 0; i < 16; i += 4)
         write(rdram, copy + i, read(rdram, profile + i));
     MEM_B(10, guest_address(copy)) = MEM_B(10, guest_address(donor));

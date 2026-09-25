@@ -18,9 +18,9 @@ inline constexpr std::uint32_t kMaximumRacers = 14u;
 inline constexpr std::uint32_t kModeRecordCount = 0x3Au;
 inline constexpr std::uint32_t kModeRecordSize = 0x18u;
 
-// Combat assist credit addresses the statistics block of a racer record.
-// A recent-hit timer alone does not prove its previous-attacker pointer is
-// initialized. Never turn a null/sentinel attribution into a statistics write.
+// Combat assist and scenery-break credit address a racer's statistics block.
+// A recent-hit timer or a loose bike does not prove its previous-attacker
+// pointer is initialized. Skip missing credit; retain the collision effects.
 constexpr bool valid_combat_statistics(std::uint32_t address) {
     constexpr std::uint32_t first = 0x800D8570u + 0x2Cu;
     return address >= first && (address - first) % 0x118u == 0 &&
@@ -40,6 +40,17 @@ inline constexpr std::uint32_t ai_choice = 0x8009EAD4u;
 inline constexpr std::uint32_t pedestrian_choice = 0x8009EAE0u;
 inline constexpr std::uint32_t humans = 0x800A6578u;
 inline constexpr std::uint32_t racers = 0x800A6574u;
+}
+
+// Native 597A0 initializes thirteen cached effects per racer. 5980C expires
+// only the first five sustained race sounds: engine, brakes, body sliding,
+// surface scraping and siren. The later impact/voice slots are independent.
+namespace racer_audio {
+inline constexpr std::uint32_t cache = 0x800D5C70u;
+inline constexpr std::uint32_t row_stride = 0xD0u;
+inline constexpr std::uint32_t entry_stride = 0x10u;
+inline constexpr std::uint32_t loop_slot_count = 5u;
+inline constexpr std::uint32_t unused_handle = 0xFFFFFFFFu;
 }
 
 constexpr gpr guest_address(std::uint32_t address) {

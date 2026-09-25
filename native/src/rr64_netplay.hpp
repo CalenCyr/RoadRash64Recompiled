@@ -7,12 +7,15 @@
 #include <string>
 #include <vector>
 #include "rr64_online_flow.hpp"
+#include "rr64_race_pack_identity.hpp"
+#include "rr64_course_hazard_state.hpp"
 #include "rr64_world_sync.hpp"
 #include "rr64_attack_visual.hpp"
 #include "rr64_authoritative_round.hpp"
 #include "rr64_authoritative_timing.hpp"
 #include "rr64_authoritative_outcome.hpp"
 #include "rr64_authoritative_dynamics.hpp"
+#include "rr64_highlight_network.hpp"
 
 namespace rr64::netplay {
 
@@ -55,6 +58,7 @@ struct GameSetupState {
     std::uint32_t random_seed = 0;
     std::uint32_t start_requested = 0;
     std::array<std::uint32_t, kGameSetupWordCount> words{};
+    race_pack::Identity course{};
 
     bool operator==(const GameSetupState &) const = default;
 };
@@ -71,6 +75,7 @@ struct Config {
 
 struct PlayerInfo {
     online_flow::Selection selection{};
+    race_pack::Compatibility course_compatibility = race_pack::Compatibility::Pending;
     bool connected = false;
     bool ready = false;
     std::uint8_t slot = kInvalidSlot;
@@ -83,7 +88,10 @@ struct PlayerInfo {
 // Explicit pointer-free visual-root state, captured with the positions at one tick.
 struct RiderRootState {
     AttackVisual attack{};
-    std::uint32_t valid = 0;
+    std::uint16_t valid = 0;
+    // Native bike +818: 4CBFC starts a vault; 63264 advances 1 -> 2 -> 3 -> 0.
+    // Shares the former 32-bit validity slot to preserve the UDP packet budget.
+    std::uint16_t vault_latch = 0;
     std::array<float, 4> bike_rotation{}, rider_rotation{};
     // Alternate bike graph builder 5E880 uses these instead of the quaternion.
     std::array<float, 3> bike_display_angles{}; // +21C, +4AC, +4B8
@@ -145,6 +153,13 @@ struct ReceivedVoiceFrame {
 };
 
 // Internal simulation integration API; not a launcher setting.
+bool acknowledge_course(std::uint32_t revision, const race_pack::Identity& course);
+// A pre-race content failure revokes this round's ACK without leaving the lobby.
+bool report_course_compatibility(std::uint32_t revision, const race_pack::Identity& course,
+                                 race_pack::Compatibility compatibility);
+const char* course_compatibility_message(race_pack::Compatibility compatibility) noexcept;
+// Legacy caller convenience; preserves the connection and reports Different.
+void reject_course_setup(const char *reason);
 bool authority_start();
 // Native race initialization calls this while its update is still held. Host
 // releases only after every race participant has acknowledged this round.
@@ -153,12 +168,71 @@ bool authority_race_gate(bool native_loaded);
 // no transition; the game dispatcher still owns teardown and initialization.
 bool authority_set_finish_mode(unsigned mode);
 unsigned authority_finish_mode();
+// Post-race presentation only. The canonical final simulation/results stay frozen.
+bool publish_highlight_playlist(highlight_network::Blob, std::uint64_t duration_us);
+std::optional<highlight_network::Blob> take_received_highlight_playlist();
+void acknowledge_highlight_decoded(bool accepted);
+highlight_network::Status highlight_status();
+bool host_begin_highlights();
+bool host_skip_highlights();
 // End a failed authority session without falling back into local simulation.
 void authority_fail(const char *reason);
 bool authority_queue_input(std::uint16_t buttons,std::int8_t x,std::int8_t y);
 bool authority_queue_input_recorded(std::uint16_t buttons,std::int8_t x,std::int8_t y,authority::Command &accepted,std::uint8_t actions=0);
 bool authority_begin_step(authority::Step &step);
 bool authority_finish_step(std::uint64_t tick,authority::Stamp &stamp);
+// Imported item placements are immutable course data. Only their host-owned
+// clock, cooldowns and break generations travel with a completed race tick.
+// Rewards use the existing rider inventory/selection snapshot, never events
+// that a duplicated packet could award twice.
+constexpr unsigned kMaximumCourseItems = 64;
+constexpr unsigned kCourseItemCooldown = 90; // Deliberate 3s adaptation at30Hz.
+constexpr unsigned kCourseRouletteTicks = 48;
+constexpr unsigned kCourseRewardBlinkTicks = 30;
+// Item rewards have their own IDs. 15/16 are power-ups, never native weapon
+// inventory indices; only the weapon subset may reach the weapon dispatcher.
+constexpr unsigned kCourseRewardAttackX2 = 15, kCourseRewardAttackX4 = 16;
+constexpr bool is_course_weapon_reward(unsigned reward) noexcept {
+    return reward >= 2 && reward <= 14;
+}
+constexpr bool valid_course_reward(unsigned reward) noexcept {
+    return is_course_weapon_reward(reward) || reward == kCourseRewardAttackX2 ||
+           reward == kCourseRewardAttackX4;
+}
+constexpr unsigned course_reward_effect(unsigned reward) noexcept {
+    return reward == kCourseRewardAttackX2 ? 1u : reward == kCourseRewardAttackX4 ? 2u : 0u;
+}
+// The host chooses once on contact and grants once when the scroll completes.
+// This travels in the same complete tick as inventories, never as a replayable
+// reward command. Phase:0 inactive,1 scrolling,2 granted/blinking.
+struct CourseWeaponRoll {
+    std::uint32_t generation = 0, start_clock = 0;
+    std::uint16_t weapon = 0, phase = 0; // Reward ID; retained wire field name/layout.
+    bool operator==(const CourseWeaponRoll &) const = default;
+};
+struct CourseItemState {
+    std::uint32_t clock = 0;
+    std::uint16_t count = 0;
+    std::array<std::uint16_t,kMaximumCourseItems> cooldown{};
+    std::array<std::uint32_t,kMaximumCourseItems> generation{};
+    std::array<CourseWeaponRoll,kMaximumPlayers> roulette{};
+    bool operator==(const CourseItemState &) const = default;
+};
+inline bool valid_course_item_state(const CourseItemState &state) noexcept {
+    if(state.count>kMaximumCourseItems || (!state.count && state.clock))return false;
+    for(unsigned i=0;i<kMaximumCourseItems;++i)
+        if(state.cooldown[i]>kCourseItemCooldown ||
+           (i>=state.count && (state.cooldown[i] || state.generation[i])))return false;
+    for (const auto &roll : state.roulette) {
+        if (roll.phase > 2 || (!state.count && roll.generation) ||
+            (roll.phase && (!roll.generation || !valid_course_reward(roll.weapon) ||
+                            roll.start_clock > state.clock)) ||
+            (!roll.phase && (roll.weapon || roll.start_clock)) ||
+            (roll.phase == 2 && state.clock - roll.start_clock < kCourseRouletteTicks))
+            return false;
+    }
+    return true;
+}
 struct AuthorityFrame {
     authority::Stamp stamp{};
     authority::NativeTiming timing{};
@@ -168,6 +242,8 @@ struct AuthorityFrame {
     std::array<world_sync::Traffic,world_sync::capacity> traffic{};
     std::uint32_t cop_mode=0;
     float cop_win_age=-1;
+    CourseItemState course_items{};
+    CourseHazardState course_hazards{};
 };
 // Publication is allowed only for the last completed host step. Reading a
 // snapshot does not discard predicted inputs; reconciliation must do that.
@@ -212,6 +288,16 @@ void shutdown();
 void update();
 
 Status get_status();
+// Allocation-free ownership view for per-body native physics. UI strings and
+// roster presentation remain in get_status(); both read the same session lock.
+struct PhysicsRules {
+    bool active = false, connected = false, authoritative = false, is_host = false;
+    bool replicated_riders = false;
+    std::uint8_t local_slot = kInvalidSlot;
+    std::uint32_t authority_humans = 0;
+    Phase phase = Phase::Offline;
+};
+PhysicsRules get_physics_rules();
 bool set_ready(bool ready);
 bool set_character(std::uint8_t character);
 bool set_track(std::uint8_t track);

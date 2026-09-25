@@ -88,6 +88,7 @@ public:
     }
     unsigned char* memory(){return image_.data();}
     const auto& image()const{return image_;}
+    std::span<const unsigned char> rom()const noexcept{return rom_;}
     void validate_worker(std::uint32_t stack_top) {
         auto inventory=ResourceInventory::inspect(memory());
         if(!inventory.can_start_worker() || !engine::valid_guest_range(stack_top-256,256))

@@ -1,3 +1,6 @@
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_experimental_course.hpp"
+#endif
 #include "rr64_world_packet_compiler.hpp"
 #include "rr64_world_object_assets.hpp"
 
@@ -358,7 +361,11 @@ struct ModelBuilder {
 };
 
 void build(const Reader &rom, ObjectAssets &out, bool batch_triangles) {
-    require(rom.bytes.size() == 0x2000000u && rom.word(0) == 0x80371240u,
+    require((rom.bytes.size() == 0x2000000u
+#ifdef RR64_EXPERIMENTAL_COURSE
+             || (rr64::experimental_course::installed() && rom.bytes.size()>0x2000000u && rom.bytes.size()<=0x4000000u)
+#endif
+             ) && rom.word(0) == 0x80371240u,
             "object cache needs the supported big-endian 32MiB ROM");
     require(rom.word(model_table) == 0x40u && rom.word(model_table + 0xcu) == model_count &&
                 rom.word(placement_table) == 0x48u && rom.word(placement_table + 0xcu) == 70u &&

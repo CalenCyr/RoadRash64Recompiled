@@ -1,6 +1,10 @@
 #include "rr64_world_camera.hpp"
 #include "rr64_world_render.hpp"
 #include "rr64_actor_render_snapshot.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_experimental_course.hpp"
+#include "rr64_prediction_replay.hpp"
+#endif
 #include <cmath>
 
 namespace {
@@ -18,6 +22,42 @@ bool camera(unsigned char *m, const recomp_context *c, unsigned &view, unsigned 
     slot = unsigned(c->r22);
     return source < 3u && slot < 2u && rr64::engine::read_u32(m, 0x8009db84u, view) && view < 4u;
 }
+}
+extern "C" int rr64_world_camera_open_gap(unsigned char *m, void *context) {
+#ifdef RR64_EXPERIMENTAL_COURSE
+    auto *c = static_cast<recomp_context *>(context);
+    if (!m || !c || !rr64::experimental_course::active() || rr64::prediction::active())
+        return 0;
+    const auto *route = rr64::experimental_course::route_data();
+    if (!route || !route->delayed_fall_recovery)
+        return 0;
+    // 5D9A4 reaches 5E2A0 only when its camera-floor query found no surface.
+    // On stock roads that means an invalid camera location, so native code
+    // shortens the chase arm. Imported open gaps are legitimate empty space.
+    // Use the native unobstructed branch instead: it gradually restores an
+    // already shortened arm, and still rechecks real terrain before extending.
+    // Its secondary failed query (5E184) must likewise skip the fallback
+    // sea-level floor; otherwise a camera below height zero shortens again.
+    const unsigned view_offset = unsigned(c->r23);
+    const unsigned arm = unsigned(c->r16);
+    float fraction = 0, terrain_scale = 0;
+    if (c->r2 != 0 || view_offset >= 16 || (view_offset & 3) != 0 ||
+        arm != 0x800a52b8u + view_offset ||
+        !rr64::engine::read_float(m, arm, fraction) ||
+        !std::isfinite(fraction) || fraction <= 0 || fraction > 1 ||
+        !rr64::engine::read_float(m, 0x80005f48u, terrain_scale) || terrain_scale != .25f)
+        return 0;
+    c->f2.fl = fraction; // input normally loaded at the unobstructed branch
+    // The first failed query skipped 5DE70. Its scale is nevertheless required
+    // if the secondary extension probe hits terrain (5E178). Recreate that
+    // original register input before entering the shared native branch.
+    c->f26.fl = terrain_scale;
+    return 1;
+#else
+    (void)m;
+    (void)context;
+    return 0;
+#endif
 }
 extern "C" void rr64_world_camera_far(unsigned char *m, void *context) {
     auto *c = static_cast<recomp_context *>(context);

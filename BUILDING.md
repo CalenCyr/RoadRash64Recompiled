@@ -105,10 +105,12 @@ Build time and memory use depend on the machine; on Linux, the first build addit
 
 ## Packaging a portable Linux release (AppImage)
 
-After a successful Linux build (above), package it into a AppImage for compatible Linux hosts with working Vulkan drivers:
+After a successful Linux build, build the native importer as described below.
+Course-enabled packages require its verified bundle manifest. Then create an
+AppImage for compatible Linux hosts with working Vulkan drivers:
 
 ```bash
-python3 scripts/build_appimage.py
+python3 scripts/build_appimage.py --mk64-importer-bundle build/mk64-importer-bundle/bundle.json
 ```
 
 This produces `native/build/RoadRash64Recompiled-x86_64.AppImage`. It downloads and caches its own packaging tools (`linuxdeploy`, `appimagetool`) under `native/build/appimage-tools/` on first run — no `sudo` needed. Test the result before distributing it:
@@ -145,5 +147,47 @@ Some other developer tests require locally generated fixtures or the local ROM a
 
 ## Versioning and existing mods
 
-The application version is **1.2.0**. The mod loader retains an explicit compatibility floor of 1.0.6 from earlier internal development builds; this allows existing working mods to remain installed without pretending the application version is 1.0.6. Mods requesting newer unsupported interfaces still fail their version check.
+The application version is **1.4.0**. The mod loader retains an explicit compatibility floor of 1.0.6 from earlier internal development builds; this allows existing working mods to remain installed without pretending the application version is 1.0.6. Mods requesting newer unsupported interfaces still fail their version check.
 
+
+## Package the optional MK64 importer
+
+The course-support build option `RR64_EXPERIMENTAL_COURSE` retains its historical
+name for script compatibility and now defaults ON. It embeds conversion code,
+not course content. Configure it OFF for a build without optional course support.
+Do not distribute a locally generated `race-packs/mk64` folder or either ROM.
+
+For the verified Windows packaging path, use Python 3.12 in an isolated build
+environment and install the pinned packages in
+`scripts/mk64-importer-requirements.txt`. Build the two native helpers explicitly:
+
+```powershell
+cmake --build native/build --config Release --target rr64-mk64-contact rr64-mk64-motion --parallel 2
+python -m pip install -r scripts/mk64-importer-requirements.txt
+python scripts/build_mk64_importer.py --output build/mk64-importer-bundle --contact-helper native/build/bin/rr64-mk64-contact.exe --motion-helper native/build/bin/rr64-mk64-motion.exe
+```
+
+Use a new output directory for each bundle. Copy the entire resulting
+`dist/rr64-mk64-importer` directory to `tools/mk64-importer` beside the game EXE,
+including its `_internal` folder, native helpers and licenses. Players need none
+of these build tools installed. The Mods tab offers a file picker and validates
+the selected ROMs before converting all 16 tracks locally.
+
+For Linux, use an isolated Python 3.12 environment with the same pinned packages:
+
+```bash
+cmake --build native/build --target rr64-mk64-contact rr64-mk64-motion --parallel 2
+python3 -m pip install -r scripts/mk64-importer-requirements.txt
+python3 scripts/build_mk64_importer.py --output build/mk64-importer-bundle --contact-helper native/build/bin/rr64-mk64-contact --motion-helper native/build/bin/rr64-mk64-motion --python-license /path/to/your/CPython/LICENSE
+```
+
+The license argument must identify the exact Python runtime's upstream notice;
+it is optional when that installation already includes `LICENSE` or `LICENSE.txt`.
+The AppImage packager verifies the Linux bundle manifest and installs the whole
+tool inside `usr/bin/tools/mk64-importer` after dependency processing, preserving
+its files and executable permissions. User-generated tracks stay outside the
+read-only image. A new converter build requires full ROM-to-pack comparison
+against the other supported platform; compilation alone does not prove that
+online participants will generate matching course files.
+See [importer architecture](docs/mk64-portable-importer.md) for stage ownership and
+[source navigation](docs/RELEASE_CANDIDATE_EDITING_GUIDE.md) before editing.

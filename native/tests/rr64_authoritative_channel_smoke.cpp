@@ -10,6 +10,11 @@ int main(){
  g_session.local_slot=0;g_session.token=123;g_session.game_setup.revision=7;g_session.race_player_mask=3;
  sockaddr_in remote{};remote.sin_family=AF_INET;remote.sin_addr.s_addr=htonl(INADDR_LOOPBACK);remote.sin_port=htons(18001);
  g_session.peers[1].connected=true;g_session.peers[1].endpoint=remote;
+ check(!authority_start()); // Merely entering Race cannot skip course validation.
+ g_session.game_setup.valid=true;g_session.course_ack[0]=7;
+ check(!authority_start()); // One missing peer ACK still holds the round.
+ g_session.course_ack[1]=6;check(!authority_start());
+ g_session.course_ack[1]=7;
  check(authority_start());
  rr64::authority::Command not_admitted{};not_admitted.sequence=99;
  check(!authority_queue_input_recorded(0x8000,1,0,not_admitted) && not_admitted.sequence==99);
@@ -86,6 +91,10 @@ int main(){
  g_session={};g_session.config.mode=Mode::Join;g_session.phase=Phase::Race;g_session.local_slot=1;g_session.token=123;
  g_session.game_setup.revision=7;g_session.race_player_mask=3;g_session.host_endpoint=address;g_session.socket=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
  AuthorityBeginPacket begin{};initialize_packet(begin,PacketType::AuthorityBegin);begin.round=7;begin.humans=3;
+ handle_client_packet_locked(reinterpret_cast<const std::uint8_t*>(&begin),sizeof(begin),address,Clock::now());check(!g_session.authoritative);
+ g_session.game_setup.valid=true;g_session.course_ack[1]=6;
+ handle_client_packet_locked(reinterpret_cast<const std::uint8_t*>(&begin),sizeof(begin),address,Clock::now());check(!g_session.authoritative);
+ g_session.course_ack[1]=7;
  handle_client_packet_locked(reinterpret_cast<const std::uint8_t*>(&begin),sizeof(begin),address,Clock::now());check(g_session.authoritative);
  check(!authority_queue_input(0x8000,0,0) && g_session.authority_client.pending()==0);
  begin.finish_mode=0x39;
@@ -231,6 +240,7 @@ int main(){
  // more inputs and never acknowledges a failed staged step.
  g_session={};g_session.config.mode=Mode::Host;g_session.phase=Phase::Race;
  g_session.local_slot=0;g_session.token=123;g_session.game_setup.revision=7;g_session.race_player_mask=3;
+ g_session.game_setup.valid=true;g_session.course_ack[0]=g_session.course_ack[1]=7;
  check(authority_start());g_session.authority_loaded=3;check(authority_race_gate(true));
  check(authority_queue_input(0,0,0));check(authority_begin_step(step));
  const auto beforeFault=g_session.authority_host.stamp();
@@ -247,6 +257,7 @@ int main(){
  for(bool released:{false,true})for(bool timeout:{false,true}) {
   g_session={};g_session.config.mode=Mode::Host;g_session.phase=Phase::Race;
   g_session.local_slot=0;g_session.token=123;g_session.game_setup.revision=7;g_session.race_player_mask=3;
+  g_session.game_setup.valid=true;g_session.course_ack[0]=g_session.course_ack[1]=7;
   g_session.peers[1].connected=true;g_session.peers[1].endpoint=remote;
   g_session.peers[1].last_seen=Clock::now()-kPeerTimeout-std::chrono::seconds(1);
   check(authority_start());g_session.authority_released=released;

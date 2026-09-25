@@ -57,7 +57,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr std::uint32_t kProtocolMagic = 0x52523634u; // RR64
-constexpr std::uint16_t kProtocolVersion = 38; // Separate cop trick action from directional attacks.
+constexpr std::uint16_t kProtocolVersion = 57; // Item roulette now includes native attack multipliers.
 constexpr std::size_t kPlayerNameCapacity = 24;
 constexpr auto kHelloInterval = std::chrono::milliseconds(500);
 constexpr auto kStateInterval = std::chrono::milliseconds(25);
@@ -86,7 +86,8 @@ enum class PacketType : std::uint8_t {
     ConnectReject,
     WorldSnapshot,
     HitRequest, HitCommit, HitRequestAck, HitCommitAck,
-    AuthorityBegin, AuthorityInput, AuthorityState, AuthorityReady, AuthorityWorld,
+    AuthorityBegin, AuthorityInput, AuthorityState, AuthorityReady, AuthorityWorld, AuthorityItems, AuthorityHazards,
+    Highlight,
 };
 
 #pragma pack(push, 1)
@@ -129,6 +130,9 @@ struct WelcomePacket {
 
 struct ClientStatePacket {
     PacketHeader header{};
+    std::uint32_t course_revision=0;
+    race_pack::Identity course{};
+    std::uint8_t course_compatibility = static_cast<std::uint8_t>(race_pack::Compatibility::Pending);
     online_flow::Selection selection{};
     std::uint8_t slot = kInvalidSlot;
     std::uint8_t ready = 0;
@@ -142,6 +146,7 @@ struct ClientStatePacket {
 
 struct WirePlayer {
     online_flow::Selection selection{};
+    std::uint8_t course_compatibility = static_cast<std::uint8_t>(race_pack::Compatibility::Pending);
     std::uint8_t connected = 0;
     std::uint8_t ready = 0;
     std::uint8_t character = 0;
@@ -154,6 +159,7 @@ struct WirePlayer {
 };
 
 struct WireGameSetup {
+    race_pack::Identity course{};
     std::uint32_t start_requested = 0;
     std::uint32_t random_seed = 0;
     std::uint32_t revision = 0;
@@ -242,11 +248,42 @@ struct AuthorityWorldPacket {
     std::array<world_sync::Traffic,world_sync::batch_size> traffic{};
 };
 static_assert(sizeof(AuthorityWorldPacket)<1200);
+// Items are one additional world fragment, required only for imported courses
+// that actually contain boxes. Share assembly masks/stamps with traffic rather
+// than exposing an independently timed reward/visibility channel.
+constexpr unsigned kAuthorityItemsBit=1u<<world_sync::batches;
+constexpr unsigned kAuthorityHazardFirst=world_sync::batches+1;
+constexpr unsigned kHazardsPerPacket=16;
+constexpr unsigned kHazardParts=(kMaximumCourseHazards+kHazardsPerPacket-1)/kHazardsPerPacket;
+constexpr unsigned kAuthorityWorldParts=kAuthorityHazardFirst+kHazardParts;
+static_assert(kAuthorityWorldParts<32);
+struct AuthorityItemsPacket {
+    PacketHeader header{};
+    authority::Stamp stamp{};
+    std::uint32_t payload_mask=0,world_mask=0;
+    CourseItemState items{};
+};
+static_assert(sizeof(AuthorityItemsPacket)<1200);
+struct AuthorityHazardsPacket {
+    PacketHeader header{};
+    authority::Stamp stamp{};
+    std::uint32_t payload_mask=0,world_mask=0,clock=0;
+    std::uint16_t count=0,part=0;
+    std::array<CourseHazardPose,kHazardsPerPacket> poses{};
+};
+static_assert(sizeof(AuthorityHazardsPacket)<1200);
+unsigned hazard_world_mask(unsigned count){
+    if(!count || count>kMaximumCourseHazards)return 0;
+    const unsigned parts=(count+kHazardsPerPacket-1)/kHazardsPerPacket;
+    return ((1u<<parts)-1u)<<kAuthorityHazardFirst;
+}
 unsigned authority_world_mask(const AuthorityFrame &frame){
     unsigned mask=0;
     for(unsigned i=0;i<world_sync::capacity;++i)if(frame.traffic[i].active)
         mask|=1u<<(i/world_sync::batch_size);
-    return mask?mask:1u; // An empty roster must explicitly retire old traffic.
+    // An empty roster must explicitly retire old traffic even with item boxes.
+    return (mask?mask:1u) | (frame.course_items.count?kAuthorityItemsBit:0u) |
+        hazard_world_mask(frame.course_hazards.count);
 }
 
 
@@ -312,6 +349,7 @@ struct HitChannel {
     std::deque<HitEvent> delivered;
 };
 struct Session {
+    highlight_network::Channel highlights;
     bool authoritative=false;
     unsigned authority_loaded=0;
     unsigned authority_finish_mode=0;
@@ -343,6 +381,7 @@ struct Session {
     std::array<RiderState, kMaximumPlayers> previous_riders{};
     std::array<Peer, kMaximumPlayers> peers{};
     GameSetupState game_setup{};
+    std::array<std::uint32_t,kMaximumPlayers> course_ack{};
     std::uint32_t setup_serial = 0;
     std::uint32_t race_player_mask = 0;
     world_sync::Snapshot world{};
@@ -421,7 +460,7 @@ bool finite_rider_state(const RiderState &state) {
     if (!std::isfinite(state.root.durability) || !std::isfinite(state.root.durability_capacity)) return false;
     if (state.root.equipment_valid>1 || (state.root.equipment_valid && (state.weapon<1 || state.weapon>14))) return false;
     if (state.root.valid > 1 || state.root.bike_attached > 1 ||
-        state.root.rider_attached > 1 || state.root.ejected > 1 ||
+        state.root.rider_attached > 1 || state.root.ejected > 1 || state.root.vault_latch > 3 ||
         !std::isfinite(state.root.bike_height) || !std::isfinite(state.root.rider_height)) return false;
     for (const auto &v : {state.root.bike_origin,state.root.bike_velocity,state.root.bike_motion,state.root.rider_velocity,state.root.rider_anchor})
         for(float x:v) if(!std::isfinite(x)) return false;
@@ -790,6 +829,12 @@ void send_client_state_locked(const Clock::time_point now) {
     }
     const std::uint8_t slot = g_session.local_slot;
     ClientStatePacket packet{};
+    if(g_session.local_slot<kMaximumPlayers) {
+        packet.course_revision=g_session.game_setup.valid ? g_session.game_setup.revision : 0;
+        packet.course=g_session.game_setup.course;
+        packet.course_compatibility=static_cast<std::uint8_t>(g_session.players[slot].course_compatibility);
+    }
+
     initialize_packet(packet, PacketType::ClientState);
     packet.slot = slot;
     packet.selection = g_session.players[slot].selection;
@@ -818,6 +863,7 @@ void send_snapshot_locked(const Clock::time_point now) {
     packet.game_setup.transition_buttons = g_session.game_setup.transition_buttons;
     packet.game_setup.race_options = g_session.game_setup.race_options;
     packet.game_setup.random_seed = g_session.game_setup.random_seed;
+    packet.game_setup.course = g_session.game_setup.course;
     packet.game_setup.start_requested = g_session.game_setup.start_requested;
     packet.game_setup.valid = g_session.game_setup.valid ? 1 : 0;
     std::copy(g_session.game_setup.words.begin(), g_session.game_setup.words.end(),
@@ -826,6 +872,7 @@ void send_snapshot_locked(const Clock::time_point now) {
         const PlayerInfo &player = g_session.players[slot];
         WirePlayer &wire = packet.players[slot];
         wire.selection = player.selection;
+        wire.course_compatibility = static_cast<std::uint8_t>(player.course_compatibility);
         wire.connected = player.connected ? 1 : 0;
         wire.ready = player.ready ? 1 : 0;
         wire.character = player.character;
@@ -964,6 +1011,44 @@ void send_reject_locked(const sockaddr_in &endpoint, RejectReason reason) {
 #include "rr64_hit_channel.inc"
 #include "rr64_authoritative_channel.inc"
 
+bool highlights_enabled_locked() {
+    return g_session.authoritative && !g_session.host_disconnected && g_session.authority_finish_mode &&
+        g_session.phase==Phase::Race && g_session.authority_round==g_session.game_setup.revision;
+}
+std::uint64_t highlight_time(const Clock::time_point now) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+}
+unsigned highlight_peers_locked() {
+    unsigned mask=1;
+    for(unsigned p=1;p<kMaximumPlayers;++p)
+        if(g_session.peers[p].connected && (g_session.authority_humans&(1u<<p)))mask|=1u<<p;
+    return mask;
+}
+bool handle_highlight_locked(const std::uint8_t* bytes,int size,unsigned sender,const Clock::time_point now) {
+    if(reinterpret_cast<const PacketHeader*>(bytes)->type!=PacketType::Highlight)return false;
+    if(!highlights_enabled_locked() || size<int(sizeof(PacketHeader)+5) ||
+       size>int(sizeof(PacketHeader)+highlight_network::maximum_datagram))return true;
+    if(is_host_locked() && !(g_session.authority_humans&(1u<<sender)))return true;
+    const auto delay=is_client_locked() && g_session.local_slot<kMaximumPlayers ?
+        std::uint64_t(g_session.players[g_session.local_slot].ping_ms)*500 : 0;
+    g_session.highlights.receive(sender,{bytes+sizeof(PacketHeader),std::size_t(size)-sizeof(PacketHeader)},highlight_time(now),delay);
+    return true;
+}
+void service_highlights_locked(const Clock::time_point now) {
+    if(!highlights_enabled_locked())return;
+    g_session.highlights.service(highlight_time(now),highlight_peers_locked(),[](unsigned peer,std::span<const std::uint8_t> payload){
+        if(payload.size()>highlight_network::maximum_datagram || g_session.socket==INVALID_SOCKET)return;
+        std::array<std::uint8_t,sizeof(PacketHeader)+highlight_network::maximum_datagram> bytes{};
+        PacketHeader header{};header.type=PacketType::Highlight;header.size=std::uint16_t(sizeof(header)+payload.size());
+        header.sequence=g_session.sequence++;header.session=g_session.token;
+        std::memcpy(bytes.data(),&header,sizeof(header));std::memcpy(bytes.data()+sizeof(header),payload.data(),payload.size());
+        const auto&endpoint=is_host_locked()?g_session.peers[peer].endpoint:g_session.host_endpoint;
+        if(sendto(g_session.socket,reinterpret_cast<const char*>(bytes.data()),header.size,0,
+                  reinterpret_cast<const sockaddr*>(&endpoint),sizeof(endpoint))==SOCKET_ERROR)
+            record_socket_error_locked("highlight send",WSAGetLastError());
+    });
+}
+
 void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockaddr_in &endpoint,
                                const Clock::time_point now) {
     const PacketHeader &header = *reinterpret_cast<const PacketHeader *>(bytes);
@@ -984,6 +1069,7 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
                 return;
             }
             g_session.peers[slot].connected = true;
+            g_session.course_ack[slot] = 0;
             g_session.peers[slot].endpoint = endpoint;
             g_session.players[slot].connected = true;
             g_session.players[slot].slot = slot;
@@ -1017,10 +1103,12 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
     // Gameplay messages must pass session and endpoint ownership checks above.
     if(handle_authority_locked(bytes,size,slot,endpoint)) return;
     if(handle_hit_locked(bytes,size,slot,endpoint,now)) return;
+    if(handle_highlight_locked(bytes,size,slot,now)) return;
 
     if (header.type == PacketType::ClientState && size == sizeof(ClientStatePacket)) {
         const auto &state = *reinterpret_cast<const ClientStatePacket *>(bytes);
-        if (state.slot != slot) {
+        if (state.slot != slot || state.course_compatibility >
+            static_cast<std::uint8_t>(race_pack::Compatibility::Different)) {
             return;
         }
         // UDP can reorder client input packets. Never rewind controls/readiness
@@ -1029,9 +1117,20 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
         if(lastSequence!=0&&static_cast<std::int32_t>(header.sequence-lastSequence)<=0)return;
         lastSequence=header.sequence;
         PlayerInfo &player = g_session.players[slot];
+        if(g_session.game_setup.valid && g_session.phase!=Phase::Race) {
+            if(!state.course_revision || state.course_revision!=g_session.game_setup.revision ||
+               state.course!=g_session.game_setup.course) return;
+            player.course_compatibility=static_cast<race_pack::Compatibility>(state.course_compatibility);
+            g_session.course_ack[slot]=player.course_compatibility==race_pack::Compatibility::Ready
+                ? state.course_revision : 0;
+            if(!g_session.course_ack[slot]) {
+                player.selection={};
+                player.ready=false;
+            }
+        }
         if (online_flow::valid(state.selection) &&
             state.selection.round == g_session.game_setup.revision &&
-            g_session.game_setup.valid) {
+            g_session.game_setup.valid && g_session.course_ack[slot]==g_session.game_setup.revision) {
             // Once loading starts, a peer may acknowledge loading but cannot
             // silently replace its already committed rider or bike.
             if (g_session.phase == Phase::CharacterSelect ||
@@ -1040,7 +1139,8 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
                  state.selection.bike == player.selection.bike && state.selection.confirmed))
                 player.selection = state.selection;
         }
-        player.ready = state.ready != 0;
+        player.ready = state.ready != 0 && (!g_session.game_setup.valid ||
+            g_session.course_ack[slot]==g_session.game_setup.revision);
         player.character = player.selection.round==g_session.game_setup.revision && player.selection.confirmed
             ? static_cast<std::uint8_t>(player.selection.rider) : state.character;
         player.track = state.track;
@@ -1115,6 +1215,7 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
             std::fprintf(stderr,"[RR64-NET] peer %u left; race continues with neutral input.\n",unsigned(slot));
         }
         g_session.peers[slot] = {};
+        g_session.course_ack[slot] = 0;
         g_session.players[slot] = {};
         g_session.inputs[slot] = {};
         g_session.riders[slot] = {};
@@ -1179,12 +1280,18 @@ void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sock
     g_session.last_host_seen = now;
     if(handle_authority_locked(bytes,size,0,endpoint)) return;
     if(handle_hit_locked(bytes,size,0,endpoint,now)) return;
+    if(handle_highlight_locked(bytes,size,0,now)) return;
 
     if (header.type == PacketType::LobbySnapshot && size == sizeof(LobbySnapshotPacket)) {
         const auto &snapshot = *reinterpret_cast<const LobbySnapshotPacket *>(bytes);
-        if (snapshot.game_setup.start_requested > 1) return;
+        if (snapshot.game_setup.start_requested > 1 || !race_pack::valid(snapshot.game_setup.course)) return;
+        // A revision identifies immutable course bytes, including snapshots
+        // received after local validation. A new course needs a new revision.
+        if(g_session.game_setup.valid && snapshot.game_setup.revision==g_session.game_setup.revision &&
+           snapshot.game_setup.course!=g_session.game_setup.course)return;
         for (const auto &player : snapshot.players)
-            if (!online_flow::valid(player.selection)) return;
+            if (!online_flow::valid(player.selection) || player.course_compatibility >
+                static_cast<std::uint8_t>(race_pack::Compatibility::Different)) return;
         if(!local_race_options::valid_online_options(snapshot.game_setup.race_options))return;
         if (snapshot.phase > static_cast<std::uint8_t>(Phase::Race)) {
             return;
@@ -1205,7 +1312,12 @@ void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sock
         g_session.replicated_riders = snapshot.replicated_riders != 0;
         g_session.config.maximum_players =
             static_cast<std::uint8_t>(std::clamp<unsigned>(snapshot.reserved, 2u, kMaximumPlayers));
-        if(snapshot.game_setup.revision!=g_session.game_setup.revision) {
+        const bool setup_changed=snapshot.game_setup.valid!=g_session.game_setup.valid ||
+            snapshot.game_setup.revision!=g_session.game_setup.revision ||
+            snapshot.game_setup.course!=g_session.game_setup.course;
+        if(setup_changed) {
+            g_session.course_ack={};
+            for(auto& player:g_session.players) player.course_compatibility=race_pack::Compatibility::Pending;
             g_session.riders={}; g_session.previous_riders={}; g_session.race_player_mask=0;
             g_session.world={};g_session.world_receiver.reset();
             for(unsigned slot=0;slot<kMaximumPlayers;++slot)
@@ -1216,12 +1328,17 @@ void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sock
         g_session.game_setup.transition_buttons = snapshot.game_setup.transition_buttons;
         g_session.game_setup.race_options = snapshot.game_setup.race_options;
         g_session.game_setup.random_seed = snapshot.game_setup.random_seed;
+        g_session.game_setup.course = snapshot.game_setup.course;
         g_session.game_setup.start_requested = snapshot.game_setup.start_requested;
         std::copy(std::begin(snapshot.game_setup.words), std::end(snapshot.game_setup.words),
                   g_session.game_setup.words.begin());
         for (std::uint8_t slot = 0; slot < kMaximumPlayers; ++slot) {
             const WirePlayer &wire = snapshot.players[slot];
             PlayerInfo &player = g_session.players[slot];
+            // A delayed host echo cannot undo our newer local validation or
+            // revocation. New revisions always start locally unvalidated.
+            if(slot!=g_session.local_slot)
+                player.course_compatibility=static_cast<race_pack::Compatibility>(wire.course_compatibility);
             if (slot != g_session.local_slot || g_session.phase != Phase::CharacterSelect)
                 player.selection = wire.selection;
             player.connected = wire.connected != 0;
@@ -1369,6 +1486,7 @@ void expire_peers_locked(const Clock::time_point now) {
                 std::fprintf(stderr,"[RR64-NET] peer %u timed out; race continues.\n",unsigned(slot));
             }
             g_session.peers[slot] = {};
+            g_session.course_ack[slot] = 0;
             g_session.players[slot] = {};
             g_session.inputs[slot] = {};
             g_session.riders[slot] = {};
@@ -1387,6 +1505,7 @@ void service_locked(const Clock::time_point now) {
     if (g_session.socket == INVALID_SOCKET)
         return;
     expire_peers_locked(now);
+    service_highlights_locked(now);
 
     if (is_client_locked()) {
         if (g_session.local_slot == kInvalidSlot &&
@@ -1434,6 +1553,42 @@ void service_locked(const Clock::time_point now) {
 }
 
 } // namespace
+
+bool publish_highlight_playlist(highlight_network::Blob blob,std::uint64_t duration_us) {
+    if(prediction::active())return false;
+    std::lock_guard lock(g_mutex);
+    return highlights_enabled_locked() && is_host_locked() &&
+        g_session.highlights.publish(std::move(blob),duration_us,highlight_time(Clock::now()));
+}
+std::optional<highlight_network::Blob> take_received_highlight_playlist() {
+    if(prediction::active())return {};
+    std::lock_guard lock(g_mutex);
+    if(!highlights_enabled_locked() || !is_client_locked())return {};
+    return g_session.highlights.take_received();
+}
+void acknowledge_highlight_decoded(bool accepted) {
+    if(prediction::active())return;
+    std::lock_guard lock(g_mutex);
+    if(highlights_enabled_locked() && is_client_locked())g_session.highlights.decoded(accepted);
+}
+highlight_network::Status highlight_status() {
+    if(prediction::active())return {};
+    std::lock_guard lock(g_mutex);
+    if(g_session.host_disconnected)return {highlight_network::Stage::Finished};
+    if(!highlights_enabled_locked())return {};
+    return g_session.highlights.status(highlight_time(Clock::now()),highlight_peers_locked());
+}
+bool host_begin_highlights() {
+    if(prediction::active())return false;
+    std::lock_guard lock(g_mutex);
+    return highlights_enabled_locked() && is_host_locked() &&
+        g_session.highlights.begin(highlight_time(Clock::now()),highlight_peers_locked());
+}
+bool host_skip_highlights() {
+    if(prediction::active())return false;
+    std::lock_guard lock(g_mutex);
+    return highlights_enabled_locked() && is_host_locked() && g_session.highlights.skip();
+}
 
 bool authority_start() {
     std::lock_guard lock(g_mutex);
@@ -1534,6 +1689,8 @@ bool authority_publish_frame(const AuthorityFrame &frame) {
        frame.stamp.round!=g_session.game_setup.revision || !frame.stamp.tick ||
        frame.stamp.tick<=g_session.authority_frame.stamp.tick || !authority::valid_timing(frame.timing) ||
        frame.cop_mode>1 || !std::isfinite(frame.cop_win_age) || frame.cop_win_age < -1)return false;
+    if(!valid_course_item_state(frame.course_items) || !valid_course_hazard_state(frame.course_hazards) ||
+       ((frame.course_items.count || frame.course_hazards.count) && g_session.game_setup.course.version==0))return false;
     if(!world_sync::valid(world_sync::Snapshot{frame.stamp.round,frame.stamp.tick,frame.traffic}))return false;
     const auto completed=g_session.authority_host.stamp();
     if(frame.stamp.tick!=completed.tick || frame.stamp.acknowledged!=completed.acknowledged)return false;
@@ -1697,6 +1854,23 @@ void update() {
     service_locked(Clock::now());
 }
 
+PhysicsRules get_physics_rules() {
+    if (prediction::active()) return {};
+    std::lock_guard lock(g_mutex);
+    PhysicsRules rules;
+    rules.active = g_session.config.mode != Mode::Offline &&
+        (g_session.socket != INVALID_SOCKET || g_session.host_disconnected);
+    rules.connected = is_host_locked() || g_session.local_slot != kInvalidSlot;
+    rules.is_host = is_host_locked();
+    rules.replicated_riders = g_session.replicated_riders;
+    rules.authoritative = g_session.authoritative &&
+        g_session.authority_round == g_session.game_setup.revision;
+    rules.authority_humans = rules.authoritative ? g_session.authority_humans : 0;
+    rules.local_slot = g_session.local_slot;
+    rules.phase = g_session.phase;
+    return rules;
+}
+
 Status get_status() {
     // Isolated local replay uses its copied guest roster, never live transport
     // ownership. Network-facing gameplay hooks then cannot send/consume live
@@ -1731,6 +1905,8 @@ bool set_ready(bool ready) {
         !g_session.players[g_session.local_slot].connected) {
         return false;
     }
+    if(ready && g_session.game_setup.valid &&
+       g_session.course_ack[g_session.local_slot]!=g_session.game_setup.revision) return false;
     g_session.players[g_session.local_slot].ready = ready;
     return true;
 }
@@ -1760,20 +1936,27 @@ bool all_connected_players_ready() {
     const std::uint8_t count = connected_count_locked();
     return count > 0 &&
            std::all_of(g_session.players.begin(), g_session.players.end(),
-                       [](const PlayerInfo &player) { return !player.connected || player.ready; });
+                       [](const PlayerInfo &player) {
+                           return !player.connected || (player.ready && (!g_session.game_setup.valid ||
+                               (player.slot<kMaximumPlayers && g_session.course_ack[player.slot]==g_session.game_setup.revision)));
+                       });
 }
 
 bool host_set_phase(Phase phase) {
     std::lock_guard lock(g_mutex);
-    if (!is_host_locked() || phase <= Phase::Connecting || phase > Phase::Race) {
+    // Character/track/race transitions belong to the validated setup and
+    // readiness gates below. A UI phase request must never skip those gates.
+    if (!is_host_locked() || (phase != Phase::Lobby && phase != Phase::GameSetup)) {
         return false;
     }
     if (phase == Phase::Lobby) {
         g_session.replicated_riders = false;
         g_session.game_setup = {};
+        g_session.course_ack = {};
     } else if (phase == Phase::GameSetup) {
         g_session.replicated_riders = connected_count_locked() > kMaximumLocalControllers;
         g_session.game_setup = {};
+        g_session.course_ack = {};
     }
     if (phase != g_session.phase) {
         g_session.received_voice_frames.clear();
@@ -1783,6 +1966,7 @@ bool host_set_phase(Phase phase) {
     g_session.phase = phase;
     if(phase!=Phase::Race){g_session.authoritative=false;g_session.authority_loaded=0;g_session.authority_released=false;}
     for (PlayerInfo &player : g_session.players) {
+        player.course_compatibility=race_pack::Compatibility::Pending;
         if (player.connected) {
             player.ready = false;
         }
@@ -1796,7 +1980,7 @@ bool host_set_phase(Phase phase) {
 
 bool host_commit_game_setup(const GameSetupState &setup) {
     std::lock_guard lock(g_mutex);
-    if(!local_race_options::valid_online_options(setup.race_options))return false;
+    if(!local_race_options::valid_online_options(setup.race_options) || !race_pack::valid(setup.course))return false;
     if (!is_host_locked() || g_session.phase != Phase::GameSetup) {
         return false;
     }
@@ -1812,11 +1996,63 @@ bool host_commit_game_setup(const GameSetupState &setup) {
     // Remains monotonic when returning to setup within the same connection.
     // Otherwise delayed confirmations from the previous race could look current.
     g_session.game_setup.revision = ++g_session.setup_serial;
-    for (auto &player : g_session.players) player.selection = {};
+    g_session.course_ack={};
+    g_session.course_ack[0]=g_session.game_setup.revision;
+    for (auto &player : g_session.players) {
+        player.selection = {};
+        player.course_compatibility = player.slot==0 ? race_pack::Compatibility::Ready : race_pack::Compatibility::Pending;
+    }
     g_session.phase = Phase::CharacterSelect;
     g_session.message = "Host settings locked - choose your rider and bike";
     send_snapshot_locked(Clock::now());
     return true;
+}
+
+bool acknowledge_course(std::uint32_t revision,const race_pack::Identity& course) {
+    return report_course_compatibility(revision,course,race_pack::Compatibility::Ready);
+}
+
+const char* course_compatibility_message(race_pack::Compatibility compatibility) noexcept {
+    switch(compatibility) {
+    case race_pack::Compatibility::Missing: return "MK64 pack missing. Install the host's matching pack, or ask the host to choose a stock track.";
+    case race_pack::Compatibility::Disabled: return "MK64 pack disabled. Restart the application, enable it in Mods, then rejoin; or ask the host to choose a stock track.";
+    case race_pack::Compatibility::Different: return "MK64 pack differs from the host's. Use the same pack version, or ask the host to choose a stock track.";
+    case race_pack::Compatibility::Ready: return "Track content verified.";
+    default: return "Checking track content...";
+    }
+}
+
+bool report_course_compatibility(std::uint32_t revision,const race_pack::Identity& course,
+                                 race_pack::Compatibility compatibility) {
+    std::lock_guard lock(g_mutex);
+    if(!g_session.game_setup.valid || !revision || revision!=g_session.game_setup.revision ||
+       course!=g_session.game_setup.course || g_session.local_slot>=kMaximumPlayers ||
+       !g_session.players[g_session.local_slot].connected ||
+       static_cast<unsigned>(compatibility)>static_cast<unsigned>(race_pack::Compatibility::Different))return false;
+    // A running race owns immutable content. Late feedback cannot change or
+    // newly validate it; an already accepted Ready report is idempotent.
+    if(g_session.phase==Phase::Race) return compatibility==race_pack::Compatibility::Ready &&
+        g_session.course_ack[g_session.local_slot]==revision;
+    if(g_session.phase!=Phase::CharacterSelect && g_session.phase!=Phase::TrackSelect)return false;
+    auto& player=g_session.players[g_session.local_slot];
+    player.course_compatibility=compatibility;
+    g_session.course_ack[g_session.local_slot]=compatibility==race_pack::Compatibility::Ready ? revision : 0;
+    if(compatibility!=race_pack::Compatibility::Ready) {
+        player.ready=false;
+        player.selection={};
+    }
+    return true;
+}
+
+void reject_course_setup(const char *reason) {
+    std::lock_guard lock(g_mutex);
+    if(!is_client_locked() || g_session.authoritative || !g_session.game_setup.valid ||
+       g_session.phase==Phase::Race || g_session.local_slot>=kMaximumPlayers)return;
+    g_session.course_ack[g_session.local_slot]=0;
+    auto& player=g_session.players[g_session.local_slot];
+    player.course_compatibility=race_pack::Compatibility::Different;
+    player.selection={};player.ready=false;
+    g_session.message=reason?reason:course_compatibility_message(player.course_compatibility);
 }
 
 bool set_selection(const online_flow::Selection &selection) {
@@ -1824,6 +2060,7 @@ bool set_selection(const online_flow::Selection &selection) {
     if (!online_flow::valid(selection) || !g_session.game_setup.valid ||
         selection.round != g_session.game_setup.revision || g_session.local_slot >= kMaximumPlayers)
         return false;
+    if(g_session.course_ack[g_session.local_slot]!=g_session.game_setup.revision)return false;
     auto &current = g_session.players[g_session.local_slot].selection;
     if (g_session.phase != Phase::CharacterSelect &&
         !(g_session.phase == Phase::TrackSelect && selection.confirmed &&
@@ -1836,6 +2073,9 @@ bool set_selection(const online_flow::Selection &selection) {
 bool host_request_race_start() {
     std::lock_guard lock(g_mutex);
     if (!is_host_locked() || g_session.phase != Phase::TrackSelect || !g_session.game_setup.valid) return false;
+    for(const auto& player:g_session.players)
+        if(player.connected && (player.slot>=kMaximumPlayers ||
+            g_session.course_ack[player.slot]!=g_session.game_setup.revision)) return false;
     if (!g_session.game_setup.start_requested) {
         g_session.game_setup.start_requested=1;
         if (std::getenv("RR64_SYNC_LOG")) std::fprintf(stderr,"[RR64-FLOW] Host start requested round=%u\n",g_session.game_setup.revision);
@@ -1852,7 +2092,8 @@ bool host_release_selection() {
     for (const auto &p : g_session.players) {
         if (!p.connected) continue;
         ++count;
-        if (p.selection.round != g_session.game_setup.revision || !p.selection.confirmed ||
+        if (p.slot>=kMaximumPlayers || g_session.course_ack[p.slot]!=g_session.game_setup.revision ||
+            p.selection.round != g_session.game_setup.revision || !p.selection.confirmed ||
             (g_session.phase == Phase::TrackSelect && !p.selection.loaded)) return false;
     }
     if (count < 2) return false;

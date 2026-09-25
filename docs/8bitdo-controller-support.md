@@ -1,43 +1,57 @@
-# 8BitDo 64 input support (post-1.3 candidate)
+# Controller support — 1.4.0
 
-The report identifies an N64-style 8BitDo controller, probably on Windows;
-the exact model, connection and firmware mode are not confirmed. The user linked
-https://shop.8bitdo.com/products/8bitdo-64-2-4g-wireless-controller.
-Do not equate that link with a verified USB identity.
+## Set up your controller
 
-## Implemented
+1. Open **Settings > Controls** and assign your controller to the intended player.
+2. Customize that player's controls. For an N64-style controller, check the
+   gameplay **B** action (heavy brake / back in original game menus) and the
+   overlay **Back (Menu)** action separately. Bind both as desired; recognizing
+   physical B in the scanner does not automatically bind both actions.
+3. Map **Eject from Bike** and **Spoke Jam Attack** to available buttons. The
+   default stick-click bindings may not suit an N64-style controller.
 
-`native/src/rr64_controller_mappings.hpp` registers the upstream 8BitDo 64
-SDL mappings before processing input events. Source: SDL_GameControllerDB
-commit `5a12daa568d19344f9b6e9286ef5929833b25c7c`; license retained in the header.
-Mappings match exact GUIDs, with explicit platform filtering: Windows and macOS
-can share a GUID but use different raw axis numbering. These mappings expose
-the C buttons as right-stick directions. No blanket mapping is applied to other
-8BitDo products or unidentified receiver modes.
+The common defaults are designed for a modern dual-stick controller. N64 C
+buttons can appear as right-stick directions during remapping; this is expected.
+Bindings for opposite C directions share axes, so this does not provide separate
+simultaneous opposite-button input. Existing layouts and saved bindings are kept.
 
-The frontend remapping cancel check now uses the selected player's actual profile
-and requires a digital controller binding. Previously it read profile zero and
-compared numeric IDs even for keyboard/axis bindings. The menu-toggle button itself
-can be rebound; Escape still cancels. Existing saved controls are preserved.
+## 8BitDo 64 Bluetooth Controller
 
-Opt-in `RR64_DIAGNOSTICS=1` device-added records now include GUID, VID/PID,
-raw button/axis/hat counts and the selected SDL mapping. No per-frame input logging
-was added. A controller not recognized by SDL still needs its device information;
-this change does not implement a universal raw-joystick mapper.
+The 1.3.1 Revision 2 mapping improvements are retained. The Linux reporter
+confirmed that their **8BitDo 64 Bluetooth Controller, Model 8ONE**, could
+configure the buttons except the left-stick click in their tested setup.
+D-mode mappings and the separate Switch-mode mappings remain supported.
+Other models, firmware versions, receivers and connection modes may expose
+different devices; this is not a claim that every combination has been tested.
 
-## Setup and limits
+**Linux L3 limitation:** the tested Linux Bluetooth/evdev N64 driver layout
+does not expose a separate thumb-click input. Remapping cannot recover an event
+that the driver does not provide. This limitation applies to that driver/device
+path, not all Linux controllers or all 8BitDo modes. Use another available button
+for eject. No driver replacement or universal L3 repair is included.
 
-Assign the controller in Controls, then use Customize Controls. The common default
-layout is still intended for a modern dual-stick controller. On the upstream N64
-mapping, physical B is SDL B, whereas the common game default for braking is SDL X:
-remap Brake/B and menu Back to physical B. Map shoulders and optional dedicated
-actions to the available buttons as desired. C inputs can appear as right-stick
-directions in the binding labels; this is expected for this device mapping.
+## Assigned-profile correction in 1.4
 
-Windows production build and 46 ROM-free checks passed. The smoke test uses the
-real SDL DLL and actual binding cancellation code, exercising raw virtual-device
-buttons, C/steering axes, trigger press/release, diagonal D-pad and removal. It
-checks registration by the real GUID, substituting only a virtual GUID for input
-injection. It does not emulate receiver firmware or prove physical-device support.
-No game launched, no Linux build tested and no release package published for this
-change. Reporter acceptance with the actual controller is pending.
+Gameplay buttons, steering, dedicated actions and overlay input now follow the
+assigned player's profile consistently. This repairs a source-level mismatch
+where single-player gameplay could read an older default after another profile
+was edited. Virtual-controller checks passed on Windows and Linux; the separate
+PikaOS report about B not working in game menus still needs hardware confirmation.
+
+Edited bindings are saved. A separately chosen custom layout may need to be
+selected again after reconnecting or restarting; persisting that layout-to-device
+association is a separate existing limitation. Editing the device's default
+assigned layout does persist.
+
+## If a button still does not work
+
+Report the exact game build, controller model, D/S mode, connection method,
+operating system and the action being configured. Include whether the button is
+recognized in Controls and whether it fails in the overlay, original menus or race.
+
+Optional diagnostics are off by default. `RR64_DIAGNOSTICS=1` records device
+identity/mapping; `RR64_CONTROLLER_BUTTON_TRACE=1` records up to 256 raw/mapped
+joystick button events. Press the failing button early, followed by working
+buttons. This button trace does not collect keyboard or continuous-axis input.
+Share the relevant log after reviewing it for private information; no ROM or save
+is needed for a controller report.

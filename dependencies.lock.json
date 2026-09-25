@@ -52,6 +52,10 @@
         "sha256": "6aabf9d55dc23aecb880e5285b2660bd58180511e48a15047d722f27b8314d48"
       },
       {
+        "path": "ultramodern/include/ultramodern/rr64_launcher_refresh.hpp",
+        "sha256": "429ce925b222d5ca2412750f63a0e667ccadb65b2cba9ba77c3dcbe477d95c81"
+      },
+      {
         "path": "ultramodern/include/ultramodern/rr64_scheduler_diagnostics.hpp",
         "sha256": "2ef012dd2af06f35093995c5a4f3d64f4c6818a5559081745abdbc1a14935f67"
       },
@@ -139,6 +143,14 @@
         "sha256": "54f98641e13f06daed8da1dc3fd8b581df9040b2334e4f25fb03fa9fd0b648d6"
       },
       {
+        "path": "src/common/rt64_rr64_hud_view.h",
+        "sha256": "1dfb878786ee0c67bf532be12eae82578a17a6d3a54aff687dc843cdf5d9e63b"
+      },
+      {
+        "path": "src/common/rt64_rr64_menu_borders.h",
+        "sha256": "fa42be812afde21ad16a1d9df99af8e13ab1cc26ebb36e0e7dcc28cbc8291428"
+      },
+      {
         "path": "src/common/rt64_rr64_texture_hash_cache.h",
         "sha256": "5677668ae096564f8de2dff919c1a5aac931ca5f4b5b0c8ab7bef6d75ab91162"
       },
@@ -148,7 +160,11 @@
       },
       {
         "path": "src/common/rt64_rr64_video_aspect.h",
-        "sha256": "3820c2194e0c7705ede81531f58eaa6045237cdf2f4818cf88e81433faa5dbbe"
+        "sha256": "08ad26f8989b739a50786e27a1ec4301f65f1ae599ebf2fd50c09ff8bd8b9fbb"
+      },
+      {
+        "path": "src/common/rt64_sky_sampling.h",
+        "sha256": "f9bd47decaf395c8f1029494ecb207d3af0e42c0b858a18a00d3c26c3e1c45b8"
       },
       {
         "path": "src/hle/rt64_rr64_authored_cadence.h",
@@ -157,6 +173,10 @@
       {
         "path": "src/hle/rt64_rr64_authored_frame.h",
         "sha256": "d886235c3e45c1b9dab7852fcde2cc1b86687ffadc845e73528e4384f74245da"
+      },
+      {
+        "path": "src/hle/rt64_rr64_command_profile.h",
+        "sha256": "f7f5fb85a2521ca00744599fa77dd0e798ef7695aa6eef72d80dd03ec72ee75a"
       },
       {
         "path": "src/hle/rt64_rr64_coordinate_consistency.h",
@@ -168,11 +188,19 @@
       },
       {
         "path": "src/hle/rt64_rr64_frame_pacing.h",
-        "sha256": "a46d95e7a770d1127ceab87a58f583629eecde7a1a0903bc9807308adaaaa9e9"
+        "sha256": "0361b16b8b25b2a237b7113455db4458fcd966d236cbbbe0e51ea8cc94ec1a55"
       },
       {
         "path": "src/hle/rt64_rr64_geometry_match.h",
         "sha256": "184c77431a0d96f272d259cb60eec28a5e6a4249698559b0fff8b832d56c8bd2"
+      },
+      {
+        "path": "src/hle/rt64_rr64_interpolation_pressure.h",
+        "sha256": "96528a989396d4fcd3d330c44ea2077b036565473b2d1c1af1fd869b262a82eb"
+      },
+      {
+        "path": "src/hle/rt64_rr64_matching_evidence.h",
+        "sha256": "59744b7d609fd7eab8cb04ae760734270be29716abc9bc27550ba43cc63ba272"
       },
       {
         "path": "src/hle/rt64_rr64_matching_preflight.h",
@@ -184,7 +212,15 @@
       },
       {
         "path": "src/hle/rt64_rr64_pipeline_diagnostics.h",
-        "sha256": "8f3af729828955647075e819bf01933f0fc442235d2cede6e08e9f31fe49155f"
+        "sha256": "e0ac9ae8f063240de83d3a306399d4adefdb927846a94eae2d74e35095857af7"
+      },
+      {
+        "path": "src/hle/rt64_rr64_present_config.h",
+        "sha256": "82019f1e4eb9e283149eadc265a81d19208f0c47f13aa152fabeeefcbf39a28e"
+      },
+      {
+        "path": "src/hle/rt64_rr64_static_world_motion.h",
+        "sha256": "07c8b960d345d246d43b017238825f4125e795fef88c9df0129445136820a5d0"
       },
       {
         "path": "src/hle/rt64_rr64_translation_rejection.h",
@@ -193,30 +229,6 @@
       {
         "path": "src/render/rt64_rr64_frame_overwrite.h",
         "sha256": "dff303cbea767593553f43b11f6b0cc3b0eb8bdedc088ad06de7c89f43a4c670"
-      },
-      {
-        "path": "src/common/rt64_rr64_menu_borders.h",
-        "sha256": "fa42be812afde21ad16a1d9df99af8e13ab1cc26ebb36e0e7dcc28cbc8291428"
-      },
-      {
-        "path": "src/hle/rt64_rr64_command_profile.h",
-        "sha256": "f7f5fb85a2521ca00744599fa77dd0e798ef7695aa6eef72d80dd03ec72ee75a"
-      },
-      {
-        "path": "src/hle/rt64_rr64_matching_evidence.h",
-        "sha256": "59744b7d609fd7eab8cb04ae760734270be29716abc9bc27550ba43cc63ba272"
-      },
-      {
-        "path": "src/hle/rt64_rr64_static_world_motion.h",
-        "sha256": "07c8b960d345d246d43b017238825f4125e795fef88c9df0129445136820a5d0"
-      },
-      {
-        "path": "src/common/rt64_rr64_hud_view.h",
-        "sha256": "1dfb878786ee0c67bf532be12eae82578a17a6d3a54aff687dc843cdf5d9e63b"
-      },
-      {
-        "path": "src/common/rt64_sky_sampling.h",
-        "sha256": "f9bd47decaf395c8f1029494ecb207d3af0e42c0b858a18a00d3c26c3e1c45b8"
       }
     ]
   },
@@ -292,6 +304,10 @@
       {
         "path": "plume_present_outcome.h",
         "sha256": "28c66fefb7ea04f5872e34e094281c4ba93e45db9c5b8d87aac9f15beaad9a62"
+      },
+      {
+        "path": "plume_vulkan_swapchain_policy.h",
+        "sha256": "084975bdfcf914029085821c272670549209e0867e776e904f780f00a9f0378d"
       }
     ]
   },
@@ -372,16 +388,16 @@
     "patch": "dependency-patches/native_lib_RecompFrontend.patch",
     "extraFiles": [
       {
+        "path": "recompinput/include/recompinput/rr64_n64_switch_mapping.h",
+        "sha256": "19e9f05bff024962b8baaa93939467f009dc2c10173b42c53ba773eca8010afc"
+      },
+      {
         "path": "recompinput/include/recompinput/rr64_player_assignment.h",
         "sha256": "4ecf4b2424e9d282b47c409a56319d14bafa52b7fd11ff0d98ace8a12ddd9524"
       },
       {
         "path": "recompui/include/recompui/startup_diagnostics.h",
-        "sha256": "2f66a5eea12ac371b13b88d3ceea6f7fe22b8ae291948cf99f052db95f38d910"
-      },
-      {
-        "path": "recompinput/include/recompinput/rr64_n64_switch_mapping.h",
-        "sha256": "19e9f05bff024962b8baaa93939467f009dc2c10173b42c53ba773eca8010afc"
+        "sha256": "bd71dc83ba55102fc5c4c4e8a10c412f0b48c9da74d130604a6ed0c1592e2d2b"
       }
     ]
   },

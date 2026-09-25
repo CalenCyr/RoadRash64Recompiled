@@ -13,6 +13,58 @@ index 7f1533e..28334ec 100644
  
      /**
       * The following arguments contain mandatory callbacks that need to be registered (i.e., can't be `nullptr`):
+diff --git a/librecomp/include/librecomp/mods.hpp b/librecomp/include/librecomp/mods.hpp
+index 37556bd..13fb34b 100644
+--- a/librecomp/include/librecomp/mods.hpp
++++ b/librecomp/include/librecomp/mods.hpp
+@@ -277,6 +277,17 @@ namespace recomp {
+ 
+         class ModContext;
+         class ModHandle;
++        // Application-owned content can share the normal mod list/persistence
++        // while imposing an additional session lock. Callbacks must not call
++        // mod APIs: they execute inside the manager's change boundary.
++        // One operation may update at most one application-owned preference;
++        // multi-policy dependency changes are rejected before applying either.
++        struct ModTogglePolicy {
++            std::function<bool()> can_toggle;
++            std::function<bool(bool)> apply_enabled;
++            std::function<std::string()> status;
++            std::function<bool()> can_rescan;
++        };
+         using content_enabled_callback = void(ModContext&, const ModHandle&);
+         using content_disabled_callback = void(ModContext&, const ModHandle&);
+         using content_reordered_callback = void(ModContext&);
+@@ -340,6 +351,10 @@ namespace recomp {
+ 
+             void register_game(const std::string& mod_game_id);
+             void register_embedded_mod(const std::string& mod_id, std::span<const uint8_t> mod_bytes);
++            void register_toggle_policy(const std::string& mod_id, ModTogglePolicy policy);
++            bool can_toggle_mod(const std::string& mod_id) const;
++            std::string get_mod_status(const std::string& mod_id) const;
++            bool can_rescan_mods() const;
+             void register_deprecated_mod(const std::string& mod_id, DeprecationStatus deprecation_status, const Version& maximum_version);
+             std::vector<ModOpenErrorDetails> scan_mod_folder(const std::filesystem::path& mod_folder);
+             void close_mods();
+@@ -407,6 +422,7 @@ namespace recomp {
+             // Maps game mod ID to the mod's internal integer ID. 
+             std::unordered_map<std::string, size_t> mod_game_ids;
+             std::unordered_map<std::string, std::span<const uint8_t>> embedded_mod_bytes;
++            std::unordered_map<std::string, ModTogglePolicy> toggle_policies;
+             std::vector<ModHandle> opened_mods;
+             std::unordered_map<std::string, size_t> opened_mods_by_id;
+             std::unordered_map<std::filesystem::path::string_type, size_t> opened_mods_by_filename;
+@@ -622,6 +638,10 @@ namespace recomp {
+ 
+         void initialize_mods();
+         void register_embedded_mod(const std::string& mod_id, std::span<const uint8_t> mod_bytes);
++        void register_mod_toggle_policy(const std::string& mod_id, ModTogglePolicy policy);
++        bool can_toggle_mod(const std::string& mod_id);
++        std::string get_mod_status(const std::string& mod_id);
++        bool can_rescan_mods();
+         void register_deprecated_mod(const std::string& mod_id, DeprecationStatus deprecation_status, const Version &maximum_version);
+         void scan_mods();
+         void close_mods();
 diff --git a/librecomp/src/ai.cpp b/librecomp/src/ai.cpp
 index 0195f2b..8c82d68 100644
 --- a/librecomp/src/ai.cpp
@@ -85,7 +137,7 @@ index 7ad6c21..5856b33 100644
      }
  }
 diff --git a/librecomp/src/mods.cpp b/librecomp/src/mods.cpp
-index 0f7de83..e5ccfa0 100644
+index 0f7de83..3f18d26 100644
 --- a/librecomp/src/mods.cpp
 +++ b/librecomp/src/mods.cpp
 @@ -613,7 +613,7 @@ recomp::mods::ModLoadError recomp::mods::ModContext::load_mod(recomp::mods::ModH
@@ -97,6 +149,109 @@ index 0f7de83..e5ccfa0 100644
          error_param = mod.manifest.minimum_recomp_version.to_string();
          return ModLoadError::MinimumRecompVersionNotMet;
      }
+@@ -636,6 +636,27 @@ void recomp::mods::ModContext::register_embedded_mod(const std::string &mod_id,
+     embedded_mod_bytes.emplace(mod_id, mod_bytes);
+ }
+ 
++void recomp::mods::ModContext::register_toggle_policy(const std::string& mod_id, ModTogglePolicy policy) {
++    toggle_policies.insert_or_assign(mod_id, std::move(policy));
++}
++
++bool recomp::mods::ModContext::can_toggle_mod(const std::string& mod_id) const {
++    const auto it = toggle_policies.find(mod_id);
++    return it == toggle_policies.end() || !it->second.can_toggle || it->second.can_toggle();
++}
++
++std::string recomp::mods::ModContext::get_mod_status(const std::string& mod_id) const {
++    const auto it = toggle_policies.find(mod_id);
++    return it == toggle_policies.end() || !it->second.status ? std::string{} : it->second.status();
++}
++
++bool recomp::mods::ModContext::can_rescan_mods() const {
++    for (const auto& [id, policy] : toggle_policies) {
++        if (policy.can_rescan && !policy.can_rescan()) return false;
++    }
++    return true;
++}
++
+ void recomp::mods::ModContext::register_deprecated_mod(const std::string& mod_id, DeprecationStatus deprecation_status, const Version &maximum_version) {
+     deprecated_mods[mod_id].status = deprecation_status;
+     deprecated_mods[mod_id].maximum_version = maximum_version;
+@@ -795,6 +816,9 @@ void recomp::mods::ModContext::dirty_mod_configuration_thread_process() {
+ }
+ 
+ std::vector<recomp::mods::ModOpenErrorDetails> recomp::mods::ModContext::scan_mod_folder(const std::filesystem::path& mod_folder) {
++    // Preserve the current list and preferences when immutable application
++    // content is in use; an asynchronous config save may still be pending.
++    if (!can_rescan_mods()) return {};
+     std::vector<recomp::mods::ModOpenErrorDetails> ret{};
+     std::error_code ec;
+     close_mods();
+@@ -845,6 +869,7 @@ std::vector<recomp::mods::ModOpenErrorDetails> recomp::mods::ModContext::scan_mo
+ }
+ 
+ void recomp::mods::ModContext::load_mods_config() {
++    if (!can_rescan_mods()) return;
+     std::unordered_set<std::string> config_enabled_mods;
+     std::vector<std::string> config_mod_order;
+     std::vector<bool> opened_mod_is_known;
+@@ -881,6 +906,13 @@ void recomp::mods::ModContext::load_mods_config() {
+             enable_mod(mod_id, true, false);
+         }
+     }
++    // Publish both enabled and disabled preferences before ROM initialization.
++    // Content on_enabled callbacks only run later, during game/mod loading.
++    for (const auto& [id, policy] : toggle_policies) {
++        if (opened_mods_by_id.contains(id) && policy.apply_enabled) {
++            policy.apply_enabled(is_mod_enabled(id) || is_mod_auto_enabled(id));
++        }
++    }
+ }
+ 
+ void recomp::mods::ModContext::rebuild_mod_order_lookup() {
+@@ -1047,6 +1079,42 @@ void recomp::mods::ModContext::enable_mod(const std::string& mod_id, bool enable
+         return;
+     }
+ 
++    if (trigger_save && !toggle_policies.empty()) {
++        if (!can_toggle_mod(mod_id)) return;
++        // Resolve the proposed dependency closure before changing any normal
++        // enabled/order state. An ordinary mod cannot bypass a locked content
++        // pack by auto-enabling it as a required dependency.
++        auto next_enabled = enabled_mods;
++        if (enabled) next_enabled.insert(mod_id);
++        else next_enabled.erase(mod_id);
++        std::unordered_set<std::string> next_auto;
++        std::vector<std::string> pending(next_enabled.begin(), next_enabled.end());
++        while (!pending.empty()) {
++            auto id = std::move(pending.back());
++            pending.pop_back();
++            const auto found = opened_mods_by_id.find(id);
++            if (found == opened_mods_by_id.end()) continue;
++            for (const auto& dependency : opened_mods[found->second].manifest.dependencies) {
++                if (!dependency.optional && !is_mod_deprecated(dependency.mod_id, dependency.version) &&
++                    next_auto.insert(dependency.mod_id).second) pending.push_back(dependency.mod_id);
++            }
++        }
++        unsigned applications = 0;
++        for (const auto& [id, policy] : toggle_policies) {
++            const bool before = enabled_mods.contains(id) || auto_enabled_mods.contains(id);
++            const bool after = next_enabled.contains(id) || next_auto.contains(id);
++            if (before != after && !can_toggle_mod(id)) return;
++            if (before != after && policy.apply_enabled && ++applications > 1) return;
++        }
++        for (const auto& [id, policy] : toggle_policies) {
++            const bool before = enabled_mods.contains(id) || auto_enabled_mods.contains(id);
++            const bool after = next_enabled.contains(id) || next_auto.contains(id);
++            // Recheck the application's lock atomically with its preference
++            // update; rejected requests leave normal mod persistence untouched.
++            if (before != after && policy.apply_enabled && !policy.apply_enabled(after)) return;
++        }
++    }
++
+     if (enabled) {
+         bool was_enabled = enabled_mods.emplace(mod_id).second;
+ 
 diff --git a/librecomp/src/pak.cpp b/librecomp/src/pak.cpp
 index 0be1513..9facf31 100644
 --- a/librecomp/src/pak.cpp
@@ -603,10 +758,37 @@ index 0be1513..9facf31 100644
 +    _return<s32>(ctx, valid_pfs(rdram, pfs) ? kPfsOk : kPfsErrNoPack);
  }
 diff --git a/librecomp/src/recomp.cpp b/librecomp/src/recomp.cpp
-index 1200f77..3c82cea 100644
+index 1200f77..77a9e03 100644
 --- a/librecomp/src/recomp.cpp
 +++ b/librecomp/src/recomp.cpp
-@@ -243,6 +243,19 @@ const recomp::Version& recomp::get_project_version() {
+@@ -102,6 +102,26 @@ void recomp::mods::register_embedded_mod(const std::string &mod_id, std::span<co
+     mod_context->register_embedded_mod(mod_id, mod_bytes);
+ }
+ 
++void recomp::mods::register_mod_toggle_policy(const std::string& mod_id, ModTogglePolicy policy) {
++    std::lock_guard lock(mod_context_mutex);
++    mod_context->register_toggle_policy(mod_id, std::move(policy));
++}
++
++bool recomp::mods::can_toggle_mod(const std::string& mod_id) {
++    std::lock_guard lock(mod_context_mutex);
++    return mod_context->can_toggle_mod(mod_id);
++}
++
++std::string recomp::mods::get_mod_status(const std::string& mod_id) {
++    std::lock_guard lock(mod_context_mutex);
++    return mod_context->get_mod_status(mod_id);
++}
++
++bool recomp::mods::can_rescan_mods() {
++    std::lock_guard lock(mod_context_mutex);
++    return mod_context->can_rescan_mods();
++}
++
+ void recomp::mods::register_deprecated_mod(const std::string& mod_id, recomp::mods::DeprecationStatus deprecation_status, const Version& maximum_version) {
+     std::lock_guard<std::mutex> lock(mod_context_mutex);
+     mod_context->register_deprecated_mod(mod_id, deprecation_status, maximum_version);
+@@ -243,6 +263,19 @@ const recomp::Version& recomp::get_project_version() {
      return project_version;
  }
  
@@ -626,7 +808,7 @@ index 1200f77..3c82cea 100644
  bool recomp::Version::from_string(const std::string& str, Version& out) {
      std::array<size_t, 2> period_indices;
      size_t cur_pos = 0;
-@@ -841,12 +854,12 @@ void recomp::start(
+@@ -841,12 +874,12 @@ void recomp::start(
      uint8_t* rdram;
      bool alloc_failed;
  #ifdef _WIN32
@@ -713,15 +895,16 @@ index 3198be0..919c935 100644
 +    return audio_remaining_bytes_for_game(actual_buffered_frames, sample_rate);
  }
 diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
-index 090cc42..66ce384 100644
+index 090cc42..be71747 100644
 --- a/ultramodern/src/events.cpp
 +++ b/ultramodern/src/events.cpp
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
 +#include "ultramodern/rr64_snapshot_gate.hpp"
++#include "ultramodern/rr64_launcher_refresh.hpp"
  #include <thread>
  #include <atomic>
  #include <chrono>
-@@ -8,6 +9,7 @@
+@@ -8,6 +10,7 @@
  #include <mutex>
  #include <queue>
  #include <cstring>
@@ -729,7 +912,7 @@ index 090cc42..66ce384 100644
  
  #include "blockingconcurrentqueue.h"
  
-@@ -17,8 +19,16 @@
+@@ -17,8 +20,16 @@
  
  #include "ultramodern/rsp.hpp"
  #include "ultramodern/renderer_context.hpp"
@@ -746,7 +929,7 @@ index 090cc42..66ce384 100644
  
  void ultramodern::events::set_callbacks(const ultramodern::events::callbacks_t& callbacks) {
      events_callbacks = callbacks;
-@@ -26,10 +36,12 @@ void ultramodern::events::set_callbacks(const ultramodern::events::callbacks_t&
+@@ -26,20 +37,25 @@ void ultramodern::events::set_callbacks(const ultramodern::events::callbacks_t&
  
  struct SpTaskAction {
      OSTask task;
@@ -759,7 +942,22 @@ index 090cc42..66ce384 100644
  };
  
  struct UpdateConfigAction {
-@@ -187,6 +199,8 @@ void vi_thread_func() {
+ };
+ 
+-struct DummyWorkloadAction {
++struct LauncherRefreshAction {
+     int32_t fb_address;
++    ultramodern::renderer::ViRegs regs;
++    scheduler_diagnostics::Clock::time_point enqueued = scheduler_diagnostics::Clock::now();
+ };
+ 
+-using Action = std::variant<SpTaskAction, ScreenUpdateAction, UpdateConfigAction, DummyWorkloadAction>;
++using Action = std::variant<SpTaskAction, ScreenUpdateAction, UpdateConfigAction, LauncherRefreshAction>;
++static ultramodern::rr64::LauncherRefreshBudget launcher_refresh_budget;
+ 
+ struct ViState {
+     const OSViMode* mode;
+@@ -187,6 +203,8 @@ void vi_thread_func() {
      using namespace std::chrono_literals;
  
      int remaining_retraces = 1;
@@ -768,7 +966,7 @@ index 090cc42..66ce384 100644
  
      while (!exited) {
          // Determine the next VI time (more accurate than adding 16ms each VI interrupt)
-@@ -206,9 +220,26 @@ void vi_thread_func() {
+@@ -206,9 +224,26 @@ void vi_thread_func() {
          }
          ultramodern::sleep_until(next);
          auto time_now = ultramodern::time_since_start();
@@ -795,7 +993,33 @@ index 090cc42..66ce384 100644
              //printf("Skipped % " PRId64 " frames in VI interupt thread!\n", new_total_vis - total_vis - 1);
          }
          total_vis = new_total_vis;
-@@ -249,19 +280,24 @@ void vi_thread_func() {
+@@ -219,12 +254,20 @@ void vi_thread_func() {
+             set_dummy_vi(odd);
+             odd = !odd;
+ 
+-            events_context.action_queue.enqueue(DummyWorkloadAction{events_context.vi.get_next_state()->framebuffer});
++            // One action owns the dummy workload and its corresponding screen
++            // update. A blocked launcher can retain at most two such pairs,
++            // including an action currently being consumed by the renderer.
++            if (launcher_refresh_budget.try_acquire()) {
++                if (!events_context.action_queue.enqueue(LauncherRefreshAction{
++                        events_context.vi.get_next_state()->framebuffer, events_context.vi.regs})) {
++                    launcher_refresh_budget.release();
++                }
++            }
++        }
++        else {
++            // Guest screens retain their existing order and are never dropped.
++            events_context.action_queue.enqueue(ScreenUpdateAction{ events_context.vi.regs });
+         }
+-
+-        // Queue a screen update for the graphics thread with the current VI register state.
+-        // Doing this before the VI update is equivalent to updating the screen after the previous frame's scanout finished.
+-        events_context.action_queue.enqueue(ScreenUpdateAction{ events_context.vi.regs });
+ 
+         // Update VI registers and swap VI modes.
+         events_context.vi.update_vi();
+@@ -249,19 +292,24 @@ void vi_thread_func() {
              }
          }
  
@@ -820,7 +1044,7 @@ index 090cc42..66ce384 100644
      uint8_t* rdram = events_context.rdram;
      std::lock_guard lock{ events_context.message_mutex };
      ultramodern::enqueue_external_message(events_context.dp.mq, events_context.dp.msg, false, true);
-@@ -283,11 +319,13 @@ void task_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_r
+@@ -283,11 +331,13 @@ void task_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_r
              return;
          }
  
@@ -834,7 +1058,7 @@ index 090cc42..66ce384 100644
          // Tell the game that the RSP has completed
          sp_complete();
      }
-@@ -357,22 +395,30 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+@@ -357,22 +407,30 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
          // Try to pull an action from the queue
          Action action;
          if (events_context.action_queue.wait_dequeue_timed(action, 1ms)) {
@@ -871,7 +1095,7 @@ index 090cc42..66ce384 100644
                  dp_complete();
                  // TODO hook the parsed event up to the actual parsing point when a callback is added to RT64.
                  ultramodern::extensions::on_displaylist_parsed(displaylist);
-@@ -380,8 +426,13 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+@@ -380,8 +438,13 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
                  // printf("Renderer ProcessDList time: %d us\n", static_cast<u32>(std::chrono::duration_cast<std::chrono::microseconds>(renderer_end - renderer_start).count()));
              }
              else if (const auto* screen_update_action = std::get_if<ScreenUpdateAction>(&action)) {
@@ -886,7 +1110,28 @@ index 090cc42..66ce384 100644
                  display_refresh_rate = renderer_context->get_display_framerate();
                  resolution_scale = renderer_context->get_resolution_scale();
              }
-@@ -571,7 +622,10 @@ void ultramodern::submit_rsp_task(RDRAM_ARG PTR(OSTask) task_) {
+@@ -392,8 +455,18 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+                     old_config = new_config;
+                 }
+             }
+-            else if (const auto* dummy_workload_action = std::get_if<DummyWorkloadAction>(&action)) {
+-                renderer_context->send_dummy_workload(dummy_workload_action->fb_address);
++            else if (const auto* launcher_action = std::get_if<LauncherRefreshAction>(&action)) {
++                const auto completion = launcher_refresh_budget.complete_on_exit();
++                renderer_context->send_dummy_workload(launcher_action->fb_address);
++                scheduler_diagnostics::record(scheduler_diagnostics::Stage::ScreenQueue,
++                    scheduler_diagnostics::Clock::now() - launcher_action->enqueued);
++                events_context.vi.update_screen_regs = launcher_action->regs;
++                {
++                    scheduler_diagnostics::Scope screen_scope{scheduler_diagnostics::Stage::ScreenUpdate};
++                    renderer_context->update_screen();
++                }
++                display_refresh_rate = renderer_context->get_display_framerate();
++                resolution_scale = renderer_context->get_resolution_scale();
+             }
+         }
+     }
+@@ -571,7 +644,10 @@ void ultramodern::submit_rsp_task(RDRAM_ARG PTR(OSTask) task_) {
  }
  
  void ultramodern::send_si_message() {

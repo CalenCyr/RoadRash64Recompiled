@@ -1,0 +1,2250 @@
+{
+  "reference_commit": "58cfcb022e10f83bc3b889d7e97508cae6837098",
+  "previews": {
+    "gTextureCoursePreviewMarioRaceway": {
+      "rom_offset": 8000536,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewChocoMountain": {
+      "rom_offset": 8013168,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewBowsersCastle": {
+      "rom_offset": 8023956,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewBansheeBoardwalk": {
+      "rom_offset": 8036468,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewYoshiValley": {
+      "rom_offset": 8046368,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewFrappeSnowland": {
+      "rom_offset": 8061280,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewKoopaTroopaBeach": {
+      "rom_offset": 8070504,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewRoyalRaceway": {
+      "rom_offset": 8079500,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewLuigiRaceway": {
+      "rom_offset": 8089772,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewMooMooFarm": {
+      "rom_offset": 8101408,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewToadsTurnpike": {
+      "rom_offset": 8111080,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewKalimariDesert": {
+      "rom_offset": 8121732,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewSherbetLand": {
+      "rom_offset": 8131984,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewRainbowRoad": {
+      "rom_offset": 8144288,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewWarioStadium": {
+      "rom_offset": 8154564,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewBlockFort": {
+      "rom_offset": 8167576,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewSkyscraper": {
+      "rom_offset": 8177088,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewDoubleDeck": {
+      "rom_offset": 8187056,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewDksJungleParkway": {
+      "rom_offset": 8197544,
+      "width": 128,
+      "height": 78
+    },
+    "gTextureCoursePreviewBigDonut": {
+      "rom_offset": 8213644,
+      "width": 128,
+      "height": 78
+    }
+  },
+  "courses": {
+    "mario_raceway": {
+      "symbols": {
+        "d_course_mario_raceway_item_box_spawns": {
+          "address": 100701336,
+          "size": 128,
+          "type": "ActorSpawnData",
+          "count": 16
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188064,
+          "size": 12
+        },
+        {
+          "rom_offset": 1300,
+          "size": 12
+        }
+      ]
+    },
+    "choco_mountain": {
+      "symbols": {
+        "d_course_choco_mountain_item_box_spawns": {
+          "address": 100692560,
+          "size": 128,
+          "type": "ActorSpawnData",
+          "count": 16
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188076,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188076,
+          "size": 12
+        }
+      ]
+    },
+    "bowsers_castle": {
+      "symbols": {
+        "d_course_bowsers_castle_item_box_spawns": {
+          "address": 100701040,
+          "size": 104,
+          "type": "ActorSpawnData",
+          "count": 13
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188088,
+          "size": 12
+        },
+        {
+          "rom_offset": 1300,
+          "size": 12
+        }
+      ]
+    },
+    "banshee_boardwalk": {
+      "symbols": {
+        "d_course_banshee_boardwalk_item_box_spawns": {
+          "address": 100709328,
+          "size": 136,
+          "type": "ActorSpawnData",
+          "count": 17
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1300,
+          "size": 12
+        },
+        {
+          "rom_offset": 1300,
+          "size": 12
+        }
+      ]
+    },
+    "yoshi_valley": {
+      "symbols": {
+        "d_course_yoshi_valley_item_box_spawns": {
+          "address": 100761872,
+          "size": 304,
+          "type": "ActorSpawnData",
+          "count": 38
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188112,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188364,
+          "size": 12
+        }
+      ]
+    },
+    "frappe_snowland": {
+      "symbols": {
+        "d_course_frappe_snowland_item_box_spawns": {
+          "address": 100694032,
+          "size": 128,
+          "type": "ActorSpawnData",
+          "count": 16
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188124,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188376,
+          "size": 12
+        }
+      ]
+    },
+    "koopa_troopa_beach": {
+      "symbols": {
+        "d_course_koopa_troopa_beach_item_box_spawns": {
+          "address": 100765304,
+          "size": 248,
+          "type": "ActorSpawnData",
+          "count": 31
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188136,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188388,
+          "size": 12
+        }
+      ]
+    },
+    "royal_raceway": {
+      "symbols": {
+        "d_course_royal_raceway_item_box_spawns": {
+          "address": 100719488,
+          "size": 168,
+          "type": "ActorSpawnData",
+          "count": 21
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188148,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188310,
+          "size": 12
+        }
+      ]
+    },
+    "luigi_raceway": {
+      "symbols": {
+        "d_course_luigi_raceway_item_box_spawns": {
+          "address": 100728296,
+          "size": 152,
+          "type": "ActorSpawnData",
+          "count": 19
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188064,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188214,
+          "size": 12
+        }
+      ]
+    },
+    "moo_moo_farm": {
+      "symbols": {
+        "d_course_moo_moo_farm_item_box_spawns": {
+          "address": 100746208,
+          "size": 216,
+          "type": "ActorSpawnData",
+          "count": 27
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188172,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188424,
+          "size": 12
+        }
+      ]
+    },
+    "toads_turnpike": {
+      "symbols": {
+        "d_course_toads_turnpike_item_box_spawns": {
+          "address": 100809440,
+          "size": 136,
+          "type": "ActorSpawnData",
+          "count": 17
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188184,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188436,
+          "size": 12
+        }
+      ]
+    },
+    "kalimari_desert": {
+      "symbols": {
+        "d_course_kalimari_desert_item_box_spawns": {
+          "address": 100806280,
+          "size": 128,
+          "type": "ActorSpawnData",
+          "count": 16
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188196,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188448,
+          "size": 12
+        }
+      ]
+    },
+    "sherbet_land": {
+      "symbols": {
+        "d_course_sherbet_land_item_box_spawns": {
+          "address": 100703104,
+          "size": 160,
+          "type": "ActorSpawnData",
+          "count": 20
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188064,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188460,
+          "size": 12
+        }
+      ]
+    },
+    "rainbow_road": {
+      "symbols": {
+        "d_course_rainbow_road_item_box_spawns": {
+          "address": 100754232,
+          "size": 264,
+          "type": "ActorSpawnData",
+          "count": 33
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1300,
+          "size": 12
+        },
+        {
+          "rom_offset": 1300,
+          "size": 12
+        }
+      ]
+    },
+    "wario_stadium": {
+      "symbols": {
+        "d_course_wario_stadium_item_box_spawns": {
+          "address": 100715328,
+          "size": 248,
+          "type": "ActorSpawnData",
+          "count": 31
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188232,
+          "size": 12
+        },
+        {
+          "rom_offset": 1300,
+          "size": 12
+        }
+      ]
+    },
+    "dks_jungle_parkway": {
+      "symbols": {
+        "d_course_dks_jungle_parkway_item_box_spawns": {
+          "address": 100744896,
+          "size": 184,
+          "type": "ActorSpawnData",
+          "count": 23
+        }
+      },
+      "sky_colors": [
+        {
+          "rom_offset": 1188280,
+          "size": 12
+        },
+        {
+          "rom_offset": 1188532,
+          "size": 12
+        }
+      ]
+    }
+  },
+  "symbols": {
+    "gKalimariDesertClouds": {
+      "rom_offset": 948240,
+      "size": 112,
+      "type": "u16x4",
+      "count": 14
+    },
+    "gLuigiRacewayClouds": {
+      "rom_offset": 947768,
+      "size": 112,
+      "type": "u16x4",
+      "count": 14
+    },
+    "gYoshiValleyMooMooFarmClouds": {
+      "rom_offset": 947880,
+      "size": 88,
+      "type": "u16x4",
+      "count": 11
+    },
+    "gKoopaTroopaBeachClouds": {
+      "rom_offset": 947968,
+      "size": 56,
+      "type": "u16x4",
+      "count": 7
+    },
+    "gRoyalRacewayClouds": {
+      "rom_offset": 948024,
+      "size": 112,
+      "type": "u16x4",
+      "count": 14
+    },
+    "gSherbetLandClouds": {
+      "rom_offset": 948136,
+      "size": 104,
+      "type": "u16x4",
+      "count": 13
+    },
+    "gToadsTurnpikeRainbowRoadStars": {
+      "rom_offset": 948352,
+      "size": 352,
+      "type": "u16x4",
+      "count": 44
+    },
+    "gWarioStadiumStars": {
+      "rom_offset": 948704,
+      "size": 336,
+      "type": "u16x4",
+      "count": 42
+    }
+  },
+  "assets": {
+    "mario_raceway": {
+      "gTextureMarioRacewaySignLeft": {
+        "rom_offset": 8553680,
+        "block_offset": 28776,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureMarioRacewaySignRight": {
+        "rom_offset": 8553680,
+        "block_offset": 32872,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTLUTMarioRacewayPiranhaPlant": {
+        "rom_offset": 8553680,
+        "block_offset": 26448,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTexturePiranhaPlant1": {
+        "rom_offset": 6914936,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMarioRacewayPiranhaPlant"
+      },
+      "gTexturePiranhaPlant2": {
+        "rom_offset": 6915484,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMarioRacewayPiranhaPlant"
+      },
+      "gTexturePiranhaPlant3": {
+        "rom_offset": 6916092,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMarioRacewayPiranhaPlant"
+      },
+      "gTexturePiranhaPlant4": {
+        "rom_offset": 6916672,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMarioRacewayPiranhaPlant"
+      },
+      "gTexturePiranhaPlant5": {
+        "rom_offset": 6917216,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMarioRacewayPiranhaPlant"
+      },
+      "gTexturePiranhaPlant6": {
+        "rom_offset": 6917688,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMarioRacewayPiranhaPlant"
+      },
+      "gTexturePiranhaPlant7": {
+        "rom_offset": 6918132,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMarioRacewayPiranhaPlant"
+      },
+      "gTexturePiranhaPlant8": {
+        "rom_offset": 6918648,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMarioRacewayPiranhaPlant"
+      },
+      "gTexturePiranhaPlant9": {
+        "rom_offset": 6919424,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMarioRacewayPiranhaPlant"
+      }
+    },
+    "choco_mountain": {
+      "gTextureChocoMountainWall": {
+        "rom_offset": 8566304,
+        "block_offset": 23352,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureChocoMountainRock": {
+        "rom_offset": 8566304,
+        "block_offset": 25400,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      }
+    },
+    "bowsers_castle": {
+      "gTextureThwompSide": {
+        "rom_offset": 8576832,
+        "block_offset": 26424,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTLUTThwomp": {
+        "rom_offset": 8576832,
+        "block_offset": 28472,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureThwompFace1": {
+        "rom_offset": 8576832,
+        "block_offset": 28984,
+        "width": 16,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTThwomp"
+      },
+      "gTextureThwompFace2": {
+        "rom_offset": 8576832,
+        "block_offset": 30008,
+        "width": 16,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTThwomp"
+      },
+      "gTextureThwompFace3": {
+        "rom_offset": 8576832,
+        "block_offset": 31032,
+        "width": 16,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTThwomp"
+      },
+      "gTextureThwompFace4": {
+        "rom_offset": 8576832,
+        "block_offset": 32056,
+        "width": 16,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTThwomp"
+      },
+      "gTextureThwompFace5": {
+        "rom_offset": 8576832,
+        "block_offset": 33080,
+        "width": 16,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTThwomp"
+      },
+      "gTextureThwompFace6": {
+        "rom_offset": 8576832,
+        "block_offset": 34104,
+        "width": 16,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTThwomp"
+      }
+    },
+    "banshee_boardwalk": {
+      "gTLUTBoo": {
+        "rom_offset": 8592832,
+        "block_offset": 23680,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureBansheeBoardwalkFishEyes": {
+        "rom_offset": 8592832,
+        "block_offset": 28240,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTLUTBat": {
+        "rom_offset": 8592832,
+        "block_offset": 31672,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureBat1": {
+        "rom_offset": 8592832,
+        "block_offset": 32184,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTBat"
+      },
+      "gTextureBat2": {
+        "rom_offset": 8592832,
+        "block_offset": 34232,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTBat"
+      },
+      "gTextureBat3": {
+        "rom_offset": 8592832,
+        "block_offset": 36280,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTBat"
+      },
+      "gTextureBat4": {
+        "rom_offset": 8592832,
+        "block_offset": 38328,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTBat"
+      },
+      "gTextureBansheBoardwalkA050": {
+        "rom_offset": 8592832,
+        "block_offset": 41040,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureBansheBoardwalkAA78": {
+        "rom_offset": 8592832,
+        "block_offset": 43640,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureBoo01": {
+        "rom_offset": 7417280,
+        "block_offset": 0,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo02": {
+        "rom_offset": 7417280,
+        "block_offset": 1920,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo03": {
+        "rom_offset": 7417280,
+        "block_offset": 3840,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo04": {
+        "rom_offset": 7417280,
+        "block_offset": 5760,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo05": {
+        "rom_offset": 7417280,
+        "block_offset": 7680,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo06": {
+        "rom_offset": 7417280,
+        "block_offset": 9600,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo07": {
+        "rom_offset": 7417280,
+        "block_offset": 11520,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo08": {
+        "rom_offset": 7417280,
+        "block_offset": 13440,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo09": {
+        "rom_offset": 7417280,
+        "block_offset": 15360,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo10": {
+        "rom_offset": 7417280,
+        "block_offset": 17280,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo11": {
+        "rom_offset": 7417280,
+        "block_offset": 19200,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo12": {
+        "rom_offset": 7417280,
+        "block_offset": 21120,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo13": {
+        "rom_offset": 7417280,
+        "block_offset": 23040,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo14": {
+        "rom_offset": 7417280,
+        "block_offset": 24960,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo15": {
+        "rom_offset": 7417280,
+        "block_offset": 26880,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo16": {
+        "rom_offset": 7417280,
+        "block_offset": 28800,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo17": {
+        "rom_offset": 7417280,
+        "block_offset": 30720,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo18": {
+        "rom_offset": 7417280,
+        "block_offset": 32640,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo19": {
+        "rom_offset": 7417280,
+        "block_offset": 34560,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo20": {
+        "rom_offset": 7417280,
+        "block_offset": 36480,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo21": {
+        "rom_offset": 7417280,
+        "block_offset": 38400,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo22": {
+        "rom_offset": 7417280,
+        "block_offset": 40320,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo23": {
+        "rom_offset": 7417280,
+        "block_offset": 42240,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo24": {
+        "rom_offset": 7417280,
+        "block_offset": 44160,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo25": {
+        "rom_offset": 7417280,
+        "block_offset": 46080,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo26": {
+        "rom_offset": 7417280,
+        "block_offset": 48000,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo27": {
+        "rom_offset": 7417280,
+        "block_offset": 49920,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo28": {
+        "rom_offset": 7417280,
+        "block_offset": 51840,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      },
+      "gTextureBoo29": {
+        "rom_offset": 7417280,
+        "block_offset": 53760,
+        "width": 48,
+        "height": 40,
+        "type": "ci8",
+        "tlut": "gTLUTBoo"
+      }
+    },
+    "yoshi_valley": {
+      "gTextureYoshiValleyYoshiFlag": {
+        "rom_offset": 8608672,
+        "block_offset": 80288,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTLUTYoshiValleyHedgehog": {
+        "rom_offset": 8608672,
+        "block_offset": 84232,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureYoshiValleyHedgehog": {
+        "rom_offset": 8608672,
+        "block_offset": 84744,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTYoshiValleyHedgehog"
+      },
+      "gTextureYoshiValleyEggSpot": {
+        "rom_offset": 8608672,
+        "block_offset": 91504,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureYoshiValleyEgg": {
+        "rom_offset": 8608672,
+        "block_offset": 94120,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      }
+    },
+    "frappe_snowland": {
+      "gTLUTSnowman": {
+        "rom_offset": 8648512,
+        "block_offset": 19232,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureSnowmanHead": {
+        "rom_offset": 8648512,
+        "block_offset": 19744,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTSnowman"
+      },
+      "gTextureSnowmanBody": {
+        "rom_offset": 8648512,
+        "block_offset": 23840,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTSnowman"
+      },
+      "gTLUTSnow": {
+        "rom_offset": 8648512,
+        "block_offset": 27936,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureSnow": {
+        "rom_offset": 8648512,
+        "block_offset": 28448,
+        "width": 32,
+        "height": 32,
+        "type": "ci8",
+        "tlut": "gTLUTSnow"
+      },
+      "gTLUTFrappeSnowlandTree": {
+        "rom_offset": 8648512,
+        "block_offset": 29472,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureFrappeSnowlandTreeLeft": {
+        "rom_offset": 6894396,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTFrappeSnowlandTree"
+      },
+      "gTextureFrappeSnowlandTreeRight": {
+        "rom_offset": 6895504,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTFrappeSnowlandTree"
+      }
+    },
+    "koopa_troopa_beach": {
+      "gTLUTCrab": {
+        "rom_offset": 8662592,
+        "block_offset": 54824,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureCrab1": {
+        "rom_offset": 8662592,
+        "block_offset": 55336,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCrab"
+      },
+      "gTextureCrab2": {
+        "rom_offset": 8662592,
+        "block_offset": 59432,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCrab"
+      },
+      "gTextureCrab3": {
+        "rom_offset": 8662592,
+        "block_offset": 63528,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCrab"
+      },
+      "gTextureCrab4": {
+        "rom_offset": 8662592,
+        "block_offset": 67624,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCrab"
+      },
+      "gTextureCrab5": {
+        "rom_offset": 8662592,
+        "block_offset": 71720,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCrab"
+      },
+      "gTextureCrab6": {
+        "rom_offset": 8662592,
+        "block_offset": 75816,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCrab"
+      },
+      "gTextureCrab7": {
+        "rom_offset": 8662592,
+        "block_offset": 79912,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCrab"
+      },
+      "gTextureKoopaTroopaBirdWing": {
+        "rom_offset": 8662592,
+        "block_offset": 84992,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureKoopaTroopaBirdEye": {
+        "rom_offset": 8662592,
+        "block_offset": 87040,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureKoopaTroopaBirdBeak": {
+        "rom_offset": 8662592,
+        "block_offset": 89088,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureKoopaTroopaPalmFrond": {
+        "rom_offset": 8662592,
+        "block_offset": 93472,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureKoopaTroopaPalmTrunk": {
+        "rom_offset": 8662592,
+        "block_offset": 97568,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      }
+    },
+    "royal_raceway": {
+      "gTLUTRoyalRacewayPiranhaPlant": {
+        "rom_offset": 8694736,
+        "block_offset": 54800,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      }
+    },
+    "luigi_raceway": {
+      "gTextureLuigiRacewaySignLeft": {
+        "rom_offset": 8710368,
+        "block_offset": 50568,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureLuigiRacewaySignRight": {
+        "rom_offset": 8710368,
+        "block_offset": 54664,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureLuigiRacewayBalloonBasket": {
+        "rom_offset": 8710368,
+        "block_offset": 58760,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureLuigiRacewayBalloonRope": {
+        "rom_offset": 8710368,
+        "block_offset": 60808,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      }
+    },
+    "moo_moo_farm": {
+      "gTLUTMole": {
+        "rom_offset": 8728096,
+        "block_offset": 64624,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureMole1": {
+        "rom_offset": 8728096,
+        "block_offset": 65136,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMole"
+      },
+      "gTextureMole2": {
+        "rom_offset": 8728096,
+        "block_offset": 67184,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMole"
+      },
+      "gTextureMole3": {
+        "rom_offset": 8728096,
+        "block_offset": 69232,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMole"
+      },
+      "gTextureMole4": {
+        "rom_offset": 8728096,
+        "block_offset": 71280,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMole"
+      },
+      "gTextureMole5": {
+        "rom_offset": 8728096,
+        "block_offset": 73328,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMole"
+      },
+      "gTextureMole6": {
+        "rom_offset": 8728096,
+        "block_offset": 75376,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMole"
+      },
+      "gTextureMole7": {
+        "rom_offset": 8728096,
+        "block_offset": 77424,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTMole"
+      },
+      "gTextureMooMooFarmDirt": {
+        "rom_offset": 8728096,
+        "block_offset": 79472,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTCowImport": {
+        "rom_offset": 8728096,
+        "block_offset": 79984,
+        "width": 12,
+        "height": 17,
+        "type": "rgba16"
+      },
+      "gTLUTCow": {
+        "rom_offset": 8728096,
+        "block_offset": 79984,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureCow01Left": {
+        "rom_offset": 6896580,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureCow01Right": {
+        "rom_offset": 6897480,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureCow02Left": {
+        "rom_offset": 6898332,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureCow02Right": {
+        "rom_offset": 6899240,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureCow03Left": {
+        "rom_offset": 6900112,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureCow03Right": {
+        "rom_offset": 6900908,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureCow04Left": {
+        "rom_offset": 6901628,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureCow04Right": {
+        "rom_offset": 6902376,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureCow05Left": {
+        "rom_offset": 6903212,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureCow05Right": {
+        "rom_offset": 6904000,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCow"
+      },
+      "gTextureMooMooFarmSignLeft": {
+        "rom_offset": 6592480,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureMooMooFarmSignRight": {
+        "rom_offset": 6595144,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      }
+    },
+    "toads_turnpike": {
+      "gTextureToadsTurnpikeTruckWindshieldLeft": {
+        "rom_offset": 8748672,
+        "block_offset": 22968,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTruckWindshieldRight": {
+        "rom_offset": 8748672,
+        "block_offset": 25016,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTruckBox1": {
+        "rom_offset": 8748672,
+        "block_offset": 27064,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTruckHeadlights": {
+        "rom_offset": 8748672,
+        "block_offset": 29112,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTruckTyre": {
+        "rom_offset": 8748672,
+        "block_offset": 31160,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTruckCab": {
+        "rom_offset": 8748672,
+        "block_offset": 33208,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTruckCabSide": {
+        "rom_offset": 8748672,
+        "block_offset": 35256,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusBackLod0": {
+        "rom_offset": 8748672,
+        "block_offset": 37304,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusSide": {
+        "rom_offset": 8748672,
+        "block_offset": 41400,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusDoorLod0": {
+        "rom_offset": 8748672,
+        "block_offset": 45496,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusWindow": {
+        "rom_offset": 8748672,
+        "block_offset": 47544,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusFrontLod0": {
+        "rom_offset": 8748672,
+        "block_offset": 49592,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusUnknown1": {
+        "rom_offset": 8748672,
+        "block_offset": 53688,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusDriverWindow": {
+        "rom_offset": 8748672,
+        "block_offset": 55736,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusDoorLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 57784,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusSideLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 59832,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusFrontLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 61880,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeBusBackLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 63928,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTankerStripe": {
+        "rom_offset": 8748672,
+        "block_offset": 65976,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTankerWindshield": {
+        "rom_offset": 8748672,
+        "block_offset": 68024,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTankerFront": {
+        "rom_offset": 8748672,
+        "block_offset": 70072,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTankerHeadlights": {
+        "rom_offset": 8748672,
+        "block_offset": 72120,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTankerBumper": {
+        "rom_offset": 8748672,
+        "block_offset": 74168,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTankerSideBackLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 76216,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTankerBackLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 78264,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTankerSideFrontLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 80312,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTankerFrontLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 82360,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTruckBox2": {
+        "rom_offset": 8748672,
+        "block_offset": 84408,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeTruckBox3": {
+        "rom_offset": 8748672,
+        "block_offset": 86456,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeCarHeadlights": {
+        "rom_offset": 8748672,
+        "block_offset": 88504,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeCarTaillights": {
+        "rom_offset": 8748672,
+        "block_offset": 90552,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeCarFrontLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 92600,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeCarBackLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 94648,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureToadsTurnpikeCarSideLod1": {
+        "rom_offset": 8748672,
+        "block_offset": 96696,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      }
+    },
+    "kalimari_desert": {
+      "gTLUTCactus": {
+        "rom_offset": 8808096,
+        "block_offset": 33664,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTCactusImport": {
+        "rom_offset": 8808096,
+        "block_offset": 33664,
+        "width": 4,
+        "height": 29,
+        "type": "rgba16"
+      },
+      "gTextureCactus1Left": {
+        "rom_offset": 6904740,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCactus"
+      },
+      "gTextureCactus1Right": {
+        "rom_offset": 6905572,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCactus"
+      },
+      "gTextureCactus2Left": {
+        "rom_offset": 6906336,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCactus"
+      },
+      "gTextureCactus2Right": {
+        "rom_offset": 6907016,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCactus"
+      },
+      "gTextureCactus3": {
+        "rom_offset": 6907900,
+        "width": 32,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTCactus"
+      },
+      "gTextureCrossingSignalInactiveTopLeft": {
+        "rom_offset": 8808096,
+        "block_offset": 34792,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureCrossingSignalInactiveTopRight": {
+        "rom_offset": 8808096,
+        "block_offset": 38888,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureCrossingSignalInactiveBottomLeft": {
+        "rom_offset": 8808096,
+        "block_offset": 42984,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureCrossingSignalInactiveBottomRight": {
+        "rom_offset": 8808096,
+        "block_offset": 47080,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureCrossingSignalActiveTopLeft": {
+        "rom_offset": 8808096,
+        "block_offset": 51176,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureCrossingSignalActiveTopRight": {
+        "rom_offset": 8808096,
+        "block_offset": 55272,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureCrossingSignalActiveBottomLeft": {
+        "rom_offset": 8808096,
+        "block_offset": 59368,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureCrossingSignalActiveBottomRight": {
+        "rom_offset": 8808096,
+        "block_offset": 63464,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureLocomotive64": {
+        "rom_offset": 8808096,
+        "block_offset": 69216,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureLocomotiveCabWindow": {
+        "rom_offset": 8808096,
+        "block_offset": 71264,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureLocomotiveCabWindowFront": {
+        "rom_offset": 8808096,
+        "block_offset": 75360,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureLocomotiveChasis": {
+        "rom_offset": 8808096,
+        "block_offset": 79456,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureLocomotiveLamp": {
+        "rom_offset": 8808096,
+        "block_offset": 81504,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureLocomotiveBoiler": {
+        "rom_offset": 8808096,
+        "block_offset": 83552,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureCarriageRailing": {
+        "rom_offset": 8808096,
+        "block_offset": 85600,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureLocomotiveTender": {
+        "rom_offset": 8808096,
+        "block_offset": 89696,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureLocomotiveBallast": {
+        "rom_offset": 8808096,
+        "block_offset": 93792,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureCarriageLower": {
+        "rom_offset": 8808096,
+        "block_offset": 95840,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureCarriageDoor": {
+        "rom_offset": 8808096,
+        "block_offset": 97888,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureCarriageWindow": {
+        "rom_offset": 8808096,
+        "block_offset": 101984,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureLocomotiveBogie": {
+        "rom_offset": 8808096,
+        "block_offset": 138536,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      }
+    },
+    "sherbet_land": {
+      "gTextureSherbetLandIce": {
+        "rom_offset": 8842480,
+        "block_offset": 26856,
+        "width": 32,
+        "height": 32,
+        "type": "ia16"
+      },
+      "gTexturePenguinBeak": {
+        "rom_offset": 8842480,
+        "block_offset": 29416,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTexturePenguinEye": {
+        "rom_offset": 8842480,
+        "block_offset": 31464,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      }
+    },
+    "rainbow_road": {
+      "gTLUTRainbowRoadNeonMushroom1": {
+        "rom_offset": 8858112,
+        "block_offset": 21504,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonMushroom2": {
+        "rom_offset": 8858112,
+        "block_offset": 22016,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonMushroom3": {
+        "rom_offset": 8858112,
+        "block_offset": 22528,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonMushroom4": {
+        "rom_offset": 8858112,
+        "block_offset": 23040,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonMushroom5": {
+        "rom_offset": 8858112,
+        "block_offset": 23552,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonMario1": {
+        "rom_offset": 8858112,
+        "block_offset": 24064,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonMario2": {
+        "rom_offset": 8858112,
+        "block_offset": 24576,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonMario3": {
+        "rom_offset": 8858112,
+        "block_offset": 25088,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonMario4": {
+        "rom_offset": 8858112,
+        "block_offset": 25600,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonMario5": {
+        "rom_offset": 8858112,
+        "block_offset": 26112,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonBoo1": {
+        "rom_offset": 8858112,
+        "block_offset": 26624,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonBoo2": {
+        "rom_offset": 8858112,
+        "block_offset": 27136,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonBoo3": {
+        "rom_offset": 8858112,
+        "block_offset": 27648,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonBoo4": {
+        "rom_offset": 8858112,
+        "block_offset": 28160,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonBoo5": {
+        "rom_offset": 8858112,
+        "block_offset": 28672,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonPeach": {
+        "rom_offset": 8858112,
+        "block_offset": 29184,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonLuigi": {
+        "rom_offset": 8858112,
+        "block_offset": 29696,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonDonkeyKong": {
+        "rom_offset": 8858112,
+        "block_offset": 30208,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonYoshi": {
+        "rom_offset": 8858112,
+        "block_offset": 30720,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonBowser": {
+        "rom_offset": 8858112,
+        "block_offset": 31232,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonWario": {
+        "rom_offset": 8858112,
+        "block_offset": 31744,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTLUTRainbowRoadNeonToad": {
+        "rom_offset": 8858112,
+        "block_offset": 32256,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureRainbowRoadNeonMushroom": {
+        "rom_offset": 8858112,
+        "block_offset": 32768,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonMushroom4"
+      },
+      "gTextureRainbowRoadNeonMario": {
+        "rom_offset": 8858112,
+        "block_offset": 36864,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonMario5"
+      },
+      "gTextureRainbowRoadNeonBoo": {
+        "rom_offset": 8858112,
+        "block_offset": 40960,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonBoo5"
+      },
+      "gTextureRainbowRoadNeonPeach": {
+        "rom_offset": 8858112,
+        "block_offset": 45056,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonPeach"
+      },
+      "gTextureRainbowRoadNeonLuigi": {
+        "rom_offset": 8858112,
+        "block_offset": 49152,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonLuigi"
+      },
+      "gTextureRainbowRoadNeonDonkeyKong": {
+        "rom_offset": 8858112,
+        "block_offset": 53248,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonDonkeyKong"
+      },
+      "gTextureRainbowRoadNeonYoshi": {
+        "rom_offset": 8858112,
+        "block_offset": 57344,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonYoshi"
+      },
+      "gTextureRainbowRoadNeonBowser": {
+        "rom_offset": 8858112,
+        "block_offset": 61440,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonBowser"
+      },
+      "gTextureRainbowRoadNeonWario": {
+        "rom_offset": 8858112,
+        "block_offset": 65536,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonWario"
+      },
+      "gTextureRainbowRoadNeonToad": {
+        "rom_offset": 8858112,
+        "block_offset": 69632,
+        "width": 64,
+        "height": 64,
+        "type": "ci8",
+        "tlut": "gTLUTRainbowRoadNeonToad"
+      },
+      "gTextureRainbowRoadSphere": {
+        "rom_offset": 8858112,
+        "block_offset": 73768,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureRainbowRoadReflectionMapMetal": {
+        "rom_offset": 8858112,
+        "block_offset": 77864,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureRainbowRoadReflectionMapGold": {
+        "rom_offset": 8858112,
+        "block_offset": 79912,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureRainbowRoadChainChompTongue": {
+        "rom_offset": 8858112,
+        "block_offset": 81960,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureRainbowRoadChainChompEye": {
+        "rom_offset": 8858112,
+        "block_offset": 84008,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      }
+    },
+    "wario_stadium": {
+      "gTextureWarioStadiumSignTopLeft": {
+        "rom_offset": 8914080,
+        "block_offset": 34960,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureWarioStadiumSignBottomLeft": {
+        "rom_offset": 8914080,
+        "block_offset": 39056,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureWarioStadiumSignTopRight": {
+        "rom_offset": 8914080,
+        "block_offset": 43152,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureWarioStadiumSignBottomRight": {
+        "rom_offset": 8914080,
+        "block_offset": 47248,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      }
+    },
+    "dks_jungle_parkway": {
+      "gTextureDksJungleParkwayBoatMarioSign": {
+        "rom_offset": 8935952,
+        "block_offset": 40520,
+        "width": 64,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayTreeBark": {
+        "rom_offset": 8935952,
+        "block_offset": 44616,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayBoatWindowUpper": {
+        "rom_offset": 8935952,
+        "block_offset": 46664,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayBoatWindowLower": {
+        "rom_offset": 8935952,
+        "block_offset": 50760,
+        "width": 32,
+        "height": 64,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayBoatRailing": {
+        "rom_offset": 8935952,
+        "block_offset": 54856,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayBoatPaddle1": {
+        "rom_offset": 8935952,
+        "block_offset": 60128,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayBoatPaddle2": {
+        "rom_offset": 8935952,
+        "block_offset": 62176,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayTree2Top": {
+        "rom_offset": 8935952,
+        "block_offset": 64704,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayTree2Trunk": {
+        "rom_offset": 8935952,
+        "block_offset": 66752,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayTree3TopRight": {
+        "rom_offset": 8935952,
+        "block_offset": 69064,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayTree3TopLeft": {
+        "rom_offset": 8935952,
+        "block_offset": 71112,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayTreeTrunk": {
+        "rom_offset": 8935952,
+        "block_offset": 73456,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayTree1Top": {
+        "rom_offset": 8935952,
+        "block_offset": 75504,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayPalmTreeTop": {
+        "rom_offset": 8935952,
+        "block_offset": 77944,
+        "width": 32,
+        "height": 32,
+        "type": "rgba16"
+      },
+      "gTLUTDksJungleParkwayKiwanoFruit": {
+        "rom_offset": 8935952,
+        "block_offset": 80248,
+        "width": 16,
+        "height": 16,
+        "type": "rgba16"
+      },
+      "gTextureDksJungleParkwayKiwanoFruit1": {
+        "rom_offset": 6921764,
+        "width": 32,
+        "height": 32,
+        "type": "ci8",
+        "tlut": "gTLUTDksJungleParkwayKiwanoFruit"
+      },
+      "gTextureDksJungleParkwayKiwanoFruit2": {
+        "rom_offset": 6922580,
+        "width": 32,
+        "height": 32,
+        "type": "ci8",
+        "tlut": "gTLUTDksJungleParkwayKiwanoFruit"
+      },
+      "gTextureDksJungleParkwayKiwanoFruit3": {
+        "rom_offset": 6923456,
+        "width": 32,
+        "height": 32,
+        "type": "ci8",
+        "tlut": "gTLUTDksJungleParkwayKiwanoFruit"
+      }
+    }
+  },
+  "sky_clouds": [
+    7436932,
+    7438080,
+    7439240,
+    7440508,
+    7441476,
+    7442492
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "functions": [
+    "func_80012A58",
+    "func_80012AF8",
+    "func_80012D3C",
+    "func_80012E7C",
+    "func_80013664",
+    "func_80013E3C",
+    "func_80014500",
+    "func_800145B8",
+    "func_80014604",
+    "func_800146C8",
+    "func_800147D8",
+    "func_80014A10",
+    "func_80014DE4"
+  ],
+  "instructions_sha256": {
+    "func_80012A58": "681e3e34ec90941ac23bebf5d04dd0a8221bfd6a7afb6582196bd826fe4acd44",
+    "func_80012AF8": "ec2a0fd243b8fbbc359dc1e0849c05658a16108de3166e2848c2104cda85a494",
+    "func_80012D3C": "feb708d7e178f8881139809cc0624cddc556769b54c63308e77f7481fe90e6ea",
+    "func_80012E7C": "441cd17ece7196ad71627f13bbe0e53ed059922e1a6cd5af022bafaf9b149a1f",
+    "func_80013664": "3592667c89ba77c94f43a0f92f0f28ac8a71d5dd2f47fb9d3c400d0f9f698994",
+    "func_80013E3C": "675db06b3d5f48bd75c081301d2f9937ec45a6e3a3e89d8589d6798e95b2dba3",
+    "func_80014500": "4ea116654d0e3ecdf83ee2c8becc8b61219ec31731c56f9665a515943859351a",
+    "func_800145B8": "2386ca0a41ee4e004839c306712e9df66f8e122206736a49c720c1e9eb5dc80a",
+    "func_80014604": "04cbd99638435257caf6f1b758a37959032244258e7bfafd8257aade5a1eb492",
+    "func_800146C8": "3a41bd5bacb6563f0fb2dc45699acf35536f63262989830f5136d90387ec0896",
+    "func_800147D8": "c8b3619630a5248405e64f8bc2d8239aab0ad6fba7347ac7d2fbedbd39e120be",
+    "func_80014A10": "9496d7b4de161ea63bc2790af2328697fc2a4859009c6aeb8eb2c8a7136a9e18",
+    "func_80014DE4": "abd829fa8356df94642f63e6f144bf551c34a7be84582b1b5c1f4314f741cb1c"
+  },
+  "online_callbacks": "isolated complete grid, inert callbacks",
+  "embedded_assets": false
+}

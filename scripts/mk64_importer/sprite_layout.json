@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "symbols": {
+    "gMoleSpawns": {
+      "rom_offset": 946016,
+      "size": 186,
+      "type": "s16",
+      "stride": 3,
+      "count": 31
+    },
+    "gHedgehogSpawns": {
+      "rom_offset": 944660,
+      "size": 120,
+      "type": "s16",
+      "stride": 4,
+      "count": 15
+    },
+    "gHedgehogPatrolPoints": {
+      "rom_offset": 944780,
+      "size": 90,
+      "type": "s16",
+      "stride": 3,
+      "count": 15
+    },
+    "gSnowmanSpawns": {
+      "rom_offset": 944872,
+      "size": 152,
+      "type": "s16",
+      "stride": 4,
+      "count": 19
+    },
+    "gCrabSpawns": {
+      "rom_offset": 945024,
+      "size": 80,
+      "type": "s16",
+      "stride": 4,
+      "count": 10
+    },
+    "D_800E6734": {
+      "rom_offset": 946996,
+      "size": 84,
+      "type": "f32",
+      "stride": 3,
+      "count": 7
+    }
+  },
+  "course_symbols": {
+    "d_course_mario_raceway_piranha_plant_spawns": {
+      "course": "mario_raceway",
+      "address": 100701464,
+      "size": 88,
+      "type": "s16",
+      "stride": 4,
+      "count": 11
+    },
+    "d_course_royal_raceway_piranha_plant_spawn": {
+      "course": "royal_raceway",
+      "address": 100719088,
+      "size": 136,
+      "type": "s16",
+      "stride": 4,
+      "count": 17
+    }
+  },
+  "neon_positions": [
+    [
+      {
+        "rom_offset": 983016,
+        "type": "f64"
+      },
+      {
+        "high_instruction": 550976,
+        "low_instruction": 550992,
+        "type": "mips-f32"
+      },
+      {
+        "high_instruction": 550980,
+        "low_instruction": 550988,
+        "type": "mips-f32"
+      }
+    ],
+    [
+      {
+        "rom_offset": 983064,
+        "type": "f64"
+      },
+      {
+        "high_instruction": 551384,
+        "low_instruction": 551400,
+        "type": "mips-f32"
+      },
+      {
+        "high_instruction": 551388,
+        "low_instruction": 551396,
+        "type": "mips-f32"
+      }
+    ],
+    [
+      {
+        "rom_offset": 983096,
+        "type": "f64"
+      },
+      {
+        "high_instruction": 551704,
+        "low_instruction": 551712,
+        "type": "mips-f32"
+      },
+      {
+        "instruction": 551716,
+        "type": "mips-s16"
+      }
+    ]
+  ]
+}

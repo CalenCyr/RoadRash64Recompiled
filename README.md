@@ -1,8 +1,8 @@
-# Road Rash 64 Recompiled - 1.3
+# Road Rash 64 Recompiled — 1.4.0
 
 An unofficial PC recompilation for Windows and experimental native Linux of **Road Rash 64**, built with N64Recomp, N64ModernRuntime, RT64, and RecompFrontend.
 
-**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** The application version and release tag are **1.3.0** and **v1.3.0**. Online multiplayer remains experimental.
+**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** This is **1.4.0**, prepared for release. Online multiplayer remains experimental.
 
 ## Why this exists, credits, and AI disclosure
 
@@ -14,7 +14,7 @@ I do not want to take credit for creating Road Rash 64, the recompilation techno
 
 ## Getting started
 
-1. Download **RoadRash64Recompiled-v1.3.0-Win64.zip** from this repository's Releases page. Players do not need the source-code download or a compiler.
+1. Use **RoadRash64Recompiled-v1.4.0-Win64.zip** from the 1.4.0 release. Players do not need the source-code download or a compiler.
 2. Extract the entire ZIP to a writable folder. Do not run it inside the archive.
 3. Open **RoadRash64Recompiled.exe**. Choose **Select Game ROM** and select your supported `.z64`, `.n64`, or `.v64` dump.
 4. After validation, choose **Start Game**. Use **Settings** to configure your controller, graphics, and sound.
@@ -46,7 +46,7 @@ This is the same broad static-recompilation/user-ROM architecture described by [
 
 Draw Distance adjusts terrain and scenery range together. MAX LOD controls rider/bike detail separately. The Music Volume slider covers original and custom music. Local player controls support controller assignment and per-player names. Existing mods targeting the internal 1.0.6 interface remain compatible.
 
-Linux testers: download **RoadRash64Recompiled-v1.3.0-Linux-Experimental.zip**, extract it and follow its README.
+This 1.4.0 release supplies Windows x64, an experimental Linux x86-64 AppImage, and corresponding source. Both downloads include the optional texture mod and a native MK64 importer. Linux gameplay and hardware coverage remain limited; offline build and import checks do not replace community testing.
 
 ## Requirements
 
@@ -54,7 +54,7 @@ Both platforms need a CPU compatible with the build's Nehalem/SSE4-era instructi
 
 **Windows:** 64-bit Windows 10/11, and a GPU/driver supporting the selected RT64 D3D12 or Vulkan backend. Custom media decoding uses Windows Media Foundation.
 
-**Linux:** a 64-bit distro with a working Vulkan driver (Mesa RADV for AMD, NVIDIA's proprietary driver, or AMDVLK) — RT64 only targets D3D12 and Vulkan, and only Vulkan is available outside Windows, so there is no software-rendering fallback if the driver is missing or broken. A running audio server (PipeWire, PulseAudio, or ALSA) is also expected, as on any modern desktop Linux. A separate experimental Linux package is available for community testing; see [Linux notes](docs/LINUX_EXPERIMENTAL.md) for requirements and limitations. Custom media decoding is self-contained (a minimal shared FFmpeg subset is bundled in the AppImage) and needs no system codec packages at runtime.
+**Linux:** a 64-bit distro with a working Vulkan driver (Mesa RADV for AMD, NVIDIA's proprietary driver, or AMDVLK) — RT64 only targets D3D12 and Vulkan, and only Vulkan is available outside Windows, so there is no software-rendering fallback if the driver is missing or broken. A running audio server (PipeWire, PulseAudio, or ALSA) is also expected, as on any modern desktop Linux. See [Linux notes](docs/LINUX_EXPERIMENTAL.md) for the experimental AppImage's requirements and limitations. Custom media decoding uses bundled shared FFmpeg libraries. The MK64 importer includes its own Python/NumPy runtime; players need no compiler, Python installation or system codec package.
 
 ## Multiplayer — early and very untested
 
@@ -66,7 +66,7 @@ Please include host/client roles, player count, exact map/game type, and both ma
 
 ## Known limitations and testing status
 
-- The release owner accepted the Windows release candidate after live testing. Eight affected offline test suites passed for this cleanup. Broader hardware, map and online coverage remains limited.
+- The owner authorized publication after candidate testing. The final version label and behavior-preserving cleanup passed offline checks; the final executable was not launched again. Broader hardware, map and online coverage remains limited.
 - High detail/distance settings can expose performance or visibility problems on particular maps, cameras, and hardware.
 - Mods may affect stability. Reproduce issues with mods disabled where practical.
 - Routine performance logs are disabled. Fatal failures can write `RoadRash64Recompiled-runtime.log` beside the EXE; writing can fail in a protected folder. A normal run need not create a log.
@@ -84,24 +84,54 @@ Code contributions are welcome as focused pull requests. Explain the problem, im
 
 ## Optional texture conversion
 
-Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. The 1.3.1 Windows package restores the optional **RT64 conversion of that original Jabo texture pack** for Road Rash 64 Recompiled that was omitted from 1.3. All credit for the original mod and artwork belongs to its creator; the recompilation project does not claim authorship of those textures or endorsement by the creator.
+Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. The Windows package includes the same optional **RT64 conversion of that original Jabo texture pack** previously supplied with 1.3.1. All credit for the original mod and artwork belongs to its creator; the recompilation project does not claim authorship of those textures or endorsement by the creator.
 
 [Original creator and project page](https://crisaty.tumblr.com/post/113116999840/road-rash-64-remastered-edition)
 
 The optional RTZ is in `optional-mods`. Install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.
 
-See [current local race options and controls](docs/LOCAL_RACE_OPTIONS_RELEASE.md). Release 1.3 retains these options. See [release notes](RELEASE_NOTES.md).
+See [current local race options and controls](docs/LOCAL_RACE_OPTIONS_RELEASE.md). Release 1.4 retains these options and adds them to single-player Thrash. See [release notes](RELEASE_NOTES.md).
 
 Contributor navigation: [source layout](docs/SOURCE_READABILITY.md) and [traffic/presentation contracts](docs/TRAFFIC_AND_PRESENTATION_EDITING.md).
 
 
-## Version 1.3
+## New in 1.4
 
-Online multiplayer and proximity voice remain **experimental**. Synchronization
-and jitter issues may remain; all participants must use the same version.
+- **Optional MK64 race pack:** import all 16 courses from your own supported
+  Mario Kart 64 USA ROM. Includes course previews, scenery, hazards, question-box
+  weapons and optional course music. Select MK64 as a race level in Thrash,
+  local multiplayer or experimental online play.
+- **Crash highlights:** end-of-race clips include major crashes from human and
+  AI riders, with replay cameras and slow motion. Press A to continue; online control
+  remains with the host.
+- **Offline Cheats tab:** rider health, bike durability, bike availability and
+  starting weapon options. These are disabled online and suppress local
+  achievement unlocks while active.
+- **Race options and fixes:** single-player Thrash options, remembered character
+  selection, corrected special/purchased bikes, and lap/recovery/crash fixes.
+- **Pacing and controls:** further frame-pacing work and Linux N64-controller
+  routing fixes. Hardware-dependent hitches and driver limitations can remain.
+
+### Import the optional tracks
+
+1. Configure your Road Rash 64 ROM in the launcher.
+2. Open **Settings → Mods → MK64 Race Pack → Import MK64 ROM**.
+3. Select your supported **Mario Kart 64 USA ROM**. Allow the import to finish;
+   progress and cancellation are shown in the same Mods entry. The first import
+   took about six minutes on the development PC and may take longer elsewhere.
+4. The completed pack is enabled automatically. Later launches use the saved
+   files; use the normal mod toggle to disable it before starting the game.
+
+Neither ROM nor converted MK64 meshes, textures or audio is shipped. Conversion
+uses the bundled tools locally; no Python installation or network download is
+needed. Failed/cancelled conversion preserves an existing pack. All online peers
+need the same game build and matching locally imported pack; the host does not
+send track assets to guests. Online and imported-course gameplay remain subject
+to testing, and some authored console effects use documented adaptations.
 
 Maximum Draw Distance can load the entire map, including the areas used by all
 its races. Dense distant geometry can slow the game, especially in split-screen
-multiplayer. **50-60% is the recommended starting point** for balanced performance.
+multiplayer. **50–60% is the recommended starting point** for balanced performance.
 
-See [release notes](RELEASE_NOTES.md) and [the contributor feature map](docs/RELEASE_CANDIDATE_EDITING_GUIDE.md).
+See [release notes](RELEASE_NOTES.md) and the
+[contributor feature map](docs/RELEASE_CANDIDATE_EDITING_GUIDE.md).

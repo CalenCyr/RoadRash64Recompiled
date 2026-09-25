@@ -56,6 +56,27 @@ No top-level license file was found at these pinned dependency roots. A parent o
 - native/lib/rt64/src/contrib/mupen64plus-win32-deps
 - native/lib/RecompFrontend
 
+The optional MK64 importer also adapts selected original path/spline routines from [n64decomp/mk64 revision `58cfcb022e10f83bc3b889d7e97508cae6837098`](https://github.com/n64decomp/mk64/tree/58cfcb022e10f83bc3b889d7e97508cae6837098), which has no top-level license file at that revision. The project is credited as a reference and source of those adaptations; this is not a blanket open-source license grant for the original game's code or assets. See LEGAL.md.
+
 ## Controller mappings
 
 8BitDo 64 mappings from [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB), commit `5a12daa568d19344f9b6e9286ef5929833b25c7c`, under the zlib license. See `licenses/SDL_GameControllerDB-LICENSE.txt`.
+
+## Optional MK64 importer runtime
+
+The Windows and Linux importers are separate, bundled executables. Their course pictures, meshes, animations, music and sound effects are generated locally from the player's supported ROM; those generated files are not shipped. Their source-layout recipes and selected game-derived helper routines have the separate provenance described above and in CREDITS.md.
+
+| Component in the Windows converter | Version / identity | License notices |
+|---|---|---|
+| CPython | 3.12.14 | `tools/mk64-importer/licenses/PYTHON-LICENSE.txt`; supplemental [Python incorporated-software notices](licenses/mk64-importer/CPython-additional-notices.rst) |
+| NumPy | 2.3.5 | `tools/mk64-importer/licenses/numpy/LICENSE.txt`: NumPy BSD terms and the wheel's OpenBLAS, LAPACK and GCC runtime notices, including the GCC Runtime Library Exception |
+| PyInstaller bootloader/support | 6.22.3 | `tools/mk64-importer/licenses/PyInstaller/COPYING.txt`: GPL with distribution exception and applicable Apache-2.0 terms |
+| N64Recomp support header | Pinned runtime dependency | `tools/mk64-importer/licenses/N64Recomp-LICENSE.txt`, MIT; this covers the support header, not original game routines |
+| OpenSSL libraries supplied with Python | 3.5.8 | [Apache-2.0 license](licenses/mk64-importer/OpenSSL-LICENSE.txt) and [authors](licenses/mk64-importer/OpenSSL-AUTHORS.md) |
+| libffi supplied with Python | `libffi-8.dll`; precise source build not recorded by the DLL | MIT notices for [3.4.4](licenses/mk64-importer/libffi-3.4.4-LICENSE.txt) and [3.5.2](licenses/mk64-importer/libffi-3.5.2-LICENSE.txt); identity limits are recorded in the [supplemental notice](licenses/mk64-importer/README.md) |
+
+Microsoft runtime components bundled with Python retain Microsoft's terms; see the Windows-binary conditions in `PYTHON-LICENSE.txt`. The Windows importer uses the Python and NumPy binaries without local code modifications. PyInstaller packages the project's converter around them.
+
+The Linux importer uses CPython 3.12.14 built from its unmodified official source, NumPy 2.3.5's Linux wheel and PyInstaller 6.22.3. It includes OpenBLAS 0.3.30/LAPACK, libgfortran with the GCC Runtime Library Exception, and **libquadmath under LGPL 2.1 or later**; the complete Linux wheel notices are included in its `licenses/numpy/LICENSE.txt`. These libraries are distinct from the Windows wheel's contents. The Linux host libraries are OpenSSL `3.0.2-0ubuntu1.29`, libffi `3.4.2-4`, GCC runtime `12.3.0-1ubuntu1~22.04.3`, XZ Utils `5.2.5-2ubuntu1.1` and zlib `1:1.2.11.dfsg-2ubuntu9.2`. Their exact binary identities and package notices are in [the Linux importer notices](licenses/mk64-importer/linux/README.md), with corresponding sources supplied in the Linux dependency source archive. Shared libraries remain separately replaceable.
+
+These dependency notices do not grant rights to any ROM, imported course data, soundtrack, achievement image or third-party texture artwork.

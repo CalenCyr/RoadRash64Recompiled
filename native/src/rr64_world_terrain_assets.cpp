@@ -1,5 +1,9 @@
 #include "rr64_world_packet_compiler.hpp"
 #include "rr64_world_terrain_assets.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_course_material.hpp"
+#include "rr64_experimental_course.hpp"
+#endif
 
 #include <algorithm>
 #include <bit>
@@ -15,9 +19,6 @@ extern "C" void func_80010FD0(std::uint8_t *, recomp_context *);
 
 namespace rr64::world {
 namespace {
-constexpr std::size_t table_header = 0x18d380u;
-constexpr std::size_t table = table_header + 0x18u;
-constexpr std::size_t texture_count = 926u;
 constexpr std::size_t cell_count = 4900u;
 constexpr std::size_t maximum_blob = 64u * 1024u * 1024u;
 constexpr std::size_t maximum_texture = 128u * 1024u;
@@ -105,33 +106,13 @@ gpr guest(std::uint32_t address) {
 
 using Commands = std::vector<std::array<std::uint32_t, 2>>;
 
-Commands original_material(std::vector<std::uint8_t> &memory, const Reader *texture,
-                           std::uint16_t index) {
-    // The resident pointer makes E65C's loader branch unreachable. All global
-    // cache markers and allocation bookkeeping writes address only this vector.
-    if (texture) {
-        memory_bytes(memory, scratch_texture, texture->bytes);
-    }
-    memory_word(memory, 0x800dea84u, scratch_table);
-    if (texture) {
-        memory_word(memory, scratch_table + index * 16u, scratch_texture);
-    }
-    memory_word(memory, scratch_submesh + 0x10u, index);
+void begin_material_commands(std::vector<std::uint8_t> &memory) {
     memory_word(memory, scratch_output, scratch_commands);
-    memory_word(memory, scratch_output + 4u, 0u);
-    memory_word(memory, 0x8009db20u, 0u);
-    memory_word(memory, 0x8009db2cu, 0u);
-    memory_word(memory, 0x800b1a20u, 0xffffffffu);
-    memory_word(memory, scratch_stack + 0x10u, scratch_output + 4u);
     std::fill(memory.begin() + (scratch_commands & 0x7fffffu),
               memory.begin() + (scratch_commands & 0x7fffffu) + 4096u, 0xa5u);
-    recomp_context context{};
-    context.r4 = guest(scratch_submesh);
-    context.r5 = 0x40000000u;
-    context.r7 = guest(scratch_output);
-    context.r29 = guest(scratch_stack);
-    context.f_odd = &context.f0.u32h;
-    func_80010FD0(memory.data(), &context);
+}
+
+Commands material_commands(const std::vector<std::uint8_t> &memory) {
     const auto end = memory_word(memory, scratch_output);
     require(end >= scratch_commands && end <= scratch_commands + 1024u &&
                 ((end - scratch_commands) & 7u) == 0u,
@@ -147,6 +128,34 @@ Commands original_material(std::vector<std::uint8_t> &memory, const Reader *text
     return result;
 }
 
+Commands original_material(std::vector<std::uint8_t> &memory, const Reader *texture,
+                           std::uint16_t index) {
+    // The resident pointer makes E65C's loader branch unreachable. All global
+    // cache markers and allocation bookkeeping writes address only this vector.
+    if (texture) {
+        memory_bytes(memory, scratch_texture, texture->bytes);
+    }
+    memory_word(memory, 0x800dea84u, scratch_table);
+    if (texture) {
+        memory_word(memory, scratch_table + index * 16u, scratch_texture);
+    }
+    memory_word(memory, scratch_submesh + 0x10u, index);
+    begin_material_commands(memory);
+    memory_word(memory, scratch_output + 4u, 0u);
+    memory_word(memory, 0x8009db20u, 0u);
+    memory_word(memory, 0x8009db2cu, 0u);
+    memory_word(memory, 0x800b1a20u, 0xffffffffu);
+    memory_word(memory, scratch_stack + 0x10u, scratch_output + 4u);
+    recomp_context context{};
+    context.r4 = guest(scratch_submesh);
+    context.r5 = 0x40000000u;
+    context.r7 = guest(scratch_output);
+    context.r29 = guest(scratch_stack);
+    context.f_odd = &context.f0.u32h;
+    func_80010FD0(memory.data(), &context);
+    return material_commands(memory);
+}
+
 std::uint32_t triangle_word(std::uint16_t packed) {
     return ((std::uint32_t(packed) << 7u) & 0x3e0000u) | ((std::uint32_t(packed) << 4u) & 0x3e00u) |
            ((std::uint32_t(packed) << 1u) & 0x3eu);
@@ -160,15 +169,29 @@ TerrainTextureAsset validate_texture(const Reader &record) {
     const auto flags = record.half(0x24u);
     const auto frames = record.half(0x20u);
     const auto stride = record.word(0x3cu);
+    bool rgba16 = false;
+#ifdef RR64_EXPERIMENTAL_COURSE
+    rgba16 = bits == 16u && rr64::experimental_course::installed() &&
+             rr64::experimental_course::valid_material_word(record.word(0x38u));
+#endif
     require((signature == 0x16u || signature == 0x17u) && record.word(4) == record.bytes.size() &&
                 record.word(8) == 0xffffffffu,
             "invalid terrain texture signature or declared size");
     require(record.bytes.size() <= maximum_texture && width > 0u && width <= 256u && height > 0u &&
-                height <= 256u && (bits == 4u || bits == 8u) && frames >= 1u && frames <= 64u &&
+                height <= 256u && (bits == 4u || bits == 8u || rgba16) && frames >= 1u && frames <= 64u &&
                 stride > 0u,
             "terrain texture dimensions or frame count exceed locked format");
     const auto texels = (width * height * bits + 7u) / 8u;
-    const auto palette = (flags & 0x8000u) ? 0u : (bits == 4u ? 32u : 512u);
+    if (rgba16) {
+        // The private converter emits one power-of-two RGBA16 frame, with no
+        // TLUT. 4KiB is the physical TMEM limit, not a renderer-specific guess.
+        require(width >= 2u && height >= 2u && std::has_single_bit(width) &&
+                    std::has_single_bit(height) && texels <= 4096u &&
+                    record.half(0x22u) == 0u && (flags & ~0x4000u) == 0u &&
+                    frames == 1u && stride == texels && record.bytes.size() == 0x40u + texels,
+                "private RGBA16 terrain texture has unsupported storage or material flags");
+    }
+    const auto palette = rgba16 || (flags & 0x8000u) ? 0u : (bits == 4u ? 32u : 512u);
     // Header+22 is not a byte-capacity certificate: real texture207 is CI8
     // with value22, while its frame stores the full512-byte TLUT consumed by
     // 10640. Bound the actual fixed-size palette in each frame instead.
@@ -179,7 +202,17 @@ TerrainTextureAsset validate_texture(const Reader &record) {
 }
 
 void build(const Reader &rom, TerrainAssets &out, bool batch_triangles) {
-    require(rom.bytes.size() == 0x2000000u && rom.word(0) == 0x80371240u,
+    std::size_t table_header=0x18d380u,texture_count=926u,expected_bytes=0x2000000u;
+#ifdef RR64_EXPERIMENTAL_COURSE
+    if(rr64::experimental_course::installed()) {
+        table_header=rr64::experimental_course::terrain_rom_offset();
+        texture_count=rr64::experimental_course::terrain_texture_count();
+        require(rom.bytes.size()<=64u*1024u*1024u,"race pack ROM view exceeds bounded bank");
+        expected_bytes=rom.bytes.size();
+    }
+#endif
+    const auto table=table_header+0x18u;
+    require(rom.bytes.size() == expected_bytes && rom.word(0) == 0x80371240u,
             "terrain builder requires the loaded big-endian 32MiB ROM");
     require(rom.word(table_header) == 0x3eu && rom.half(table_header + 0x10u) == 1000u &&
                 rom.half(table_header + 0x12u) == cell_count &&
@@ -191,12 +224,38 @@ void build(const Reader &rom, TerrainAssets &out, bool batch_triangles) {
     std::vector<Commands> materials;
     materials.reserve(texture_count + 1u);
     std::vector<std::uint8_t> scratch(8u * 1024u * 1024u);
+#ifdef RR64_EXPERIMENTAL_COURSE
+    std::vector<bool> imported_materials(texture_count, false);
+    Commands imported_restore;
+    if (rr64::experimental_course::installed()) {
+        // Use the same producer as immediate/compiled native terrain. Its
+        // complete restore includes opaque alpha/depth state, not only UVs
+        // and culling; the outer cache state stack closes only the whole pass.
+        begin_material_commands(scratch);
+        rr64_course_material_end(scratch.data(), scratch_output);
+        imported_restore = material_commands(scratch);
+    }
+#endif
     for (std::size_t i = 0; i < texture_count; ++i) {
         const auto record = rom.reference(table + i * 12u);
         auto metadata = validate_texture(record);
+#ifdef RR64_EXPERIMENTAL_COURSE
+        imported_materials[i] = record.word(0x34u) == 16u &&
+            rr64::experimental_course::valid_material_word(record.word(0x38u));
+#endif
         metadata.raw_offset = append_bytes(out, record.bytes);
         out.textures.push_back(metadata);
         materials.push_back(original_material(scratch, &record, static_cast<std::uint16_t>(i)));
+#ifdef RR64_EXPERIMENTAL_COURSE
+        if (imported_materials[i] && (record.word(0x38u) & 0x10u) == 0u) {
+            // This private scratch has no live frame globals. Keep the
+            // caller's cull mask for ordinary imported materials instead of
+            // baking the zero scratch mask (or a guessed BACK mask) into it.
+            for (auto &command : materials.back())
+                if (command[0] == 0xd9fff9ffu)
+                    command = {0xd9ffffffu, 0u};
+        }
+#endif
     }
     materials.push_back(original_material(scratch, nullptr, 0xffffu));
     for (std::size_t i = 0; i < cell_count; ++i) {
@@ -239,6 +298,10 @@ void build(const Reader &rom, TerrainAssets &out, bool batch_triangles) {
                         (material == 0xffffu || material < texture_count),
                     "terrain render count or material index is invalid");
             if (render_packets != 0u) {
+#ifdef RR64_EXPERIMENTAL_COURSE
+                if (material != 0xffffu && imported_materials[material])
+                    commands.push_back({0x64000029u, 0u}); // Push geometry.
+#endif
                 if (material != 0xffffu) {
                     local_relocations.push_back(
                         {static_cast<std::uint32_t>(commands.size() * 8u + 4u),
@@ -303,6 +366,20 @@ void build(const Reader &rom, TerrainAssets &out, bool batch_triangles) {
                 }
                 p += packet_bytes;
             }
+#ifdef RR64_EXPERIMENTAL_COURSE
+            if (render_packets != 0u && rr64::experimental_course::installed()) {
+                if (material != 0xffffu && imported_materials[material]) {
+                    commands.insert(commands.end(), imported_restore.begin(), imported_restore.end());
+                    // The extended terrain caller already enables RT64 GBI.
+                    // Restore its exact geometry state, including native
+                    // culling after a source two-sided material.
+                    commands.push_back({0x6400002au, 0u});
+                } else {
+                    // Stock materials do not change the caller's cull mask.
+                    commands.push_back({0xd7000002u, 0x80008000u});
+                }
+            }
+#endif
         }
         if (cell.vertices == 0u) {
             cell.minimum.fill(0.0f);

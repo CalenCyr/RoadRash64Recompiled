@@ -12,8 +12,15 @@ void commit_authority_frame_locked(const AuthorityFrame &frame) {
 bool enable_authority_locked(unsigned round,unsigned humans) {
     if(round!=g_session.game_setup.revision || !round || !humans || humans>>kMaximumPlayers || !(humans&1))return false;
     if(g_session.authoritative && g_session.authority_round==round)return g_session.authority_humans==humans;
+    // Receiving an AuthorityBegin packet cannot stand in for validating the
+    // local course. The host additionally needs every admitted rider's ACK.
+    if(!g_session.game_setup.valid || g_session.local_slot>=kMaximumPlayers ||
+       g_session.course_ack[g_session.local_slot]!=round)return false;
+    if(is_host_locked())for(unsigned slot=0;slot<kMaximumPlayers;++slot)
+        if((humans&(1u<<slot)) && g_session.course_ack[slot]!=round)return false;
     if(!g_session.authority_host.reset(round,humans))return false;
     g_session.authority_client.reset(round);
+    g_session.highlights.reset(is_host_locked(),round);
     g_session.authority_local_sequence=0;
     g_session.authority_frame={};g_session.authority_assemblies={};
     g_session.riders={};g_session.previous_riders={};
@@ -38,12 +45,13 @@ void complete_authority_assembly_locked(AuthorityAssembly &a){
     for(unsigned s=0;s<kMaximumPlayers;++s)
         if(a.frame.stamp.acknowledged[s]<g_session.authority_frame.stamp.acknowledged[s])return;
     if(!world_sync::valid(world_sync::Snapshot{a.frame.stamp.round,a.frame.stamp.tick,a.frame.traffic}) ||
+       !valid_course_item_state(a.frame.course_items) || !valid_course_hazard_state(a.frame.course_hazards) ||
        authority_world_mask(a.frame)!=a.world_mask)return;
     commit_authority_frame_locked(a.frame);
 }
 bool handle_authority_locked(const std::uint8_t *bytes,int size,unsigned sender,const sockaddr_in &) {
     const auto type=reinterpret_cast<const PacketHeader*>(bytes)->type;
-    if(type!=PacketType::AuthorityBegin && type!=PacketType::AuthorityInput && type!=PacketType::AuthorityState && type!=PacketType::AuthorityReady && type!=PacketType::AuthorityWorld)return false;
+    if(type!=PacketType::AuthorityBegin && type!=PacketType::AuthorityInput && type!=PacketType::AuthorityState && type!=PacketType::AuthorityReady && type!=PacketType::AuthorityWorld && type!=PacketType::AuthorityItems && type!=PacketType::AuthorityHazards)return false;
     if(g_session.phase!=Phase::Race)return true;
     if(is_client_locked() && type==PacketType::AuthorityBegin && size==sizeof(AuthorityBeginPacket)) {
         const auto &p=*reinterpret_cast<const AuthorityBeginPacket*>(bytes);
@@ -67,7 +75,7 @@ bool handle_authority_locked(const std::uint8_t *bytes,int size,unsigned sender,
     } else if(is_client_locked() && g_session.authoritative && type==PacketType::AuthorityState && size==sizeof(AuthorityStatePacket)) {
         const auto &p=*reinterpret_cast<const AuthorityStatePacket*>(bytes);
         if(p.stamp.round!=g_session.authority_round || !p.stamp.tick || p.part>=kAuthorityParts ||
-           (p.payload_mask>>kMaximumPlayers) || !p.world_mask || (p.world_mask>>world_sync::batches) ||
+           (p.payload_mask>>kMaximumPlayers) || !p.world_mask || (p.world_mask>>kAuthorityWorldParts) ||
            !((p.payload_mask?p.payload_mask:1u)&(1u<<p.part)) ||
            p.stamp.tick<=g_session.authority_frame.stamp.tick || !authority::valid_timing(p.timing) ||
            p.cop_mode>1 || !std::isfinite(p.cop_win_age) || p.cop_win_age < -1)return true;
@@ -96,7 +104,7 @@ bool handle_authority_locked(const std::uint8_t *bytes,int size,unsigned sender,
         complete_authority_assembly_locked(assembly);
     } else if(is_client_locked() && g_session.authoritative && type==PacketType::AuthorityWorld && size==sizeof(AuthorityWorldPacket)) {
         const auto &p=*reinterpret_cast<const AuthorityWorldPacket*>(bytes);
-        if(p.part>=world_sync::batches || !p.world_mask || (p.world_mask>>world_sync::batches) ||
+        if(p.part>=world_sync::batches || !p.world_mask || (p.world_mask>>kAuthorityWorldParts) ||
            !(p.world_mask&(1u<<p.part)) || (p.payload_mask>>kMaximumPlayers))return true;
         for(unsigned i=0;i<p.traffic.size();++i)
             if(!world_sync::valid(p.traffic[i]) ||
@@ -106,6 +114,35 @@ bool handle_authority_locked(const std::uint8_t *bytes,int size,unsigned sender,
         for(unsigned i=0;i<p.traffic.size() && p.part*world_sync::batch_size+i<world_sync::capacity;++i)
             pending->frame.traffic[p.part*world_sync::batch_size+i]=p.traffic[i];
         pending->received_world|=1u<<p.part;
+        complete_authority_assembly_locked(*pending);
+    } else if(is_client_locked() && g_session.authoritative && type==PacketType::AuthorityItems && size==sizeof(AuthorityItemsPacket)) {
+        const auto &p=*reinterpret_cast<const AuthorityItemsPacket*>(bytes);
+        if(!p.items.count || !valid_course_item_state(p.items) || g_session.game_setup.course.version==0 ||
+           !(p.world_mask&kAuthorityItemsBit) || (p.world_mask>>kAuthorityWorldParts) ||
+           (p.payload_mask>>kMaximumPlayers))return true;
+        auto *pending=authority_assembly_locked(p.stamp,p.payload_mask,p.world_mask);
+        if(!pending || (pending->received_world&kAuthorityItemsBit))return true;
+        pending->frame.course_items=p.items;
+        pending->received_world|=kAuthorityItemsBit;
+        complete_authority_assembly_locked(*pending);
+    } else if(is_client_locked() && g_session.authoritative && type==PacketType::AuthorityHazards && size==sizeof(AuthorityHazardsPacket)) {
+        const auto &p=*reinterpret_cast<const AuthorityHazardsPacket*>(bytes);
+        if(!p.count || p.count>kMaximumCourseHazards || p.part>=(p.count+kHazardsPerPacket-1)/kHazardsPerPacket ||
+           g_session.game_setup.course.version==0 || (p.world_mask>>kAuthorityWorldParts) ||
+           (p.payload_mask>>kMaximumPlayers) ||
+           (p.world_mask&hazard_world_mask(kMaximumCourseHazards))!=hazard_world_mask(p.count))return true;
+        for(unsigned i=0;i<kHazardsPerPacket;++i)
+            if(!valid_course_hazard_pose(p.poses[i]) ||
+               (p.part*kHazardsPerPacket+i>=p.count && p.poses[i]!=CourseHazardPose{}))return true;
+        auto *pending=authority_assembly_locked(p.stamp,p.payload_mask,p.world_mask);
+        const unsigned bit=1u<<(kAuthorityHazardFirst+p.part);
+        if(!pending || (pending->received_world&bit))return true;
+        auto &hazards=pending->frame.course_hazards;
+        if(hazards.count && (hazards.count!=p.count || hazards.clock!=p.clock))return true;
+        hazards.count=p.count;hazards.clock=p.clock;
+        for(unsigned i=0;i<kHazardsPerPacket && p.part*kHazardsPerPacket+i<p.count;++i)
+            hazards.poses[p.part*kHazardsPerPacket+i]=p.poses[i];
+        pending->received_world|=bit;
         complete_authority_assembly_locked(*pending);
     }
     return true;
@@ -150,6 +187,26 @@ void service_authority_locked(Clock::time_point now) {
             for(unsigned peer=1;peer<kMaximumPlayers;++peer)if(g_session.peers[peer].connected)
                 send_packet_locked(state,g_session.peers[peer].endpoint);
         }
+        if(g_session.authority_frame.stamp.tick && g_session.authority_frame.course_items.count){
+            AuthorityItemsPacket state{};initialize_packet(state,PacketType::AuthorityItems);
+            state.stamp=g_session.authority_frame.stamp;state.payload_mask=payload_mask;
+            state.world_mask=authority_world_mask(g_session.authority_frame);
+            state.items=g_session.authority_frame.course_items;
+            for(unsigned peer=1;peer<kMaximumPlayers;++peer)if(g_session.peers[peer].connected)
+                send_packet_locked(state,g_session.peers[peer].endpoint);
+        }
+        const auto &hazards=g_session.authority_frame.course_hazards;
+        if(g_session.authority_frame.stamp.tick && hazards.count)
+            for(unsigned part=0;part<(hazards.count+kHazardsPerPacket-1)/kHazardsPerPacket;++part){
+                AuthorityHazardsPacket state{};initialize_packet(state,PacketType::AuthorityHazards);
+                state.stamp=g_session.authority_frame.stamp;state.payload_mask=payload_mask;
+                state.world_mask=authority_world_mask(g_session.authority_frame);
+                state.count=hazards.count;state.clock=hazards.clock;state.part=static_cast<std::uint16_t>(part);
+                for(unsigned i=0;i<kHazardsPerPacket && part*kHazardsPerPacket+i<hazards.count;++i)
+                    state.poses[i]=hazards.poses[part*kHazardsPerPacket+i];
+                for(unsigned peer=1;peer<kMaximumPlayers;++peer)if(g_session.peers[peer].connected)
+                    send_packet_locked(state,g_session.peers[peer].endpoint);
+            }
     } else {
         if(g_session.local_slot<kMaximumPlayers && (g_session.authority_loaded&(1u<<g_session.local_slot))){
             AuthorityReadyPacket ready{};initialize_packet(ready,PacketType::AuthorityReady);ready.round=g_session.authority_round;

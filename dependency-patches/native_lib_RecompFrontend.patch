@@ -100,12 +100,26 @@ index 6c59b61..5fc0536 100644
      }
  
 diff --git a/recompinput/include/recompinput/profiles.h b/recompinput/include/recompinput/profiles.h
-index 45bedd1..7fefa74 100644
+index 45bedd1..9155123 100644
 --- a/recompinput/include/recompinput/profiles.h
 +++ b/recompinput/include/recompinput/profiles.h
-@@ -61,6 +61,7 @@ namespace recompinput {
+@@ -47,6 +47,11 @@ namespace recompinput {
+         const std::vector<int> get_indices_for_custom_profiles(InputDevice device);
+         void set_input_profile_for_player(int player_index, int profile_index, InputDevice device);
+         int get_input_profile_for_player(int player_index, InputDevice device);
++        // Gameplay follows the layout selected in Controls, including in SP.
++        // Unassigned SP keyboard/startup input retains its legacy layout.
++        int get_game_input_profile_for_player(int player_index, InputDevice device);
++        // Menu events use the emitting device's selected slot layout first.
++        int get_controller_event_profile(SDL_GameController* controller);
+         int add_controller(ControllerGUID guid, int profile_index);
+         const ControllerGUID &get_controller_guid(int controller_index);
+         int get_controller_profile_index(int controller_index);
+@@ -60,7 +65,9 @@ namespace recompinput {
+         int get_sp_controller_profile_index();
          int get_sp_keyboard_profile_index();
          int get_or_create_mp_keyboard_profile_index(int player_index);
++        int get_default_keyboard_profile_for_player(int player_index);
          std::string get_string_from_controller_guid(ControllerGUID guid);
 +        bool get_action_input(int player_index, GameInput input);
          bool get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out);
@@ -124,13 +138,29 @@ index 855ec2e..9a70053 100644
  namespace recompinput {
      constexpr size_t max_num_players_supported = 128;
 diff --git a/recompinput/src/input_binding.cpp b/recompinput/src/input_binding.cpp
-index 45d55a7..2e20a17 100644
+index 45d55a7..1b8920d 100644
 --- a/recompinput/src/input_binding.cpp
 +++ b/recompinput/src/input_binding.cpp
-@@ -65,6 +65,22 @@ namespace recompinput {
-         return false;
-     }
+@@ -50,10 +50,6 @@ namespace recompinput {
+             return false;
+         }
  
+-        if (players::is_single_player_mode()) {
+-            return true;
+-        }
+-
+         const auto& player = players::get_player(BindingState.player_index);
+         if (player.controller != nullptr) {
+             SDL_JoystickID assigned_id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(player.controller));
+@@ -62,6 +58,24 @@ namespace recompinput {
+             }
+         }
+ 
++        // Controls exposes all assigned slots even during a single-player
++        // game. Only the pre-assignment legacy path accepts any controller.
++        return players::is_single_player_mode() && players::get_number_of_assigned_players() == 0;
++    }
++
 +    bool binding::is_cancel_button(int button) {
 +        // Use the profile being edited, not profile zero (which may be a
 +        // keyboard). An axis/scancode with the same numeric ID is not a button.
@@ -144,12 +174,9 @@ index 45d55a7..2e20a17 100644
 +            const auto input = profiles::get_input_binding(profile, GameInput::TOGGLE_MENU, i);
 +            if (input.input_type == InputType::ControllerDigital && input.input_id == button) return true;
 +        }
-+        return false;
-+    }
-+
-     void binding::set_scanned_input(recompinput::InputField value) {
-         profiles::set_input_binding(
-             profiles::get_input_profile_for_player(BindingState.player_index, BindingState.device),
+         return false;
+     }
+ 
 diff --git a/recompinput/src/input_events.cpp b/recompinput/src/input_events.cpp
 index c76a1dc..867bb00 100644
 --- a/recompinput/src/input_events.cpp
@@ -406,7 +433,7 @@ index bfcfef4..e77566e 100644
          { GameInput::DPAD_RIGHT,     { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) } },
          { GameInput::DPAD_UP,        { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_UP) } },
 diff --git a/recompinput/src/input_state.cpp b/recompinput/src/input_state.cpp
-index 03ed871..d8badb0 100644
+index 03ed871..5bbce2f 100644
 --- a/recompinput/src/input_state.cpp
 +++ b/recompinput/src/input_state.cpp
 @@ -1,7 +1,8 @@
@@ -549,7 +576,7 @@ index 03ed871..d8badb0 100644
  }
  
  static float smoothstep(float from, float to, float amount) {
-@@ -79,55 +185,141 @@ static float smoothstep(float from, float to, float amount) {
+@@ -79,78 +185,174 @@ static float smoothstep(float from, float to, float amount) {
  
  // Update rumble to attempt to mimic the way n64 rumble ramps up and falls off
  void recompinput::update_rumble() {
@@ -703,6 +730,75 @@ index 03ed871..d8badb0 100644
                  }
              }
          }
+     }
+ }
+ 
++// Caller holds controllers_mutex. The selected layout and physical device must
++// belong to the same slot, including SP; another pad must not use P1's layout.
++// Hot-unplug may precede slot reconciliation, so never poll a removed pointer.
++template <typename Read>
++static void for_game_controllers(int controller_num, Read read) {
++    const auto player = recompinput::players::get_player(controller_num);
++    if (player.controller) {
++        if (std::find(InputState.detected_controllers.begin(), InputState.detected_controllers.end(),
++                player.controller) != InputState.detected_controllers.end() &&
++            SDL_GameControllerGetAttached(player.controller)) read(player.controller);
++    }
++    else if (recompinput::players::is_single_player_mode() && controller_num == 0 &&
++             recompinput::players::get_number_of_assigned_players() == 0) {
++        for (auto* controller : InputState.detected_controllers)
++            if (SDL_GameControllerGetAttached(controller)) read(controller);
++    }
++}
++
+ bool controller_button_state(int controller_num, int32_t input_id) {
+     if (input_id >= 0 && input_id < SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_MAX) {
+         SDL_GameControllerButton button = (SDL_GameControllerButton)input_id;
+         bool ret = false;
+         {
+             std::lock_guard lock{ InputState.controllers_mutex };
+-            if (recompinput::players::is_single_player_mode()) {
+-                for (const auto &controller : InputState.detected_controllers) {
+-                    ret |= SDL_GameControllerGetButton(controller, button);
+-                }
+-            }
+-            else {
+-                auto &player = recompinput::players::get_player(controller_num);
+-                if (player.controller != nullptr) {
+-                    ret |= SDL_GameControllerGetButton(player.controller, button);
+-                }
+-            }
++            for_game_controllers(controller_num, [&](SDL_GameController* controller) {
++                ret |= SDL_GameControllerGetButton(controller, button);
++            });
+         }
+ 
+         return ret;
+@@ -183,20 +385,10 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
+             };
+ 
+             std::lock_guard lock{ InputState.controllers_mutex };
+-            if (recompinput::players::is_single_player_mode()) {
+-                for (SDL_GameController *controller : InputState.detected_controllers) {
+-                    float controller_state = gather_axis_state(controller);
+-                    if (fabsf(controller_state) > fabsf(ret)) {
+-                        ret = controller_state;
+-                    }
+-                }
+-            }
+-            else {
+-                auto &player = recompinput::players::get_player(controller_num);
+-                if (player.controller != nullptr) {
+-                    ret = gather_axis_state(player.controller);
+-                }
+-            }
++            for_game_controllers(controller_num, [&](SDL_GameController* controller) {
++                float controller_state = gather_axis_state(controller);
++                if (fabsf(controller_state) > fabsf(ret)) ret = controller_state;
++            });
+         }
+ 
+         return std::clamp(ret, 0.0f, 1.0f);
 @@ -374,6 +566,38 @@ bool recompinput::all_input_disabled() {
          recompinput::binding::is_binding();
  }
@@ -824,7 +920,7 @@ index c6786e6..b4848fa 100644
      descriptions[static_cast<size_t>(GameInput::ACCEPT_MENU)] = "In the recomp interface, performs the action for the currently highlighted item. Like pressing a button, or toggling a switch.";
      descriptions[static_cast<size_t>(GameInput::BACK_MENU)] = "In the recomp interface, returns to the header or backs out to a previous menu.";
 diff --git a/recompinput/src/players.cpp b/recompinput/src/players.cpp
-index 08cb3f3..f8e272b 100644
+index 08cb3f3..016170c 100644
 --- a/recompinput/src/players.cpp
 +++ b/recompinput/src/players.cpp
 @@ -1,3 +1,4 @@
@@ -930,7 +1026,7 @@ index 08cb3f3..f8e272b 100644
      auto player_array = PlayerState.get_player_array(temp_player);
      if (!player_array.player_is_assigned(player_index)) {
          return InputDevice::COUNT;
-@@ -130,6 +150,67 @@ InputDevice players::get_player_input_device(int player_index, bool temp_player)
+@@ -130,6 +150,83 @@ InputDevice players::get_player_input_device(int player_index, bool temp_player)
  }
  
  // playerassignment start
@@ -940,23 +1036,39 @@ index 08cb3f3..f8e272b 100644
 +    if (index < 0 || index >= 4 || PlayerState.is_assigning) return false;
 +    if (controller && std::find(connected.begin(), connected.end(), controller) == connected.end()) return false;
 +    auto& slots = PlayerState.players;
++    std::array<std::pair<int, int>, 4> selected_profiles;
++    for (int i = 0; i < 4; ++i) {
++        selected_profiles[i] = {
++            profiles::get_input_profile_for_player(i, InputDevice::Controller),
++            profiles::get_input_profile_for_player(i, InputDevice::Keyboard)};
++    }
 +    // Swap occupied devices rather than allowing two players to share a pad.
 +    if (controller) for (int i = 0; i < 4; ++i) {
 +        if (i != index && slots[i].controller == controller) {
 +            std::swap(slots[i], slots[index]);
 +            std::swap(explicit_keyboard[i], explicit_keyboard[index]);
++            std::swap(selected_profiles[i], selected_profiles[index]);
 +            break;
 +        }
 +    }
++    const bool changed_device = slots[index].controller != controller ||
++        slots[index].keyboard_enabled != !controller;
 +    slots[index].controller = controller;
 +    slots[index].keyboard_enabled = !controller;
 +    explicit_keyboard[index] = !controller;
++    if (changed_device) {
++        selected_profiles[index] = {
++            controller ? profiles::get_controller_profile_index_from_sdl_controller(controller) : -1,
++            controller ? -1 : profiles::get_default_keyboard_profile_for_player(index)};
++    }
 +    slots.recount();
 +    for (int i = 0; i < 4; ++i) {
++        // Selecting an unrelated slot (or swapping devices) must not reset
++        // the saved/custom/empty layout chosen for an existing device.
 +        profiles::set_input_profile_for_player(i, slots[i].controller ?
-+            profiles::get_controller_profile_index_from_sdl_controller(slots[i].controller) : -1, InputDevice::Controller);
++            selected_profiles[i].first : -1, InputDevice::Controller);
 +        profiles::set_input_profile_for_player(i, slots[i].keyboard_enabled ?
-+            profiles::get_or_create_mp_keyboard_profile_index(i) : -1, InputDevice::Keyboard);
++            selected_profiles[i].second : -1, InputDevice::Keyboard);
 +    }
 +    if (recompui::controls_page) recompui::controls_page->force_update();
 +    return true;
@@ -987,7 +1099,7 @@ index 08cb3f3..f8e272b 100644
 +        profiles::set_input_profile_for_player(i, after.controller ?
 +            profiles::get_controller_profile_index_from_sdl_controller(after.controller) : -1, InputDevice::Controller);
 +        profiles::set_input_profile_for_player(i, after.keyboard_enabled ?
-+            profiles::get_or_create_mp_keyboard_profile_index(i) : -1, InputDevice::Keyboard);
++            profiles::get_default_keyboard_profile_for_player(i) : -1, InputDevice::Keyboard);
 +    }
 +    if (changed) {
 +        next.recount();
@@ -998,7 +1110,7 @@ index 08cb3f3..f8e272b 100644
  
  bool playerassignment::is_active() {
      return PlayerState.is_assigning;
-@@ -150,17 +231,20 @@ void playerassignment::stop_and_close_modal() {
+@@ -150,18 +247,21 @@ void playerassignment::stop_and_close_modal() {
  }
  
  void playerassignment::commit_player_assignment() {
@@ -1015,12 +1127,14 @@ index 08cb3f3..f8e272b 100644
                  profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
              }
          } else {
+-            profiles::set_input_profile_for_player(i, profiles::get_or_create_mp_keyboard_profile_index(i), InputDevice::Keyboard);
 +            profiles::set_input_profile_for_player(i, -1, InputDevice::Controller);
-             profiles::set_input_profile_for_player(i, profiles::get_or_create_mp_keyboard_profile_index(i), InputDevice::Keyboard);
++            profiles::set_input_profile_for_player(i, profiles::get_default_keyboard_profile_for_player(i), InputDevice::Keyboard);
          }
      }
+ }
 diff --git a/recompinput/src/profiles.cpp b/recompinput/src/profiles.cpp
-index c89956e..3a79159 100644
+index c89956e..492e484 100644
 --- a/recompinput/src/profiles.cpp
 +++ b/recompinput/src/profiles.cpp
 @@ -2,6 +2,7 @@
@@ -1041,17 +1155,62 @@ index c89956e..3a79159 100644
  static std::unordered_map<std::string, int> input_profile_key_index_map{};
  static std::vector<int> input_profile_custom_indices[static_cast<size_t>(recompinput::InputDevice::COUNT)]{};
  
-@@ -371,6 +373,20 @@ namespace recompinput {
+@@ -225,6 +227,35 @@ namespace recompinput {
+         }
+     }
+ 
++    int profiles::get_game_input_profile_for_player(int player_index, InputDevice device) {
++        if (player_index < 0 || player_index >= max_num_players_supported) return -1;
++        const auto player = players::get_player(player_index);
++        if (!players::is_single_player_mode() ||
++            (device == InputDevice::Controller && player.controller) ||
++            (device == InputDevice::Keyboard && player.keyboard_enabled)) {
++            return get_input_profile_for_player(player_index, device);
++        }
++        if (player_index != 0) return -1;
++        // Keep ordinary SP keyboard access. A deliberately assigned (even
++        // empty) keyboard layout above must never be replaced by defaults.
++        if (device == InputDevice::Keyboard) return get_sp_keyboard_profile_index();
++        if (device == InputDevice::Controller && players::get_number_of_assigned_players() == 0)
++            return get_sp_controller_profile_index();
++        return -1;
++    }
++
++    int profiles::get_controller_event_profile(SDL_GameController* controller) {
++        if (controller) {
++            for (int i = 0; i < max_num_players_supported; ++i) {
++                if (players::get_player(i).controller == controller)
++                    return get_input_profile_for_player(i, InputDevice::Controller);
++            }
++            const int profile = get_controller_profile_index_from_sdl_controller(controller);
++            if (profile >= 0) return profile;
++        }
++        return get_sp_controller_profile_index();
++    }
++
+     int profiles::add_controller(ControllerGUID guid, int profile_index) {
+         auto it = controller_hash_index_map.find(guid.hash);
+         if (it != controller_hash_index_map.end()) {
+@@ -371,6 +402,29 @@ namespace recompinput {
          return "SERIAL_" + guid.serial + "_VID_" + std::to_string(guid.vendor) + "_PID_" + std::to_string(guid.product) +"_VERSION_" + std::to_string(guid.version) +"_CRC16_" + std::to_string(guid.crc16);
      }
  
++    int profiles::get_default_keyboard_profile_for_player(int player_index) {
++        // Choosing Keyboard in SP should expose the existing working SP
++        // layout in Controls, not a newly cleared multiplayer layout. This
++        // selects a default only; saved/custom/empty layouts are not rewritten.
++        if (player_index == 0 && players::is_single_player_mode())
++            return get_sp_keyboard_profile_index();
++        return get_or_create_mp_keyboard_profile_index(player_index);
++    }
++
 +    // Read a named action through the same selected keyboard/controller profiles
 +    // as N64 input. The caller owns gameplay/focus gating and held-edge tracking.
 +    bool profiles::get_action_input(int player_index, GameInput input) {
 +        if (player_index < 0 || player_index >= static_cast<int>(players_input_profile_indices.size()) ||
 +            static_cast<size_t>(input) >= num_game_inputs) return false;
-+        const int controller = players::is_single_player_mode() ? get_sp_controller_profile_index() : players_input_profile_indices[player_index].first.load();
-+        const int keyboard = players::is_single_player_mode() ? get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second.load();
++        const int controller = get_game_input_profile_for_player(player_index, InputDevice::Controller);
++        const int keyboard = get_game_input_profile_for_player(player_index, InputDevice::Keyboard);
 +        const auto held = [&](int profile) {
 +            return profile >= 0 && static_cast<size_t>(profile) < input_profiles.size() &&
 +                recompinput::get_input_digital(player_index,input_profiles[profile].mappings[static_cast<size_t>(input)]);
@@ -1062,19 +1221,19 @@ index c89956e..3a79159 100644
      bool profiles::get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out) {
          uint16_t cur_buttons = 0;
          float cur_x = 0.0f;
-@@ -397,8 +413,8 @@ namespace recompinput {
+@@ -397,8 +451,8 @@ namespace recompinput {
                  cur_y += recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::Y_AXIS_POS]) - recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::Y_AXIS_NEG]);
              };
              
 -            int profile_index_cont = players::is_single_player_mode() ? profiles::get_sp_controller_profile_index() : players_input_profile_indices[player_index].first;
 -            int profile_index_kb = players::is_single_player_mode() ? profiles::get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second;
-+            int profile_index_cont = players::is_single_player_mode() ? profiles::get_sp_controller_profile_index() : players_input_profile_indices[player_index].first.load();
-+            int profile_index_kb = players::is_single_player_mode() ? profiles::get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second.load();
++            int profile_index_cont = get_game_input_profile_for_player(player_index, InputDevice::Controller);
++            int profile_index_kb = get_game_input_profile_for_player(player_index, InputDevice::Keyboard);
              check_buttons(profile_index_cont);
              check_buttons(profile_index_kb);
  
 diff --git a/recompui/include/recompui/config.h b/recompui/include/recompui/config.h
-index 38b84f5..d4d90c3 100644
+index 38b84f5..7765d72 100644
 --- a/recompui/include/recompui/config.h
 +++ b/recompui/include/recompui/config.h
 @@ -58,6 +58,7 @@ namespace recompui {
@@ -1085,6 +1244,14 @@ index 38b84f5..d4d90c3 100644
                  inline const std::string hpfb_option = "hpfb_option";
                  inline const std::string rr_manual_value = "rr_manual_value";
                  inline const std::string ds_option = "ds_option";
+@@ -82,6 +83,7 @@ namespace recompui {
+         namespace mods {
+             inline const std::string id = "mods";
+             inline const std::string tab_name = "Mods";
++
+         }
+ 
+         /**
 diff --git a/recompui/include/recompui/recompui.h b/recompui/include/recompui/recompui.h
 index 30c463b..96a639d 100644
 --- a/recompui/include/recompui/recompui.h
@@ -1101,10 +1268,65 @@ index 30c463b..96a639d 100644
  
      using event_handler_t = void(const std::string& param, Rml::Event&);
 diff --git a/recompui/src/base/ui_launcher.cpp b/recompui/src/base/ui_launcher.cpp
-index 6de7a94..90981fa 100644
+index 6de7a94..7a9509c 100644
 --- a/recompui/src/base/ui_launcher.cpp
 +++ b/recompui/src/base/ui_launcher.cpp
-@@ -537,6 +537,12 @@ namespace recompui {
+@@ -8,6 +8,7 @@
+ #include "ultramodern/ultramodern.hpp"
+ #include "nfd.h"
+ #include <filesystem>
++#include <map>
+ #include "elements/ui_svg.h"
+ #include "elements/ui_config_page.h"
+ #include "ui_utils.h"
+@@ -36,6 +37,30 @@ static std::string generate_thumbnail_src_for_mod(const std::string &mod_id) {
+ }
+ 
+ namespace recompui {
++    namespace {
++        std::map<std::string, std::function<std::string()>> game_start_guards;
++
++        bool game_start_allowed() {
++            // Copy callbacks so a guard can safely unregister itself during a
++            // decision. Start is rare; no allocations enter gameplay here.
++            const auto guards = game_start_guards;
++            for (const auto& [id, guard] : guards) {
++                const std::string reason = guard();
++                if (!reason.empty()) {
++                    recompui::message_box(reason.c_str());
++                    return false;
++                }
++            }
++            return true;
++        }
++    }
++
++    void register_game_start_guard(const std::string& guard_id,
++                                   std::function<std::string()> guard) {
++        if (guard) game_start_guards[guard_id] = std::move(guard);
++        else game_start_guards.erase(guard_id);
++    }
++
+     using on_select_option_t = std::function<void(const std::string &id)>;
+ 
+     class GameModeOption : public Element {
+@@ -295,6 +320,7 @@ namespace recompui {
+         }
+ 
+         void on_start_game_mode() {
++            if (!game_start_allowed()) return;
+             get_launcher_menu()->hide_game_mode_menu();
+             recomp::start_game(this->game_id, this->cur_game_mode_id);
+             recompui::hide_all_contexts();
+@@ -456,6 +482,7 @@ namespace recompui {
+ 
+         option->set_callback([this, option, start_game_title]() {
+             if (this->rom_valid) {
++                if (!game_start_allowed()) return;
+                 recompui::update_game_mod_id(this->mod_game_id);
+                 if (recomp::mods::game_mode_count(this->mod_game_id, false) > 0) {
+                     get_launcher_menu()->show_game_mode_menu(this->game_id, this->game_display_name, this->game_thumbnail);
+@@ -537,6 +564,12 @@ namespace recompui {
              default_title_wrapper->set_translate_2D(-50.0f, -50.0f, Unit::Percent);
              default_title_wrapper->set_width_auto();
              default_title_wrapper->set_height_auto();
@@ -1117,7 +1339,7 @@ index 6de7a94..90981fa 100644
              Label *title = context.create_element<Label>(default_title_wrapper, programconfig::get_program_name(), theme::Typography::Header1);
              title->set_color(theme::color::Primary);
          }
-@@ -573,9 +579,10 @@ namespace recompui {
+@@ -573,9 +606,10 @@ namespace recompui {
  
      Svg *LauncherMenu::set_launcher_background_svg(const std::string& svg_path) {
          auto context = get_current_context();
@@ -1129,7 +1351,7 @@ index 6de7a94..90981fa 100644
          }
          background_svg = context.create_element<Svg>(background_wrapper, svg_path);
          background_svg->set_position(Position::Absolute);
-@@ -587,6 +594,22 @@ namespace recompui {
+@@ -587,6 +621,22 @@ namespace recompui {
          return background_svg;
      }
  
@@ -1153,10 +1375,10 @@ index 6de7a94..90981fa 100644
          game_options_menu->display_hide();
          auto context = get_current_context();
 diff --git a/recompui/src/base/ui_launcher.h b/recompui/src/base/ui_launcher.h
-index eb8833e..5204422 100644
+index eb8833e..85a96b7 100644
 --- a/recompui/src/base/ui_launcher.h
 +++ b/recompui/src/base/ui_launcher.h
-@@ -6,6 +6,7 @@
+@@ -6,9 +6,16 @@
  #include "elements/ui_label.h"
  #include "base/ui_game_option.h"
  #include "base/ui_launcher_common.h"
@@ -1164,7 +1386,16 @@ index eb8833e..5204422 100644
  #include "elements/ui_svg.h"
  
  namespace recompui {
-@@ -56,6 +57,7 @@ namespace recompui {
++    // UI-thread guards run immediately before either launcher start path.
++    // Empty text allows start; otherwise the launcher stays visible and shows
++    // the reason. Empty callback removes this named guard; guards compose.
++    void register_game_start_guard(const std::string& guard_id,
++                                   std::function<std::string()> guard);
++
+     class GameOption;
+ 
+     class GameOptionsMenu : public Element {
+@@ -56,6 +63,7 @@ namespace recompui {
          std::string_view get_type_name() override { return "LauncherMenu"; }
          Element *background_wrapper;
          Svg *background_svg = nullptr;
@@ -1172,7 +1403,7 @@ index eb8833e..5204422 100644
          Element *menu_container;
          Label *version_label;
          Element *default_title_wrapper;
-@@ -71,6 +73,7 @@ namespace recompui {
+@@ -71,6 +79,7 @@ namespace recompui {
          void hide_game_mode_menu();
          void remove_default_title();
          Svg *set_launcher_background_svg(const std::string& svg_path);
@@ -1181,7 +1412,7 @@ index eb8833e..5204422 100644
          Element *get_menu_container() { return menu_container; }
      };
 diff --git a/recompui/src/base/ui_state.cpp b/recompui/src/base/ui_state.cpp
-index 277a421..2c3f923 100644
+index 277a421..dc6da6c 100644
 --- a/recompui/src/base/ui_state.cpp
 +++ b/recompui/src/base/ui_state.cpp
 @@ -1,3 +1,5 @@
@@ -1199,7 +1430,15 @@ index 277a421..2c3f923 100644
  
  #include "rt64_render_hooks.h"
  
-@@ -34,6 +38,11 @@
+@@ -23,6 +27,7 @@
+ #include "recompinput/profiles.h"
+ 
+ #include "librecomp/game.hpp"
++#include "librecomp/mods.hpp"
+ 
+ #include "base/ui_launcher.h"
+ #include "composites/ui_mod_menu.h"
+@@ -34,6 +39,11 @@
  #include "util/file.h"
  
  static std::atomic_bool cursor_enabled = true;
@@ -1211,7 +1450,7 @@ index 277a421..2c3f923 100644
  
  void recompui::open_quit_game_prompt() {
      recompui::open_choice_prompt(
-@@ -241,7 +250,7 @@ public:
+@@ -241,7 +251,7 @@ public:
  
          int width, height;
          SDL_GetWindowSizeInPixels(window, &width, &height);
@@ -1220,7 +1459,7 @@ index 277a421..2c3f923 100644
          context = Rml::CreateContext("main", Rml::Vector2i(width, height));
  
          Rml::Debugger::Initialise(context);
-@@ -255,6 +264,7 @@ public:
+@@ -255,6 +265,7 @@ public:
                  {"promptfont/promptfont.ttf", false},
              };
  
@@ -1228,7 +1467,7 @@ index 277a421..2c3f923 100644
              for (const FontFace& face : font_faces) {
                  auto font = recompui::file::get_asset_path(face.filename);
                  Rml::LoadFontFace(font.string(), face.fallback_face);
-@@ -267,6 +277,7 @@ public:
+@@ -267,6 +278,7 @@ public:
              auto primary_font_path = recompui::file::get_asset_path(primary_font.c_str());
              Rml::LoadFontFace(primary_font_path.string(), false);
  
@@ -1236,7 +1475,7 @@ index 277a421..2c3f923 100644
              for (const auto& extra_font : extra_fonts) {
                  auto extra_font_path = recompui::file::get_asset_path(extra_font.c_str());
                  Rml::LoadFontFace(extra_font_path.string(), false);
-@@ -275,11 +286,13 @@ public:
+@@ -275,11 +287,13 @@ public:
      }
  
      void create_menus() {
@@ -1250,7 +1489,7 @@ index 277a421..2c3f923 100644
      }
  
      void unload() {
-@@ -419,6 +432,12 @@ public:
+@@ -419,6 +433,12 @@ public:
      }
  
      void hide_context(recompui::ContextId context) {
@@ -1263,7 +1502,7 @@ index 277a421..2c3f923 100644
          auto remove_it = std::remove_if(shown_contexts.begin(), shown_contexts.end(), [context](auto& c) { return c.context == context; });
          if (remove_it == shown_contexts.end()) {
              recompui::message_box("Attemped to hide a context that isn't shown");
-@@ -431,6 +450,9 @@ public:
+@@ -431,6 +451,9 @@ public:
      
      void hide_all_contexts() {
          for (auto& context : shown_contexts) {
@@ -1273,7 +1512,7 @@ index 277a421..2c3f923 100644
              context.document->Hide();
          }
  
-@@ -513,8 +535,18 @@ void init_hook(plume::RenderInterface* interface, plume::RenderDevice* device) {
+@@ -513,8 +536,18 @@ void init_hook(plume::RenderInterface* interface, plume::RenderDevice* device) {
  #if defined(__linux__)
      std::locale::global(std::locale::classic());
  #endif
@@ -1294,7 +1533,7 @@ index 277a421..2c3f923 100644
  }
  
  moodycamel::ConcurrentQueue<SDL_Event> ui_event_queue{};
-@@ -571,17 +603,23 @@ Rml::Input::KeyIdentifier convert_sdl_to_rml(int sdl_key) {
+@@ -571,17 +604,20 @@ Rml::Input::KeyIdentifier convert_sdl_to_rml(int sdl_key) {
  }
  
  bool check_menu_button_pressed(int profile_index, recompinput::GameInput input, int32_t event_button) {
@@ -1313,15 +1552,29 @@ index 277a421..2c3f923 100644
  int cont_button_to_key(SDL_ControllerButtonEvent& button) {
 -    int player1_profile = recompinput::profiles::get_input_profile_for_player(0, recompinput::InputDevice::Controller);
 +    // Menu events belong to the device that emitted them, including empty P1 slots.
-+    int player1_profile = recompinput::players::is_single_player_mode()
-+        ? recompinput::profiles::get_sp_controller_profile_index()
-+        : recompinput::profiles::get_controller_profile_index_from_sdl_controller(
-+            SDL_GameControllerFromInstanceID(button.which));
-+    if (player1_profile < 0) player1_profile = recompinput::profiles::get_sp_controller_profile_index();
++    int player1_profile = recompinput::profiles::get_controller_event_profile(
++        SDL_GameControllerFromInstanceID(button.which));
  
      for (const auto& mapping_pair : recompui::menu_action_mapping::rml_key_to_action) {
          const auto& mapping = mapping_pair.second;
-@@ -859,6 +897,12 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+@@ -821,14 +857,8 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+             case SDL_EventType::SDL_CONTROLLERBUTTONDOWN: {
+                 SDL_ControllerButtonEvent* button_event = &cur_event.cbutton;
+                 SDL_JoystickID joystick_id = button_event->which;
+-                int profile_index;
+-                if (recompinput::players::is_single_player_mode()) {
+-                    profile_index = recompinput::profiles::get_sp_controller_profile_index();
+-                }
+-                else {
+-                    auto controller = recompinput::get_controller_from_joystick_id(joystick_id);
+-                    profile_index = recompinput::profiles::get_controller_profile_index_from_sdl_controller(controller);
+-                }
++                auto controller = recompinput::get_controller_from_joystick_id(joystick_id);
++                int profile_index = recompinput::profiles::get_controller_event_profile(controller);
+ 
+                 if (check_menu_button_pressed(profile_index, recompinput::GameInput::TOGGLE_MENU, cur_event.cbutton.button)) {
+                     open_config = true;
+@@ -859,6 +889,12 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
      ui_state->update_primary_input(mouse_moved, non_mouse_interacted);
      ui_state->update_focus(mouse_moved, non_mouse_interacted);
  
@@ -1334,6 +1587,17 @@ index 277a421..2c3f923 100644
      if (recompui::is_any_context_shown()) {
          if (recompui::is_context_shown(recompui::get_launcher_context_id())) {
              recompui::update_launcher_menu();
+@@ -1015,8 +1051,8 @@ void recompui::release_image(const std::string &src) {
+ }
+ 
+ void recompui::drop_files(const std::list<std::filesystem::path> &file_list) {
+-    // Prevent mod installation after the game has started.
+-    if (ultramodern::is_game_started()) {
++    // Recheck dialog completions and drag/drop against the same session lock.
++    if (ultramodern::is_game_started() || !recomp::mods::can_rescan_mods()) {
+         return;
+     }
+ 
 diff --git a/recompui/src/composites/ui_mod_installer.cpp b/recompui/src/composites/ui_mod_installer.cpp
 index 1f98b3c..a83a958 100644
 --- a/recompui/src/composites/ui_mod_installer.cpp
@@ -1366,6 +1630,210 @@ index 1f98b3c..a83a958 100644
              recomp::mods::ModOpenError open_error;
              recomp::mods::ZipModFileHandle file_handle(path, open_error);
              if (open_error != recomp::mods::ModOpenError::Good) {
+diff --git a/recompui/src/composites/ui_mod_menu.cpp b/recompui/src/composites/ui_mod_menu.cpp
+index 02455fd..8c824af 100644
+--- a/recompui/src/composites/ui_mod_menu.cpp
++++ b/recompui/src/composites/ui_mod_menu.cpp
+@@ -11,6 +11,7 @@
+ #include "librecomp/mods.hpp"
+ 
+ #include <string>
++#include <unordered_map>
+ 
+ #ifdef WIN32
+ #include <shellapi.h>
+@@ -22,6 +23,48 @@
+ 
+ namespace recompui {
+ 
++namespace {
++struct ModAction {
++    std::function<std::string()> label;
++    std::function<bool()> enabled;
++    std::function<void()> invoke;
++};
++std::unordered_map<std::string, ModAction> mod_actions;
++
++struct ModActionState {
++    std::string label = "Configure";
++    bool enabled = false;
++};
++
++ModActionState mod_action_state(const std::string& id, bool has_config) {
++    const auto found = mod_actions.find(id);
++    if (found == mod_actions.end()) return {"Configure", has_config};
++    const auto action = found->second;
++    std::string label = action.label ? action.label() : "Configure";
++    if (label.empty()) label = "Configure";
++    return {std::move(label), !action.enabled || action.enabled()};
++}
++
++bool invoke_mod_action(const std::string& id) {
++    const auto found = mod_actions.find(id);
++    if (found == mod_actions.end()) return false;
++    // A callback may unregister itself or change its enabled state. Keep its
++    // lifetime independent of the registry and recheck stale button presses.
++    const auto action = found->second;
++    if (!action.enabled || action.enabled()) action.invoke();
++    return true;
++}
++} // namespace
++
++void register_mod_action(const std::string& mod_id,
++                         std::function<std::string()> label,
++                         std::function<bool()> enabled,
++                         std::function<void()> invoke) {
++    if (invoke) mod_actions[mod_id] = {std::move(label), std::move(enabled), std::move(invoke)};
++    else mod_actions.erase(mod_id);
++    update_mod_list(false);
++}
++
+ static std::string generate_thumbnail_src_for_mod(const std::string &mod_id) {
+     return "?/mods/" + mod_id + "/thumb";
+ }
+@@ -280,7 +323,7 @@ void ModMenu::refresh_mods(bool scan_mods) {
+     }
+ 
+     // Prevent scanning mods after starting the game.
+-    if (scan_mods && !ultramodern::is_game_started()) {
++    if (scan_mods && !ultramodern::is_game_started() && recomp::mods::can_rescan_mods()) {
+         recomp::mods::scan_mods();
+     }
+     mod_details = recomp::mods::get_all_mod_details(game_mod_id);
+@@ -304,6 +347,9 @@ void ModMenu::open_mods_folder() {
+ }
+ 
+ void ModMenu::open_install_dialog() {
++    if (ultramodern::is_game_started() || !recomp::mods::can_rescan_mods()) {
++        return;
++    }
+     recompui::file::open_file_dialog_multiple([](bool success, const std::list<std::filesystem::path>& paths) {
+         if (success) {
+             ContextId old_context = recompui::try_close_current_context();
+@@ -320,6 +366,8 @@ void ModMenu::open_install_dialog() {
+ void ModMenu::mod_toggled(bool enabled) {
+     if (active_mod_index >= 0) {
+         recomp::mods::enable_mod(mod_details[active_mod_index].mod_id, enabled);
++        // Restore the actual checked state if a session policy rejected a stale click.
++        mod_selected(active_mod_index);
+         
+         // Refresh enabled status for all mods in case one of them got auto-enabled due to being a dependency.
+         for (size_t i = 0; i < mod_entry_buttons.size(); i++) {
+@@ -342,9 +390,16 @@ void ModMenu::mod_selected(uint32_t mod_index) {
+         bool auto_enabled = recomp::mods::is_mod_auto_enabled(mod_details[mod_index].mod_id);
+         recomp::mods::DeprecationStatus deprecation_status = recomp::mods::get_mod_deprecation_status(mod_details[mod_index].mod_id);
+         bool deprecated = recomp::mods::is_mod_deprecated(mod_details[mod_index].mod_id, mod_details[mod_index].version);
+-        bool toggle_enabled = !auto_enabled && !deprecated && (mod_details[mod_index].runtime_toggleable || !ultramodern::is_game_started());
+-        bool configure_enabled = !config_schema.options.empty();
+-        mod_details_panel->set_mod_details(mod_details[mod_index], thumbnail_src, toggle_checked, toggle_enabled, auto_enabled || deprecated, configure_enabled, deprecation_status);
++        active_mod_can_toggle = recomp::mods::can_toggle_mod(mod_details[mod_index].mod_id);
++        active_mod_status = recomp::mods::get_mod_status(mod_details[mod_index].mod_id);
++        bool toggle_enabled = active_mod_can_toggle && !auto_enabled && !deprecated && (mod_details[mod_index].runtime_toggleable || !ultramodern::is_game_started());
++        const auto action = mod_action_state(mod_details[mod_index].mod_id, !config_schema.options.empty());
++        active_mod_action_label = action.label;
++        active_mod_action_enabled = action.enabled;
++        auto displayed_details = mod_details[mod_index];
++        if (!active_mod_status.empty()) displayed_details.description += "\n\n" + active_mod_status;
++        mod_details_panel->set_mod_details(displayed_details, thumbnail_src, toggle_checked, toggle_enabled, auto_enabled || deprecated, action.enabled, deprecation_status);
++        mod_details_panel->get_configure_button()->set_text(action.label);
+         mod_entry_buttons[active_mod_index]->set_selected(true);
+     }
+ }
+@@ -484,6 +539,11 @@ bool ModMenu::handle_special_config_options(const recomp::config::ConfigOption&
+ 
+ void ModMenu::mod_configure_requested() {
+     if (active_mod_index >= 0) {
++        if (invoke_mod_action(mod_details[active_mod_index].mod_id)) {
++            mod_selected(active_mod_index);
++            queue_update();
++            return;
++        }
+         // Record the context that was open when this function was called and close it.
+         ContextId prev_context = recompui::get_current_context();
+         prev_context.close();
+@@ -639,14 +699,23 @@ void ModMenu::process_event(const Event &e) {
+             mods_dirty = false;
+             mod_scan_queued = false;
+         }
+-        if (ultramodern::is_game_started()) {
+-            install_mods_button->set_enabled(false);
+-            refresh_button->set_enabled(false);
+-        }
++        const bool can_install = !ultramodern::is_game_started() && recomp::mods::can_rescan_mods();
++        install_mods_button->set_enabled(can_install);
++        refresh_button->set_enabled(can_install);
+         if (active_mod_index != -1) {        
++            const auto& id = mod_details[active_mod_index].mod_id;
++            const auto& schema = recomp::mods::get_mod_config_schema(id);
++            const auto action = mod_action_state(id, !schema.options.empty());
++            if (active_mod_can_toggle != recomp::mods::can_toggle_mod(id) ||
++                active_mod_status != recomp::mods::get_mod_status(id) ||
++                active_mod_action_label != action.label ||
++                active_mod_action_enabled != action.enabled) mod_selected(active_mod_index);
++            // Registered actions can change during a background task. Poll only
++            // their cheap UI state; mod scanning remains explicitly requested.
++            if (mod_actions.contains(id)) queue_update();
+             bool auto_enabled = recomp::mods::is_mod_auto_enabled(mod_details[active_mod_index].mod_id);
+             bool deprecated = recomp::mods::is_mod_deprecated(mod_details[active_mod_index].mod_id, mod_details[active_mod_index].version);
+-            bool toggle_enabled = !auto_enabled && !deprecated && (mod_details[active_mod_index].runtime_toggleable || !ultramodern::is_game_started());
++            bool toggle_enabled = active_mod_can_toggle && !auto_enabled && !deprecated && (mod_details[active_mod_index].runtime_toggleable || !ultramodern::is_game_started());
+             if (!toggle_enabled) {
+                 mod_details_panel->disable_toggle();
+             }
+@@ -672,6 +741,7 @@ ModMenu::ModMenu(ResourceId rid, Element *parent) : Element(rid, parent) {
+     set_justify_content(JustifyContent::FlexStart);
+     set_width(100.0f, Unit::Percent);
+     set_height(100.0f, Unit::Percent);
++
+     
+     {
+         body_container = context.create_element<Container>(this, FlexDirection::Row, JustifyContent::FlexStart);
+@@ -703,7 +773,9 @@ ModMenu::ModMenu(ResourceId rid, Element *parent) : Element(rid, parent) {
+         body_empty_container->set_display(Display::None);
+         {
+             context.create_element<Element>(body_empty_container);
+-            context.create_element<Label>(body_empty_container, "You have no mods. Go get some!", LabelStyle::Large);
++            context.create_element<Label>(body_empty_container,
++                "You have no mods. Go get some!",
++                LabelStyle::Large);
+             context.create_element<Element>(body_empty_container);
+         } // body_empty_container
+ 
+diff --git a/recompui/src/composites/ui_mod_menu.h b/recompui/src/composites/ui_mod_menu.h
+index 294c371..c767867 100644
+--- a/recompui/src/composites/ui_mod_menu.h
++++ b/recompui/src/composites/ui_mod_menu.h
+@@ -6,8 +6,19 @@
+ #include "elements/ui_icon_button.h"
+ #include "ui_mod_details_panel.h"
+ 
++#include <functional>
++#include <string>
++
+ namespace recompui {
+ 
++// Register a native action for one mod's Configure button. Callbacks execute on
++// the UI thread; label/enabled must only read state and must not perform file I/O.
++// An empty invoke callback removes the action and restores ordinary Configure.
++void register_mod_action(const std::string& mod_id,
++                        std::function<std::string()> label,
++                        std::function<bool()> enabled,
++                        std::function<void()> invoke);
++
+ class ModMenu;
+ 
+ class ModEntryView : public Element {
+@@ -119,6 +130,10 @@ private:
+     std::string game_mod_id;
+     bool mods_dirty = false;
+     bool mod_scan_queued = false;
++    std::string active_mod_status;
++    bool active_mod_can_toggle = true;
++    std::string active_mod_action_label;
++    bool active_mod_action_enabled = false;
+ };
+ 
+ } // namespace recompui
 diff --git a/recompui/src/composites/ui_player_card.cpp b/recompui/src/composites/ui_player_card.cpp
 index 7a75884..1364b87 100644
 --- a/recompui/src/composites/ui_player_card.cpp
@@ -1768,6 +2236,32 @@ index e99229a..cf397a4 100644
      }
      std::unique_ptr<Rml::StreamMemory> rml_stream = std::make_unique<Rml::StreamMemory>(reinterpret_cast<Rml::byte*>(style.data()), style.size());
      rml_stream->SetSourceURL(rcss_file.filename().string());
+diff --git a/recompui/src/elements/ui_modal.cpp b/recompui/src/elements/ui_modal.cpp
+index b057f46..25ab708 100644
+--- a/recompui/src/elements/ui_modal.cpp
++++ b/recompui/src/elements/ui_modal.cpp
+@@ -161,9 +161,9 @@ bool TabbedModal::close() {
+ static std::pair<recompinput::InputDevice, int> get_last_input_info() {
+     if (recompinput::players::is_single_player_mode()) {
+         if (get_cont_active()) {
+-            return { recompinput::InputDevice::Controller, recompinput::profiles::get_sp_controller_profile_index() };
++            return { recompinput::InputDevice::Controller, recompinput::profiles::get_game_input_profile_for_player(0, recompinput::InputDevice::Controller) };
+         } else {
+-            return { recompinput::InputDevice::Keyboard, recompinput::profiles::get_sp_keyboard_profile_index() };
++            return { recompinput::InputDevice::Keyboard, recompinput::profiles::get_game_input_profile_for_player(0, recompinput::InputDevice::Keyboard) };
+         }
+     }
+ 
+@@ -241,6 +241,9 @@ void Modal::render_menu_actions() {
+     }
+ 
+     auto [current_device, current_profile] = get_last_input_info();
++    if (current_profile < 0 || current_profile >= recompinput::profiles::get_input_profile_count()) {
++        current_device = recompinput::InputDevice::COUNT;
++    }
+     last_input_device = current_device;
+     last_input_profile = current_profile;
+ 
 diff --git a/recompui/src/elements/ui_text_input.h b/recompui/src/elements/ui_text_input.h
 index 52282a7..b1c7b2c 100644
 --- a/recompui/src/elements/ui_text_input.h
@@ -1781,7 +2275,7 @@ index 52282a7..b1c7b2c 100644
          void add_text_changed_callback(std::function<void(const std::string &)> callback);
          void set_focus_callback(std::function<void(bool)> callback);
 diff --git a/recompui/src/renderer/rt64_render_context.cpp b/recompui/src/renderer/rt64_render_context.cpp
-index a7954c7..c3b4b81 100644
+index a7954c7..ce5ed8a 100644
 --- a/recompui/src/renderer/rt64_render_context.cpp
 +++ b/recompui/src/renderer/rt64_render_context.cpp
 @@ -1,7 +1,10 @@
@@ -1889,28 +2383,43 @@ index a7954c7..c3b4b81 100644
  
      // Check if the selected device actually supports MSAA sample positions and MSAA for for the formats that will be used
      // and downgrade the configuration accordingly.
-@@ -371,8 +402,19 @@ bool renderer::RT64Context::update_config(const ultramodern::renderer::GraphicsC
+@@ -371,9 +402,17 @@ bool renderer::RT64Context::update_config(const ultramodern::renderer::GraphicsC
          return false;
      }
  
 -    if (new_config.wm_option != old_config.wm_option) {
--        app->setFullScreen(new_config.wm_option == ultramodern::renderer::WindowMode::Fullscreen);
 +    const bool window_mode_changed = new_config.wm_option != old_config.wm_option;
 +    const bool vsync_changed = new_config.vsync_enabled != old_config.vsync_enabled;
-+    if (window_mode_changed || vsync_changed) {
-+        // The present queue reads and, for Vulkan, may rebuild the swap chain
-+        // from this state. Window style/size changes must use the same lock so
-+        // they cannot race Present or ResizeBuffers.
++    if (window_mode_changed) {
++        // Window style/size changes still synchronize with Present/resize.
++        // VSync-only edits must not stall this graphics producer on that lock.
 +        std::scoped_lock present_lock(app->presentQueue->threadMutex);
-+        if (window_mode_changed) {
-+            app->setFullScreen(new_config.wm_option == ultramodern::renderer::WindowMode::Fullscreen);
-+        }
-+        if (vsync_changed) {
-+            app->swapChain->setVsyncEnabled(new_config.vsync_enabled);
-+        }
+         app->setFullScreen(new_config.wm_option == ultramodern::renderer::WindowMode::Fullscreen);
      }
++    if (vsync_changed) {
++        app->presentQueue->requestVsync(new_config.vsync_enabled);
++    }
  
      set_application_user_config(app.get(), new_config);
+ 
+@@ -471,10 +510,17 @@ void renderer::RT64Context::check_texture_pack_actions() {
+         }
+ 
+         if (!replacement_directories.empty()) {
++            // Pack changes are synchronous at this safe renderer boundary.
++            // Paired, opt-in checkpoints distinguish a pack load from a course
++            // transition stall without tracing every texture or display list.
++            recompui::startup_checkpoint("texture-packs-load-begin");
+             app->textureCache->loadReplacementDirectories(replacement_directories);
++            recompui::startup_checkpoint("texture-packs-load-end");
+         }
+         else {
++            recompui::startup_checkpoint("texture-packs-clear-begin");
+             app->textureCache->clearReplacementDirectories();
++            recompui::startup_checkpoint("texture-packs-clear-end");
+         }
+     }
+ }
 diff --git a/recompui/src/renderer/ui_renderer.cpp b/recompui/src/renderer/ui_renderer.cpp
 index 5ca5349..0ccecfa 100644
 --- a/recompui/src/renderer/ui_renderer.cpp

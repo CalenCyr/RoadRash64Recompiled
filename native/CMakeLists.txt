@@ -11,6 +11,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+# Keep the existing option name for build-script compatibility. Players install
+# the optional tracks from their own ROM; enabling support embeds no track data.
+option(RR64_EXPERIMENTAL_COURSE "Enable optional user-ROM course packs and local import" ON)
 
 if(NOT MSVC)
     add_compile_options(
@@ -37,6 +40,13 @@ set(RT64_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/lib/rt64")
 set(RECOMP_FRONTEND_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/lib/RecompFrontend")
 set(RECOMPILED_DIR "${ROOT_DIR}/build/RecompiledFuncs")
 
+# Asset-free offline helper, built explicitly when packaging the local MK64
+# importer. It executes bounded terrain queries without starting the game.
+add_subdirectory("${ROOT_DIR}/tools/mk64-importer-contact"
+    "${CMAKE_BINARY_DIR}/mk64-importer-contact")
+add_subdirectory("${ROOT_DIR}/tools/mk64-importer-motion"
+    "${CMAKE_BINARY_DIR}/mk64-importer-motion")
+
 foreach(REQUIRED_PATH
     "${N64MODERN_RUNTIME_ROOT}/CMakeLists.txt"
     "${RT64_ROOT}/CMakeLists.txt"
@@ -52,7 +62,7 @@ foreach(REQUIRED_PATH
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/NotoEmoji-Regular.ttf"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/recomp.rcss"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/RoadRashLauncher.svg"
-    "${CMAKE_CURRENT_SOURCE_DIR}/assets/RoadRashLauncher-v3.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/RoadRashLauncher-v4.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/achievement-toast-frame-v2.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/promptfont/promptfont.ttf"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/Caret.svg"
@@ -287,6 +297,10 @@ add_executable(RoadRash64Recompiled
     src/rr64_custom_cop_ui.cpp
     src/rr64_custom_cop_runtime.cpp
     src/rr64_local_race_options.cpp
+    src/rr64_thrash_options.cpp
+    src/rr64_character_preferences.cpp
+    src/rr64_character_menu.cpp
+    src/rr64_race_end_trace.cpp
     src/rr64_world_terrain_assets.cpp
     src/rr64_world_terrain.cpp
     src/rr64_world_object_assets.cpp
@@ -302,6 +316,24 @@ add_executable(RoadRash64Recompiled
     src/rr64_netplay.cpp
     src/rr64_online_menu.cpp
     src/rr64_online_race_sync.cpp
+    src/rr64_online_terrain.cpp
+    src/rr64_highlights.cpp
+    src/rr64_highlight_audio.cpp
+    src/rr64_offline_modifiers.cpp
+    src/rr64_offline_modifiers_ui.cpp
+    src/rr64_offline_modifiers_health.cpp
+    src/rr64_offline_modifiers_weapons.cpp
+    src/rr64_offline_modifiers_bikes.cpp
+    src/rr64_race_pack_mod.cpp
+    src/rr64_race_pack_mod_ui.cpp
+    src/rr64_mk64_import.cpp
+    src/rr64_import_process.cpp
+    src/rr64_import_install.cpp
+    src/rr64_highlight_recording.cpp
+    src/rr64_highlight_pose.cpp
+    src/rr64_highlight_weapon.cpp
+    src/rr64_highlight_camera.cpp
+    src/rr64_highlight_network.cpp
     src/rr64_online_traffic.cpp
     src/rr64_online_combat.cpp
     src/rr64_authoritative_native.cpp
@@ -317,9 +349,37 @@ add_executable(RoadRash64Recompiled
     src/rr64_hud_widgets.cpp
     src/rr64_roaming_route.cpp
     src/rr64_voice_chat.cpp
+    src/rr64_race_pack_menu.cpp
 )
 
+if(RR64_EXPERIMENTAL_COURSE)
+    target_sources(RoadRash64Recompiled PRIVATE
+        src/rr64_experimental_course.cpp src/rr64_experimental_course_route.cpp
+        src/rr64_experimental_course_policy.cpp src/rr64_course_material.cpp
+        src/rr64_course_items.cpp src/rr64_course_item_render.cpp src/rr64_course_sky.cpp
+        src/rr64_course_audio.cpp src/rr64_course_audio_world.cpp
+        src/rr64_course_music.cpp
+        src/rr64_course_pickups.cpp
+        src/rr64_course_walls.cpp src/rr64_course_impact.cpp src/rr64_course_guardrail.cpp
+        src/rr64_course_hazards.cpp src/rr64_course_hazard_motion.cpp
+        src/rr64_course_sprite_motion.cpp src/rr64_course_scene_motion.cpp
+        src/rr64_course_effect_motion.cpp
+        src/rr64_course_hazard_collision.cpp src/rr64_course_hazard_render.cpp
+        src/rr64_course_ai.cpp src/rr64_course_boost.cpp src/rr64_course_diagnostics.cpp)
+    target_compile_definitions(RoadRash64Recompiled PRIVATE RR64_EXPERIMENTAL_COURSE=1)
+    target_compile_definitions(RecompiledFuncs PRIVATE RR64_EXPERIMENTAL_COURSE=1)
+    target_include_directories(RoadRash64Recompiled PRIVATE "${N64MODERN_RUNTIME_ROOT}/thirdparty")
+endif()
+
+# Config::load_config exposes the runtime's JSON type in its callback ABI.
+# RT64 ships a different JSON version; use librecomp's header for this caller
+# in both course-enabled and ordinary builds, without changing RT64's headers.
+set_property(SOURCE src/rr64_race_pack_mod_ui.cpp src/rr64_mk64_import.cpp
+    src/rr64_import_install.cpp APPEND PROPERTY
+    INCLUDE_DIRECTORIES "${N64MODERN_RUNTIME_ROOT}/thirdparty")
+
 target_include_directories(RoadRash64Recompiled PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/rt64/src/contrib/zstd/lib"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
     "${N64MODERN_RUNTIME_ROOT}/ultramodern/include"
@@ -358,6 +418,7 @@ else()
 endif()
 
 target_link_libraries(RoadRash64Recompiled PRIVATE
+    libzstd_static
     RecompiledFuncs
     recompui
     recompinput
@@ -426,11 +487,18 @@ target_include_directories(RR64AudioQueueSmoke PRIVATE
     "${N64MODERN_RUNTIME_ROOT}/ultramodern/include"
 )
 
+# ROM-free Vulkan surface limits and swapchain recreation checks.
+add_executable(RR64VulkanSwapChainSmoke EXCLUDE_FROM_ALL
+    tests/rr64_vulkan_swapchain_smoke.cpp)
+target_compile_features(RR64VulkanSwapChainSmoke PRIVATE cxx_std_17)
+target_include_directories(RR64VulkanSwapChainSmoke PRIVATE "${RT64_ROOT}/src")
+
 # ROM-free regression coverage for long-session 60/120 FPS presentation.
 # In particular, this reproduces the former self-sustaining 60-to-30 FPS
 # collapse after a transient late interpolation frame.
 add_executable(RR64FramePacingSmoke EXCLUDE_FROM_ALL
     tests/rr64_frame_pacing_smoke.cpp
+    "${RT64_ROOT}/src/common/rt64_timer.cpp"
 )
 target_include_directories(RR64FramePacingSmoke PRIVATE
     "${RT64_ROOT}/src"
@@ -492,7 +560,7 @@ target_include_directories(RR64ControllerSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_D
     $<TARGET_PROPERTY:recompinput,INCLUDE_DIRECTORIES> "${RR64_SDL2_INCLUDE_DIRS}")
 target_link_directories(RR64ControllerSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
 target_link_libraries(RR64ControllerSmoke PRIVATE ${RR64_SDL2_TARGET})
-add_executable(RR64LocalRaceOptionsSmoke EXCLUDE_FROM_ALL tests/rr64_local_race_options_smoke.cpp src/rr64_local_race_options.cpp src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp)
+add_executable(RR64LocalRaceOptionsSmoke EXCLUDE_FROM_ALL tests/rr64_local_race_options_smoke.cpp src/rr64_local_race_options.cpp src/rr64_thrash_options.cpp src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp)
 target_compile_features(RR64LocalRaceOptionsSmoke PRIVATE cxx_std_20)
 target_include_directories(RR64LocalRaceOptionsSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
@@ -527,6 +595,12 @@ if(MSVC)
 endif()
 add_executable(RR64AuthoredCadenceSmoke EXCLUDE_FROM_ALL
     tests/rr64_authored_cadence_smoke.cpp
+)
+add_executable(RR64InterpolationPressureSmoke EXCLUDE_FROM_ALL
+    tests/rr64_interpolation_pressure_smoke.cpp
+)
+target_include_directories(RR64InterpolationPressureSmoke PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/rt64/src"
 )
 foreach(RR64_CPU_TEST RR64OwnedTextureReuseSmoke RR64RSPVertexSmoke RR64WorldMatchingPerformanceSmoke RR64TMEMLoadSmoke RR64MatchingPreflightSmoke RR64RSPTriangleBatchSmoke RR64TranslationRejectionSmoke)
     if(RR64_CPU_TEST STREQUAL "RR64OwnedTextureReuseSmoke")
@@ -842,6 +916,7 @@ target_include_directories(RR64NameEntryNavigationSmoke PRIVATE
 
 # ROM-free validation for the shared stock-menu edge/repeat filter. Gameplay
 # steering bypasses this filter and is covered by the runtime mode gate.
+include(tests/rr64_online_menu_refresh_fixture.cmake)
 add_executable(RR64MenuNavigationSmoke EXCLUDE_FROM_ALL
     tests/rr64_menu_navigation_smoke.cpp
     src/rr64_menu_navigation.cpp
@@ -950,6 +1025,24 @@ endif()
 add_executable(RR64SettingsSmoke EXCLUDE_FROM_ALL tests/rr64_settings_smoke.cpp)
 target_compile_features(RR64SettingsSmoke PRIVATE cxx_std_20)
 
+add_executable(RR64CharacterPreferencesSmoke EXCLUDE_FROM_ALL
+    tests/rr64_character_preferences_smoke.cpp src/rr64_character_preferences.cpp)
+target_include_directories(RR64CharacterPreferencesSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_features(RR64CharacterPreferencesSmoke PRIVATE cxx_std_20)
+find_package(Threads REQUIRED)
+target_link_libraries(RR64CharacterPreferencesSmoke PRIVATE Threads::Threads)
+
+add_executable(RR64CharacterMenuSmoke EXCLUDE_FROM_ALL
+    tests/rr64_character_menu_smoke.cpp src/rr64_character_menu.cpp src/rr64_character_preferences.cpp)
+target_include_directories(RR64CharacterMenuSmoke PRIVATE $<TARGET_PROPERTY:RR64WeaponRenderSmoke,INCLUDE_DIRECTORIES>)
+target_compile_features(RR64CharacterMenuSmoke PRIVATE cxx_std_20)
+
+add_executable(RR64RaceEndTraceSmoke EXCLUDE_FROM_ALL
+    tests/rr64_race_end_trace_smoke.cpp src/rr64_race_end_trace.cpp)
+target_include_directories(RR64RaceEndTraceSmoke PRIVATE $<TARGET_PROPERTY:RR64WeaponRenderSmoke,INCLUDE_DIRECTORIES>)
+target_compile_features(RR64RaceEndTraceSmoke PRIVATE cxx_std_20)
+target_link_libraries(RR64RaceEndTraceSmoke PRIVATE Threads::Threads)
+
 add_executable(RR64RacerViewSmoke EXCLUDE_FROM_ALL tests/rr64_racer_view_smoke.cpp)
 target_compile_features(RR64RacerViewSmoke PRIVATE cxx_std_20)
 
@@ -969,10 +1062,10 @@ target_include_directories(RR64RoamingRouteSmoke PRIVATE $<TARGET_PROPERTY:RR64W
 target_compile_features(RR64RoamingRouteSmoke PRIVATE cxx_std_20)
 # Exercise the actual generated progress accumulator, not a second translation
 # of its arithmetic. Only curve-length lookup is supplied by the straight-road
-# fixture; these three native functions are extracted unchanged at configure.
+# fixture; native progress/segment functions are extracted at configure.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_16.c" RR64_ROUTE_NATIVE)
 set(RR64_ROUTE_FIXTURE "#include \"funcs.h\"\n")
-foreach(RR64_ROUTE_FUNC 80066D70 80066DA0 8006736C)
+foreach(RR64_ROUTE_FUNC 80066D70 80066DA0 8006736C 800674C4 80068D0C 80068C70)
     string(FIND "${RR64_ROUTE_NATIVE}" "RECOMP_FUNC void func_${RR64_ROUTE_FUNC}(" RR64_ROUTE_START)
     if(RR64_ROUTE_START LESS 0)
         message(FATAL_ERROR "Missing native roaming test function ${RR64_ROUTE_FUNC}; regenerate source")
@@ -984,6 +1077,19 @@ foreach(RR64_ROUTE_FUNC 80066D70 80066DA0 8006736C)
     string(SUBSTRING "${RR64_ROUTE_TAIL}" 0 ${RR64_ROUTE_END} RR64_ROUTE_BODY)
     string(APPEND RR64_ROUTE_FIXTURE "${RR64_ROUTE_BODY}\n")
 endforeach()
+# Native lap evaluation clamps the curve parameter before comparing progress
+# with the finish threshold. Keep that stock scalar helper in the fixture too.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_4.c" RR64_ROUTE_PLANE_NATIVE)
+string(FIND "${RR64_ROUTE_PLANE_NATIVE}" "RECOMP_FUNC void func_8001A250(" RR64_ROUTE_PLANE_START)
+if(RR64_ROUTE_PLANE_START LESS 0)
+    message(FATAL_ERROR "Missing native parameter-clamp test function 8001A250; regenerate source")
+endif()
+string(SUBSTRING "${RR64_ROUTE_PLANE_NATIVE}" ${RR64_ROUTE_PLANE_START} -1 RR64_ROUTE_PLANE_TAIL)
+string(SUBSTRING "${RR64_ROUTE_PLANE_TAIL}" 1 -1 RR64_ROUTE_PLANE_REST)
+string(FIND "${RR64_ROUTE_PLANE_REST}" "RECOMP_FUNC" RR64_ROUTE_PLANE_END)
+math(EXPR RR64_ROUTE_PLANE_END "${RR64_ROUTE_PLANE_END}+1")
+string(SUBSTRING "${RR64_ROUTE_PLANE_TAIL}" 0 ${RR64_ROUTE_PLANE_END} RR64_ROUTE_PLANE_BODY)
+string(APPEND RR64_ROUTE_FIXTURE "${RR64_ROUTE_PLANE_BODY}\n")
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rr64_roaming_native_fixture.cpp" CONTENT "${RR64_ROUTE_FIXTURE}" @ONLY)
 target_sources(RR64RoamingRouteSmoke PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/rr64_roaming_native_fixture.cpp")
 target_include_directories(RR64RoamingRouteSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs")

@@ -8,6 +8,9 @@
 namespace { rr64::netplay::Status session; }
 namespace rr64::netplay { Status get_status(){return session;} }
 extern "C" void func_8006736C(unsigned char*,recomp_context*);
+extern "C" void func_800674C4(unsigned char*,recomp_context*);
+extern "C" void func_80066D70(unsigned char*,recomp_context*);
+extern "C" void func_80068D0C(unsigned char*,recomp_context*);
 extern "C" void func_80017DBC(unsigned char*,recomp_context* c) { c->f0.fl=100.0f; }
 int main() {
     using namespace rr64::engine;
@@ -93,6 +96,136 @@ int main() {
     num(bike+0x16C,50);num(bike+0x170,80);
     check(rr64_roaming_recovery_point(m,&c)==1 && get(sp+0x58)==0 &&
           std::abs(val(sp+0x5C)-.5f)<.0001f,"nearest curved road point");
+    // Circuit arrays contain approach/tail curves outside the progress cycle.
+    // A spatially nearest curve is not necessarily a legal recovery target.
+    put(0x800A6540,11);put(0x800D763C,6);
+    for(unsigned i=0;i<11;++i) {
+        MEM_BU(0,guest_address(path+i*16))=1;
+        num(path+i*16+8,float(i*50));num(path+i*16+12,0);
+    }
+    num(bike+0x16C,25);num(bike+0x170,0);
+    check(rr64_roaming_recovery_point(m,&c)==1 && get(sp+0x58)==2,
+          "circuit approach curve excluded");
+    num(bike+0x16C,475);
+    check(rr64_roaming_recovery_point(m,&c)==1 && get(sp+0x58)==6,
+          "circuit tail curve excluded");
+    // Use the game's segment traversal as an independent reachability oracle,
+    // then execute its full progress accumulator for every valid start/target.
+    for(unsigned old_segment=2;old_segment<=6;old_segment+=2) {
+        for(unsigned sample=0;sample<=20;++sample) {
+            c.r17=guest_address(actor);c.r21=guest_address(bike);c.r29=guest_address(sp);
+            num(bike+0x16C,float(sample*25));
+            check(rr64_roaming_recovery_point(m,&c)==1,"circuit recovery selected");
+            const unsigned target=get(sp+0x58);const float t=val(sp+0x5C);
+            unsigned cursor=old_segment;
+            for(unsigned step=0;step<3 && cursor!=target;++step) {
+                c.r4=cursor;func_80066D70(m,&c);cursor=unsigned(c.r2);
+            }
+            const bool reachable=cursor==target;
+            check(reachable,"selected circuit curve reachable by native traversal");
+            if(!reachable) continue; // Do not hang a failing smoke test.
+            put(state,old_segment);num(state+8,.25f);num(state+12,100);
+            num(state+0x10,0);num(state+0x20,200);
+            c.r4=guest_address(path);c.r5=guest_address(state);c.r6=target;
+            std::memcpy(&c.r7,&t,4);
+            func_800674C4(m,&c);
+            check(get(state)==target && val(state+8)==t && std::isfinite(c.f0.fl),
+                  "native circuit progress completes with selected curve");
+            check(c.r29==guest_address(sp),"circuit accumulator restores stack");
+        }
+    }
+    c.r17=guest_address(actor);c.r21=guest_address(bike);c.r29=guest_address(sp);
+    for(unsigned invalid_wrap: {1u,3u,10u,0xFFFFFFFFu}) {
+        put(0x800D763C,invalid_wrap);put(sp+0x58,0x12345678);
+        check(!rr64_roaming_recovery_point(m,&c) && get(sp+0x58)==0x12345678,
+              "invalid circuit metadata leaves native recovery inputs unchanged");
+    }
+    // The finish line is inside the last curve, not necessarily at the array
+    // wrap. Native lap evaluation must preserve both distinctions after recovery.
+    put(0x800D763C,6);num(0x800D7630,300);num(0x800D762C,350);
+    put(0x800D8524,3);write_u16(m,0x800D7680,1);
+    const auto set_progress=[&](unsigned segment,float t,float base,unsigned laps=0) {
+        put(state,segment);put(state+4,laps);num(state+8,t);num(state+12,100);
+        num(state+0x10,0);num(state+0x20,base);put(state+0x4C,0);
+    };
+    const auto recover_progress=[&](unsigned segment,float t) {
+        c={};c.r16=guest_address(state);c.r17=guest_address(actor);c.r29=guest_address(sp);
+        c.f_odd=&c.f0.u32h;c.f24.fl=23.5f;c.r5=0x12345678;
+        put(sp+0x58,segment);num(sp+0x5C,t);
+        return rr64_roaming_recovery_progress(m,&c);
+    };
+    const auto evaluate_lap=[&]() {
+        c.r4=guest_address(state);func_80068D0C(m,&c);return c.f0.fl;
+    };
+    const auto drive=[&](unsigned segment,float t) {
+        c.r4=guest_address(path);c.r5=guest_address(state);c.r6=segment;
+        std::memcpy(&c.r7,&t,4);func_800674C4(m,&c);return evaluate_lap();
+    };
+    for(unsigned completed: {0u,1u,7u}) {
+        set_progress(4,.05f,200,completed);
+        check(recover_progress(2,.85f)==1 && std::abs(c.f0.fl+20)<.001f,
+              "backward circuit recovery subtracts distance instead of awarding a lap");
+        check(c.r5==0x12345678 && c.f24.fl==23.5f && c.r29==guest_address(sp),
+              "recovery preserves caller arguments and saved floating registers");
+        check(std::abs(evaluate_lap()-(185+completed*300))<.001f && get(state+4)==completed,
+              "backward recovery retains earned laps");
+        set_progress(6,.4f,300,completed);
+        check(recover_progress(6,.6f)==1 &&
+              std::abs(evaluate_lap()-(360+completed*300))<.001f && get(state+4)==completed+1,
+              "genuine forward crash crossing still earns exactly one lap");
+        for(unsigned repeat=0;repeat<20;++repeat) {
+            check(recover_progress(6,.4f)==1 &&
+                  std::abs(evaluate_lap()-(340+completed*300))<.001f,
+                  "backward finish recross lowers absolute progress");
+            check(std::abs(drive(6,.6f)-(360+completed*300))<.001f && get(state+4)==completed+1,
+                  "ordinary driving after recovery cannot farm laps");
+        }
+        drive(6,.95f);
+        check(recover_progress(2,.05f)==1 &&
+              std::abs(evaluate_lap()-(405+completed*300))<.001f && get(state+4)==completed+1,
+              "forward array seam does not add a second lap");
+        for(unsigned repeat=0;repeat<20;++repeat) {
+            check(recover_progress(6,.95f)==1 &&
+                  std::abs(evaluate_lap()-(395+completed*300))<.001f,
+                  "backward array seam stays near the old distance");
+            check(std::abs(drive(2,.05f)-(405+completed*300))<.001f && get(state+4)==completed+1,
+                  "array seam round trip cannot farm laps");
+        }
+    }
+    set_progress(2,.05f,100);
+    check(recover_progress(4,.9f)==1 && std::abs(evaluate_lap()+10)<.001f && get(state+4)==0,
+          "backtracking before first lap uses negative distance without unsigned lap count");
+    check(recover_progress(2,.05f)==1 && std::abs(evaluate_lap()-105)<.001f && get(state+4)==0,
+          "returning from prestart recovery restores original distance");
+    const auto rejected_progress=[&](const char* message) {
+        const auto before=memory;
+        check(recover_progress(2,.5f)==0 &&
+              std::memcmp(m+(state-0x80000000),before.data()+(state-0x80000000),0x64)==0,message);
+    };
+    write_u16(m,actor+0x26,1);rejected_progress("AI circuit recovery retains original progress");
+    write_u16(m,actor+0x26,0);
+    put(state+0x4C,1);rejected_progress("busted and wrecked recovery retains original progress");put(state+0x4C,0);
+    put(0x800D763C,0);rejected_progress("open road recovery retains original progress");put(0x800D763C,6);
+    num(0x800D7630,0);rejected_progress("invalid lap length leaves progress unchanged");num(0x800D7630,300);
+    put(state,8);rejected_progress("unreachable old circuit segment retains native fallback");put(state,2);
+    session.active=session.connected=session.authoritative=true;session.authority_humans=0;
+    rejected_progress("online NPC recovery retains original progress");
+    session.authority_humans=1;set_progress(4,.05f,200);
+    check(recover_progress(2,.85f)==1,"online authoritative human recovery corrected");
+    constexpr unsigned remote_actor=actor+13*0x118;
+    std::memcpy(m+(remote_actor-0x80000000),m+(actor-0x80000000),0x118);
+    put(remote_actor+8,0xFFFFFFFF);session.authority_humans=1u<<13;
+    set_progress(4,.05f,200);c.r16=guest_address(state);c.r17=guest_address(remote_actor);
+    put(sp+0x58,2);num(sp+0x5C,.85f);
+    check(rr64_roaming_recovery_progress(m,&c)==1 && std::abs(evaluate_lap()-185)<.001f,
+          "fourteenth authoritative human uses slot ownership instead of local controller port");
+    session.authority_humans=0;
+    {
+        rr64::prediction::ReplayScope replay({true,true,true,false,false,0,1});
+        check(recover_progress(2,.5f)==1,"recovery progress uses captured replay ownership");
+    }
+    session={};
+    put(0x800D763C,0);
     put(0x800A6540,0xFFFFFFFF);
     check(!rr64_roaming_recovery_point(m,&c),"malformed route count rejected");
     std::printf("Roaming route: %u checks, %u failures\n",tests,failed);

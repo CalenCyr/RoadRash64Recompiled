@@ -1,6 +1,10 @@
 #include "rr64_music.hpp"
 #include "rr64_native.hpp"
 #include "rr64_music_media.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_course_music.hpp"
+#include "rr64_experimental_course.hpp"
+#endif
 #ifndef RR64_MUSIC_HEADLESS
 #include "librecomp/config.hpp"
 
@@ -162,8 +166,17 @@ void configure(recomp::config::Config &config, const std::filesystem::path &dire
                                             : 1.0f);
     });
 }
+#endif
 void update_ui() {
     const bool race = rr64_is_race_mode_active() != 0;
+#ifdef RR64_EXPERIMENTAL_COURSE
+    // Highlights retain the completed race scene under its results mode. The
+    // live-race signal ends before playback begins, so using it here would
+    // fade to the stock soundtrack for every replay. The published scene
+    // signal covers that handoff and results, but excludes course menus.
+    course_music::set_active(rr64_is_race_presentation_active() != 0 &&
+                             experimental_course::active());
+#endif
     const bool started = race && !was_race;
     if (started) {
         ++race_number;
@@ -202,7 +215,7 @@ void update_ui() {
     }
     playing.store(race && requested == installed && bool(retained));
 }
-#endif
+float volume_gain() noexcept { return volume.load(std::memory_order_relaxed); }
 void mix(std::span<std::int16_t> output, std::uint32_t rate) {
     static std::shared_ptr<const Track> track;
     static double cursor = 0;
@@ -219,7 +232,12 @@ void mix(std::span<std::int16_t> output, std::uint32_t rate) {
     const auto frames = track->pcm.size() / 2;
     if (!frames)
         return;
-    const float gain = volume.load();
+    float gain = volume_gain();
+#ifdef RR64_EXPERIMENTAL_COURSE
+    // Only the music bed is ducked. Voice, impact and other game effects are
+    // mixed independently and retain their configured volume.
+    gain *= 1.0f - course_music::replacement_gain();
+#endif
     for (std::size_t i = 0; i + 1 < output.size(); i += 2) {
         auto a = std::size_t(cursor) % frames, b = (a + 1) % frames;
         float f = float(cursor - std::floor(cursor));
@@ -253,13 +271,19 @@ extern "C" unsigned int rr64_music_volume_update(unsigned int original, unsigned
     if (!state)
         state = &states[next++ % states.size()];
     const bool now = rr64::music::playing.load();
-    const float gain = rr64::music::volume.load();
+    float gain = rr64::music::volume.load();
+#ifdef RR64_EXPERIMENTAL_COURSE
+    gain *= 1.0f - rr64::course_music::replacement_gain();
+#endif
     const bool changed =
         !state->valid || state->key != sequence || state->muted != now || state->gain != gain;
     *state = {sequence, gain, now, true};
     return (now || changed) ? 1u : original;
 }
 extern "C" unsigned int rr64_music_stock_volume(unsigned int original) {
-    return rr64::music::playing.load() ? 0u
-                                       : unsigned(double(original) * rr64::music::volume.load());
+    float gain = rr64::music::volume_gain();
+#ifdef RR64_EXPERIMENTAL_COURSE
+    gain *= 1.0f - rr64::course_music::replacement_gain();
+#endif
+    return rr64::music::playing.load() ? 0u : unsigned(double(original) * gain);
 }

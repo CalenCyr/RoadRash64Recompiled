@@ -1,3 +1,6 @@
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_experimental_course.hpp"
+#endif
 #include "rr64_world_terrain.hpp"
 #include "rr64_world_camera.hpp"
 #include "rr64_local_world_window.hpp"
@@ -363,6 +366,14 @@ extern "C" void rr64_world_terrain_begin(unsigned char *m) {
                 ++c.stats.course_excluded_cells;
         rr64::world::course_frame().publish(m, epoch, c.allowed);
     }
+#ifdef RR64_EXPERIMENTAL_COURSE
+    if(rr64::experimental_course::installed()) {
+        for(unsigned i=0;i<c.allowed.size();++i)
+            c.allowed[i]=(rr64::experimental_course::active() || c.allowed[i]) && rr64::experimental_course::cell_allowed(i);
+        c.course_scoped=true;
+        rr64::world::course_frame().publish(m,epoch,c.allowed);
+    }
+#endif
     unsigned views = 0, viewIndex = 0, slot = 0;
     if (c.drawing && read_u32(m, 0x8009DB88u, views) && views >= 1 &&
         rr64_draw_distance_enabled()) {
@@ -427,6 +438,14 @@ extern "C" void rr64_world_terrain_begin(unsigned char *m) {
 }
 extern "C" unsigned rr64_world_terrain_stock_state(unsigned char *m, unsigned record,
                                                    unsigned state) {
+#ifdef RR64_EXPERIMENTAL_COURSE
+    if(rr64::experimental_course::installed() && state==5u) {
+        unsigned grid=0;
+        if(rr64::engine::read_u32(m,rr64::engine::globals::terrain_cell_grid,grid) &&
+           record>=grid && (record-grid)%16u==0 &&
+           !rr64::experimental_course::cell_allowed((record-grid)/16u))return 0u;
+    }
+#endif
     auto &c = rr64::world::cache();
     std::lock_guard lock(c.mutex);
     if (state != 5u || !c.drawing || !c.course_scoped || c.mapping != m || record < c.grid ||

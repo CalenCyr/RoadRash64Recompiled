@@ -1,5 +1,6 @@
 // Reuse the asymmetric eleven-bone data and direct original-animation oracle.
 // No production animation, interpolation, quaternion or graph code is copied.
+#include "highlight_hooks_disabled.hpp"
 #define main rr64_original_full_weight_test_main
 #include "rr64_actor_full_weight_smoke.cpp"
 #undef main
@@ -7,6 +8,11 @@
 #include "rr64_actor_render_diagnostics.hpp"
 #include "rr64_native.hpp"
 #include <cstdlib>
+
+// This fixture compares original offline animation; network pose injection is
+// independently tested by online fixtures and remains inactive here.
+extern "C" void rr64_online_attack_pose_begin(unsigned char *) {}
+extern "C" void rr64_online_attack_pose_end(unsigned char *) {}
 
 namespace {
 using Fixture = rr64::lod::test::Fixture;

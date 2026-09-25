@@ -6,6 +6,8 @@
 #include "rr64_weapon_diagnostics.hpp"
 #include "rr64_local_players.hpp"
 #include "rr64_local_race_options.hpp"
+#include "rr64_character_preferences.hpp"
+#include "rr64_race_end_trace.hpp"
 #include "composites/ui_player_card.h"
 #include "rr64_log_batch.hpp"
 #include "rr64_presentation_options.hpp"
@@ -105,15 +107,28 @@
 #include "rr64_world_render.hpp"
 #include "rr64_world_camera.hpp"
 #include "rr64_achievement_audio.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_course_audio.hpp"
+#include "rr64_course_music.hpp"
+#endif
 #include "rr64_music.hpp"
 #include "rr64_achievements.hpp"
 #include "rr64_audio_output.hpp"
 #include "rr64_menu_navigation.hpp"
 #include "rr64_netplay.hpp"
 #include "rr64_online_menu.hpp"
+#include "rr64_online_terrain.hpp"
+#include "rr64_highlights.hpp"
+#include "rr64_offline_modifiers.hpp"
+#include "rr64_race_pack_mod.hpp"
+#include "rr64_race_pack_mod_ui.hpp"
+#include "rr64_mk64_import.hpp"
 #include "rr64_voice_chat.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_experimental_course.hpp"
+#endif
 
-constexpr const char* kVersion = "1.3.1";
+constexpr const char* kVersion = "1.4.0";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -147,7 +162,15 @@ std::vector<recomp::GameEntry> supported_games = {
         .has_compressed_code = false,
         .entrypoint_address = get_entrypoint_address(),
         .entrypoint = recomp_entrypoint,
-        .on_init_callback = [](uint8_t*, recomp_context*) {
+        .on_init_callback = [](uint8_t* memory, recomp_context*) {
+            rr64::offline_modifiers::reset(memory);
+            rr64_local_bike_profiles_reset();
+            rr64_online_bike_profiles_reset();
+            rr64::highlights::reset();
+            rr64::online_terrain::reset();
+#ifdef RR64_EXPERIMENTAL_COURSE
+            rr64::experimental_course::initialize();
+#endif
             rr64::world::terrain_reset_session(); rr64::world::objects_reset_session();
         },
     },
@@ -343,8 +366,10 @@ const char* forced_graphics_api_name() {
 
 // Detailed performance reports are a developer opt-in, not release disk traffic.
 bool detailed_diagnostics_enabled() {
-    static const bool enabled = [] { const char* value = std::getenv("RR64_DIAGNOSTICS");
-        return value && std::strcmp(value, "1") == 0; }();
+    static const bool enabled = [] {
+        const char* value = std::getenv("RR64_DIAGNOSTICS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
     return enabled;
 }
 thread_local rr64::LogBatch* g_diagnostic_batch = nullptr;
@@ -360,23 +385,34 @@ void write_runtime_log(std::string_view text) {
         g_runtime_log = _fsopen(g_runtime_log_path.c_str(), "w", _SH_DENYNO);
 #endif
     }
-    std::fwrite(text.data(),1,text.size(),stderr);
+    std::fwrite(text.data(), 1, text.size(), stderr);
     std::fflush(stderr);
-    if(g_runtime_log) {std::fwrite(text.data(),1,text.size(),g_runtime_log);std::fflush(g_runtime_log);}
+    if (g_runtime_log) {
+        std::fwrite(text.data(), 1, text.size(), g_runtime_log);
+        std::fflush(g_runtime_log);
+    }
 }
 struct DiagnosticReport {
     rr64::LogBatch batch{write_runtime_log};
-    DiagnosticReport(){g_diagnostic_batch=&batch;}
-    ~DiagnosticReport(){g_diagnostic_batch=nullptr;}
+    DiagnosticReport() { g_diagnostic_batch = &batch; }
+    ~DiagnosticReport() { g_diagnostic_batch = nullptr; }
 };
 void rr64_log(const char* format, ...) {
     if (!detailed_diagnostics_enabled() &&
         !std::strstr(format, "[RR64-CRASH]") && !std::strstr(format, "[RR64-EXIT]") &&
-        !std::strstr(format, "[RR64-STACK]")) { return; }
+        !std::strstr(format, "[RR64-STACK]")) {
+        return;
+    }
     char buffer[4096]{};
-    va_list args;va_start(args,format);std::vsnprintf(buffer,sizeof(buffer),format,args);va_end(args);
-    if(g_diagnostic_batch) g_diagnostic_batch->append(buffer);
-    else write_runtime_log(buffer);
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    if (g_diagnostic_batch) {
+        g_diagnostic_batch->append(buffer);
+    } else {
+        write_runtime_log(buffer);
+    }
 }
 #ifdef _WIN32
 std::filesystem::path executable_directory() {
@@ -511,7 +547,7 @@ LONG WINAPI rr64_unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) 
     }
 
     std::wstring message =
-        L"Road Rash 64 Recompiled crashed during native runtime startup.\n\n"
+        L"Road Rash 64 Recompiled encountered a runtime error.\n\n"
         L"Crash code: 0x";
     wchar_t code_text[16]{};
     swprintf_s(code_text, 16, L"%08lX", static_cast<unsigned long>(code));
@@ -1234,7 +1270,14 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
     rr64::achievement_audio::mix_requested_guitar_sting(
         std::span<std::int16_t>(swapped.data(), swapped.size()),
         g_audio_rate);
+#ifdef RR64_EXPERIMENTAL_COURSE
+    rr64::course_music::mix(std::span<std::int16_t>(swapped.data(), swapped.size()),
+                           g_audio_rate, rr64::music::volume_gain());
+#endif
     rr64::music::mix(std::span<std::int16_t>(swapped.data(), swapped.size()), g_audio_rate);
+#ifdef RR64_EXPERIMENTAL_COURSE
+    rr64::course_audio::mix(std::span<std::int16_t>(swapped.data(), swapped.size()), g_audio_rate);
+#endif
     rr64::voice_chat::mix(
         std::span<std::int16_t>(swapped.data(), swapped.size()),
         g_audio_rate);
@@ -2015,12 +2058,27 @@ void init_recompui_config() {
         }
     );
     rr64::voice_chat::configure(sound_config);
+    rr64::race_pack_mod::configure_directory(music_directory.parent_path() / "race-packs" / "mk64");
+    auto course_importer = executable_directory() / "tools" / "mk64-importer" /
+#ifdef _WIN32
+        "rr64-mk64-importer.exe";
+#else
+        "rr64-mk64-importer";
+#endif
+    rr64::mk64_import::configure(course_importer,
+        recomp::get_config_path() / supported_games[0].stored_filename());
+    rr64::race_pack_mod_ui::install();
     rr64_log("[RR64-CONFIG] Creating Mods tab.\n");
     recompui::config::create_mods_tab("Mods");
+    // Keep optional offline cheats at the end of the settings navigation.
+    rr64::offline_modifiers::register_config_tab();
     rr64_log("[RR64-CONFIG] Finalizing RecompFrontend configuration.\n");
     recompui::config::finalize();
-    rr64::voice_chat::apply_config(sound_config);
-    rr64::voice_chat::set_enabled(std::get<bool>(sound_config.get_option_value(kProximityVoiceEnabledOption)));
+    rr64::offline_modifiers::apply_config();
+    // Registering another tab can relocate the frontend's config vector.
+    auto& loaded_sound_config = recompui::config::get_config(recompui::config::sound::id);
+    rr64::voice_chat::apply_config(loaded_sound_config);
+    rr64::voice_chat::set_enabled(std::get<bool>(loaded_sound_config.get_option_value(kProximityVoiceEnabledOption)));
     recompui::register_player_name_callbacks(
         [](int slot) { return rr64::local_players::snapshot().at(slot); },
         [](int slot, const std::string& name) {
@@ -2151,10 +2209,12 @@ void on_launcher_init(recompui::LauncherMenu* menu) {
     // registration dereferences an uninitialized RmlUi interface at startup.
     rr64::online_menu::initialize_ui();
     rr64::local_race_options::initialize(recompui::file::get_app_folder_path());
+    rr64::character_preferences::initialize(recompui::file::get_app_folder_path());
     rr64::achievements::initialize_toast_ui();
 }
 
 void on_launcher_update(recompui::LauncherMenu*) {
+    if (rr64::mk64_import::busy()) return;
     // Run unattended start from the frontend's render/UI thread, matching the
     // normal launcher option callback. Starting from update_gfx races RmlUi's
     // element traversal because that callback belongs to the SDL event thread.
@@ -2189,11 +2249,64 @@ void on_ui_update() {
     rr64::netplay::update();
     recompinput::players::refresh_connected_players(false); // Keyboard is assigned explicitly in Controls.
     rr64::online_menu::update_ui();
+    rr64::offline_modifiers::update_ui();
+    rr64::race_pack_mod_ui::update();
     rr64::local_race_options::flush();
+    rr64::character_preferences::flush();
+    static const bool lap_trace_enabled = [] {
+        const auto flag = [](const char* name) {
+            const char* value = std::getenv(name);
+            return value && value[0] && value[0] != '0';
+        };
+        const char* physics = std::getenv("RR64_COURSE_PHYSICS_TRACE");
+        const bool physics_enabled = physics && physics[0] == '1' && physics[1] == '\0';
+        return flag("RR64_RUNTIME_TRACE") || flag("RR64_DIAGNOSTICS") || physics_enabled;
+    }();
+    if (lap_trace_enabled) {
+        // Transport status owns dynamic strings/rosters. Publish just the
+        // diagnostic human mask here so the guest observer never allocates.
+        const auto status = rr64::netplay::get_status();
+        rr64::race_end_trace::set_authority_humans(
+            status.active && status.connected && status.authoritative ? status.authority_humans : 0u);
+    }
+    rr64::race_end_trace::drain();
     rr64::music::update_ui();
     rr64::achievements::update_ui();
+
+    // Record UI ownership changes separately from guest race modes. A report
+    // that the game returned to its launcher is not necessarily an exception
+    // or guest-main-menu transition. This runs on the UI owner after its updates;
+    // it does not show/hide contexts, alter input, or log unchanged frames.
+    if (detailed_diagnostics_enabled() && g_launcher_init_seen) {
+        const bool started = ultramodern::is_game_started();
+        const bool launcher = recompui::is_context_shown(recompui::get_launcher_context_id());
+        const bool settings = recompui::is_context_shown(recompui::config::get_config_context_id());
+        const bool prompt = recompui::is_prompt_open();
+        const bool capturing = recompui::is_context_capturing_input();
+        const unsigned state = unsigned(started) | (unsigned(launcher) << 1) |
+            (unsigned(settings) << 2) | (unsigned(prompt) << 3) | (unsigned(capturing) << 4);
+        static unsigned previous_state = ~0u;
+        if (state != previous_state) {
+            const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            rr64_log("[RR64-UI-STATE] time-ns=%lld game-started=%u launcher=%u settings=%u prompt=%u input-captured=%u\n",
+                static_cast<long long>(now), unsigned(started), unsigned(launcher),
+                unsigned(settings), unsigned(prompt), unsigned(capturing));
+            previous_state = state;
+        }
+    }
 }
 } // namespace
+
+extern "C" void rr64_course_progress_log(const char *format, ...) {
+    if (!detailed_diagnostics_enabled() || !format) return;
+    char buffer[1024]{};
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    rr64_log("%s", buffer);
+}
 
 extern "C" void rr64_record_guest_cadence(unsigned int frames, double seconds,
     double update_hz, float physics_delta, float update_ticks, float wait_ticks,
@@ -2788,7 +2901,11 @@ int main(int argc, char** argv) {
     };
 
     ultramodern::error_handling::callbacks_t error_callbacks{
-        .message_box = recompui::message_box,
+        .message_box = [](const char* message) {
+            // Preserve runtime errors before a modal blocks its calling thread.
+            rr64_log("[RR64-UI-ERROR] runtime-message=%s\n", message ? message : "<null>");
+            recompui::message_box(message);
+        },
     };
 
     ultramodern::threads::callbacks_t threads_callbacks{
@@ -2853,14 +2970,17 @@ int main(int argc, char** argv) {
     }
     catch (const std::exception& ex) {
         rr64_log("\n[RR64-CRASH] C++ exception escaped recomp::start: %s\n", ex.what());
+        rr64::mk64_import::shutdown();
         rr64::netplay::shutdown();
         std::quick_exit(EXIT_FAILURE);
     }
     catch (...) {
         rr64_log("\n[RR64-CRASH] Unknown C++ exception escaped recomp::start.\n");
+        rr64::mk64_import::shutdown();
         rr64::netplay::shutdown();
         std::quick_exit(EXIT_FAILURE);
     }
+    rr64::mk64_import::shutdown();
     voice_service_thread.request_stop();
     netplay_service_thread.request_stop();
     progress_service_thread.request_stop();

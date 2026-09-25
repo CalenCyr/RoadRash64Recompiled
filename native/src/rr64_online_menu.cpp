@@ -54,6 +54,7 @@ struct UiState {
     recompui::TextInput *host_address = nullptr;
     recompui::TextInput *port = nullptr;
     recompui::Label *lobby_status = nullptr;
+    recompui::Label *course_error = nullptr;
     std::array<recompui::Label *, netplay::kMaximumPlayers> player_labels{};
     recompui::Button *host_button = nullptr;
     recompui::Button *ready_button = nullptr;
@@ -65,6 +66,7 @@ struct UiState {
     unsigned focus_delay_frames = 0;
     bool initialized = false;
     bool online_entry_queued = false;
+    bool course_blocked = false;
 };
 
 UiState g_ui{};
@@ -77,6 +79,28 @@ std::atomic_bool g_allow_original_multiplayer = false;
 std::atomic_bool g_reset_session_requested = false;
 std::atomic_bool g_guest_character_select_active = false;
 std::atomic_uint32_t g_applied_game_setup_revision = 0;
+std::atomic_bool g_return_to_lobby_requested = false;
+// Both route_mode and the immediately following native mode setter run on the
+// game thread. Do not expose the local-start request to the UI until that
+// setter has finished retiring the previous main-menu/local gameplay state.
+bool g_local_start_pending_mode = false;
+
+bool return_to_lobby(unsigned char *rdram) {
+    if(!rdram || !g_return_to_lobby_requested.exchange(false,std::memory_order_acq_rel)) return false;
+    engine::write_u32(rdram,engine::globals::pending_mode,0x20u);
+    engine::write_u32(rdram,engine::globals::multiplayer_stage,0u);
+    engine::write_u32(rdram,0x8009E238u,0u);
+    g_force_multiplayer_transition.store(false,std::memory_order_release);
+    return true;
+}
+
+bool has_course_problem(const netplay::Status& status) {
+    if(!status.game_setup.valid || status.phase<netplay::Phase::CharacterSelect ||
+       status.phase>=netplay::Phase::Race) return false;
+    for(const auto& player:status.players)
+        if(player.connected && player.course_compatibility>=race_pack::Compatibility::Missing) return true;
+    return false;
+}
 
 static_assert(engine::globals::multiplayer_game_setup_words.size() == netplay::kGameSetupWordCount);
 
@@ -106,6 +130,7 @@ netplay::GameSetupState capture_game_setup(unsigned char *rdram) {
     }
     netplay::GameSetupState setup{};
     setup.valid = true;
+    setup.course = race_pack::selected_identity();
     setup.race_options=local_race_options::online_options();
     engine::read_u32(rdram,engine::globals::random_state,setup.random_seed);
     for (std::size_t i = 0; i < engine::globals::multiplayer_game_setup_words.size(); ++i) {
@@ -121,10 +146,24 @@ netplay::GameSetupState capture_game_setup(unsigned char *rdram) {
 }
 
 void apply_game_setup(unsigned char *rdram, const netplay::GameSetupState &setup) {
-    if (!setup.valid || setup.revision == 0 ||
-        setup.revision <= g_applied_game_setup_revision.load(std::memory_order_acquire)) {
+    if (!setup.valid || setup.revision == 0) return;
+    // Content is checked before the revision shortcut: a previous ACK must
+    // never survive a local availability failure. No native settings/load are
+    // applied until the exact identity is accepted.
+    const auto compatible=race_pack::compatibility(setup.course);
+    if(compatible!=race_pack::Compatibility::Ready) {
+        netplay::report_course_compatibility(setup.revision,setup.course,compatible);
         return;
     }
+    if(setup.revision<=g_applied_game_setup_revision.load(std::memory_order_acquire)) {
+        netplay::acknowledge_course(setup.revision,setup.course);
+        return;
+    }
+    if(!race_pack::apply_identity(setup.course)) {
+        netplay::report_course_compatibility(setup.revision,setup.course,race_pack::Compatibility::Different);
+        return;
+    }
+    if(!netplay::acknowledge_course(setup.revision,setup.course))return;
     for (std::size_t i = 0; i < engine::globals::multiplayer_game_setup_words.size(); ++i) {
         MEM_W(0, engine::guest_address(engine::globals::multiplayer_game_setup_words[i])) =
             setup.words[i];
@@ -367,6 +406,9 @@ void initialize_ui() {
                                                  recompui::LabelStyle::Normal);
     g_ui.lobby_status = g_ui.context.create_element<recompui::Label>(
         g_ui.lobby_page, "Connecting...", recompui::LabelStyle::Small);
+    g_ui.course_error = g_ui.context.create_element<recompui::Label>(
+        g_ui.lobby_page,"",recompui::LabelStyle::Small);
+    g_ui.course_error->set_display(recompui::Display::None);
     auto *rider_grid = g_ui.context.create_element<recompui::Element>(g_ui.lobby_page);
     rider_grid->set_display(recompui::Display::Flex);
     rider_grid->set_flex_direction(recompui::FlexDirection::Row);
@@ -396,6 +438,13 @@ void initialize_ui() {
         g_ui.lobby_page, "BEGIN GAME SETUP", recompui::ButtonStyle::Success,
         recompui::ButtonSize::Large);
     g_ui.continue_button->add_pressed_callback([]() {
+        const auto status=netplay::get_status();
+        if(status.is_host && has_course_problem(status)) {
+            // Keep the session and every peer. This is an explicit return to
+            // settings, not an automatic substitution of a stock carrier.
+            netplay::host_set_phase(netplay::Phase::Lobby);
+            return;
+        }
         if (netplay::all_connected_players_ready() &&
             netplay::host_set_phase(netplay::Phase::GameSetup)) {
             reset_guest_setup_progress();
@@ -438,11 +487,14 @@ void update_ui() {
     // function. Applying their page request on the following frame guarantees
     // that no controller event sees a half-hidden navigation tree.
     apply_pending_page();
-    if (g_reset_local_requested.exchange(false, std::memory_order_acq_rel)) {
-        local_players::active.store(false, std::memory_order_release);
-        recompinput::suspend_all_rumble();
-        recompinput::players::set_single_player_mode(true);
-    }
+    const auto complete_local_reset = []() {
+        if (g_reset_local_requested.exchange(false, std::memory_order_acq_rel)) {
+            local_players::active.store(false, std::memory_order_release);
+            recompinput::suspend_all_rumble();
+            recompinput::players::set_single_player_mode(true);
+        }
+    };
+    complete_local_reset();
 
     // The stock multiplayer screens can return directly to the main menu,
     // outside this overlay's button callbacks. Finish that teardown here on
@@ -467,6 +519,11 @@ void update_ui() {
     }
 
     if (g_local_start_requested.exchange(false, std::memory_order_acq_rel)) {
+        // The mode setter may publish reset+start after this update's earlier
+        // reset checks. Acquiring start observes both preceding reset flags;
+        // drain them here so the next UI update cannot tear down this entry.
+        complete_local_reset();
+        g_reset_session_requested.exchange(false, std::memory_order_acq_rel);
         complete_session_reset();
         netplay::configure({});
         recompinput::suspend_all_rumble();
@@ -493,49 +550,97 @@ void update_ui() {
     }
 
     const netplay::Status status = netplay::get_status();
-    if (g_ui.lobby_status != nullptr) {
-        g_ui.lobby_status->set_text(std::string(phase_name(status.phase)) + " - " + status.message);
+    // Hidden contexts do not process their queued text updates. Refreshing
+    // these labels every race frame would accumulate an unbounded backlog,
+    // then replay it when the lobby is shown. Pending requests above may show
+    // the context this frame, so read visibility here and paint its latest
+    // state before the frontend processes visible contexts. Keep session and
+    // game-setup transitions below independent of presentation visibility.
+    if(status.connected && status.phase==netplay::Phase::Lobby && g_ui.online_entry_queued) {
+        // Host explicitly backed out of an incompatible setup. Return through
+        // the native dispatcher on the game thread while keeping UDP alive.
+        g_ui.online_entry_queued=false;
+        reset_guest_setup_progress();
+        g_return_to_lobby_requested.store(true,std::memory_order_release);
+        set_page(Page::Lobby);
+        if(!recompui::is_context_shown(g_ui.context)) recompui::show_context(g_ui.context,"");
     }
-    for (std::uint8_t slot = 0; slot < netplay::kMaximumPlayers; ++slot) {
-        if (g_ui.player_labels[slot] == nullptr) {
-            continue;
-        }
-        const netplay::PlayerInfo &player = status.players[slot];
-        if (!player.connected) {
-            g_ui.player_labels[slot]->set_text("RIDER " + std::to_string(slot + 1) + "  -  EMPTY");
-            continue;
-        }
-        std::string line = "RIDER " + std::to_string(slot + 1) + "  -  " + player.name;
-        line += player.ready ? "  [READY]" : "  [NOT READY]";
-        line += "  " + std::to_string(player.ping_ms) + " ms";
-        if (slot == status.local_slot) {
-            line += "  (YOU)";
-        }
-        g_ui.player_labels[slot]->set_text(line);
+    const bool course_blocked=has_course_problem(status);
+    if(course_blocked && !g_ui.course_blocked) {
+        set_page(Page::Lobby);
+        if(!recompui::is_context_shown(g_ui.context)) recompui::show_context(g_ui.context,"");
+    } else if(!course_blocked && g_ui.course_blocked && status.connected &&
+              status.phase>=netplay::Phase::GameSetup) {
+        recompui::hide_context(g_ui.context);
     }
-    if (g_ui.ready_button != nullptr) {
-        const bool can_ready = status.connected && status.phase == netplay::Phase::Lobby;
-        g_ui.ready_button->set_enabled(can_ready);
-        const bool ready =
-            status.local_slot < netplay::kMaximumPlayers && status.players[status.local_slot].ready;
-        g_ui.ready_button->set_text(ready ? "NOT READY" : "READY");
-        if (g_ui.page == Page::Lobby && !can_ready && g_ui.pending_focus == g_ui.ready_button &&
-            g_ui.disconnect_button != nullptr) {
-            // A failed host bind or a client still connecting must retain a
-            // usable controller target instead of autofocusing a disabled
-            // Ready button.
-            g_ui.pending_focus = g_ui.disconnect_button;
-            g_ui.context.set_autofocus_element(g_ui.disconnect_button);
+    g_ui.course_blocked=course_blocked;
+    if (recompui::is_context_shown(g_ui.context)) {
+        if (g_ui.course_error != nullptr) {
+            std::string reason;
+            for(const auto& player:status.players) {
+                if(player.connected && player.course_compatibility>=race_pack::Compatibility::Missing) {
+                    reason="Rider "+std::to_string(player.slot+1)+": "+
+                        netplay::course_compatibility_message(player.course_compatibility);
+                    break;
+                }
+            }
+            g_ui.course_error->set_text(reason);
+            g_ui.course_error->set_display(course_blocked ? recompui::Display::Flex : recompui::Display::None);
         }
-    }
-    if (g_ui.continue_button != nullptr) {
-        g_ui.continue_button->set_display(status.is_host ? recompui::Display::Flex
-                                                         : recompui::Display::None);
-        g_ui.continue_button->set_enabled(status.is_host && status.phase == netplay::Phase::Lobby &&
-                                          netplay::all_connected_players_ready());
+        if (g_ui.lobby_status != nullptr) {
+            g_ui.lobby_status->set_text(std::string(phase_name(status.phase)) + " - " + status.message);
+        }
+        for (std::uint8_t slot = 0; slot < netplay::kMaximumPlayers; ++slot) {
+            if (g_ui.player_labels[slot] == nullptr) {
+                continue;
+            }
+            const netplay::PlayerInfo &player = status.players[slot];
+            if (!player.connected) {
+                g_ui.player_labels[slot]->set_text("RIDER " + std::to_string(slot + 1) + "  -  EMPTY");
+                continue;
+            }
+            std::string line = "RIDER " + std::to_string(slot + 1) + "  -  " + player.name;
+            line += player.ready ? "  [READY]" : "  [NOT READY]";
+            if(status.game_setup.valid) {
+                switch(player.course_compatibility) {
+                case race_pack::Compatibility::Missing: line += "  [PACK MISSING]"; break;
+                case race_pack::Compatibility::Disabled: line += "  [PACK DISABLED]"; break;
+                case race_pack::Compatibility::Different: line += "  [PACK DIFFERS]"; break;
+                case race_pack::Compatibility::Pending: line += "  [CHECKING PACK]"; break;
+                default: break;
+                }
+            }
+            line += "  " + std::to_string(player.ping_ms) + " ms";
+            if (slot == status.local_slot) {
+                line += "  (YOU)";
+            }
+            g_ui.player_labels[slot]->set_text(line);
+        }
+        if (g_ui.ready_button != nullptr) {
+            const bool can_ready = status.connected && status.phase == netplay::Phase::Lobby;
+            g_ui.ready_button->set_enabled(can_ready);
+            const bool ready =
+                status.local_slot < netplay::kMaximumPlayers && status.players[status.local_slot].ready;
+            g_ui.ready_button->set_text(ready ? "NOT READY" : "READY");
+            if (g_ui.page == Page::Lobby && !can_ready && g_ui.pending_focus == g_ui.ready_button &&
+                g_ui.disconnect_button != nullptr) {
+                // A failed host bind or a client still connecting must retain a
+                // usable controller target instead of autofocusing a disabled
+                // Ready button.
+                g_ui.pending_focus = g_ui.disconnect_button;
+                g_ui.context.set_autofocus_element(g_ui.disconnect_button);
+            }
+        }
+        if (g_ui.continue_button != nullptr) {
+            g_ui.continue_button->set_display(status.is_host ? recompui::Display::Flex
+                                                             : recompui::Display::None);
+            g_ui.continue_button->set_text(course_blocked ? "CHANGE RACE SETTINGS" : "BEGIN GAME SETUP");
+            g_ui.continue_button->set_enabled(status.is_host && (course_blocked ||
+                (status.phase == netplay::Phase::Lobby && netplay::all_connected_players_ready())));
+        }
     }
 
-    if (status.connected && status.phase >= netplay::Phase::GameSetup &&
+    if (status.connected && !course_blocked && status.phase >= netplay::Phase::GameSetup &&
         !g_ui.online_entry_queued) {
         g_ui.online_entry_queued = true;
         queue_original_multiplayer();
@@ -571,13 +676,26 @@ bool host_controls_game_setup() {
 
 } // namespace rr64::online_menu
 
+extern "C" void rr64_online_menu_mode_changed(unsigned int requested_mode) {
+    if (requested_mode != 0x20u)
+        return;
+    // This notification runs at both native mode setters, including Back from
+    // multiplayer. The main menu's selection dispatcher never sees that Back
+    // transition. Clear gameplay ownership now; defer UI/input work to its
+    // owning thread so Big Game cannot inherit the previous custom bike tier.
+    rr64_local_options_reset_race();
+    if (rr64::local_players::active.exchange(false, std::memory_order_acq_rel))
+        rr64::online_menu::g_reset_local_requested.store(true, std::memory_order_release);
+    if (rr64::online_menu::g_local_start_pending_mode) {
+        rr64::online_menu::g_local_start_pending_mode = false;
+        rr64::online_menu::g_reset_session_requested.store(true, std::memory_order_release);
+        rr64::online_menu::g_local_start_requested.store(true, std::memory_order_release);
+    }
+}
+
 extern "C" unsigned int rr64_online_menu_route_mode(unsigned int requested_mode) {
     constexpr unsigned int kMainMenuMode = 0x20;
     constexpr unsigned int kLocalMultiplayerMode = 0x23;
-    if (requested_mode == kMainMenuMode &&
-        rr64::local_players::active.load(std::memory_order_acquire)) {
-        rr64::online_menu::g_reset_local_requested.store(true, std::memory_order_release);
-    }
     if (requested_mode != kLocalMultiplayerMode) {
         return requested_mode;
     }
@@ -585,15 +703,15 @@ extern "C" unsigned int rr64_online_menu_route_mode(unsigned int requested_mode)
                                                                  std::memory_order_acq_rel)) {
         return requested_mode;
     }
-    // A stock Back action does not pass through the overlay's LEAVE SESSION
-    // callback. Always make a new Multiplayer selection a clean entry point;
-    // update_ui performs the actual UI/session teardown before opening it.
-    rr64::online_menu::g_reset_session_requested.store(true, std::memory_order_release);
-    rr64::online_menu::g_local_start_requested.store(true, std::memory_order_release);
+    // 23C38 calls the native mode setter immediately after this adapter.
+    // Its synthetic main-menu transition must retire old gameplay ownership
+    // before update_ui can accept the new local-start request.
+    rr64::online_menu::g_local_start_pending_mode = true;
     return kMainMenuMode;
 }
 
 extern "C" void rr64_online_menu_apply_pending_guest_input(unsigned char *rdram) {
+    if(rr64::online_menu::return_to_lobby(rdram)) return;
     if (rdram && rr64::popup_input::consume_menu_action()) {
         MEM_W(0, 0xFFFFFFFF8009E238ULL) = 0;
     }
@@ -626,6 +744,9 @@ extern "C" void rr64_online_game_setup_before_update(unsigned char *rdram) {
     }
     if (!status.is_host) {
         rr64::online_menu::apply_game_setup(rdram, status.game_setup);
+    } else if(status.game_setup.valid && status.phase<rr64::netplay::Phase::Race) {
+        rr64::netplay::report_course_compatibility(status.game_setup.revision,status.game_setup.course,
+            rr64::race_pack::compatibility(status.game_setup.course));
     }
     if (rr64::online_menu::guest_multiplayer_stage(rdram) >= 2) {
         rr64::online_menu::g_guest_character_select_active.store(true, std::memory_order_release);
@@ -638,6 +759,9 @@ extern "C" void rr64_online_game_setup_after_update(unsigned char *rdram) {
         return;
     }
     rr64_online_private_selection_end(rdram);
+    // The original main-menu handler is not running while selecting a rider.
+    // Consume the return at this menu's epilogue too, after native input writes.
+    if(rr64::online_menu::return_to_lobby(rdram)) return;
     const std::uint32_t stage = rr64::online_menu::guest_multiplayer_stage(rdram);
     if (stage < 2) {
         return;

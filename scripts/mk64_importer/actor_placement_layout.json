@@ -1,0 +1,586 @@
+{
+  "version": 1,
+  "symbols": {
+    "D_800E659C": {
+      "rom_offset": 946588,
+      "size": 202,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E6668": {
+      "rom_offset": 946792,
+      "size": 186,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E6034": {
+      "rom_offset": 945204,
+      "size": 186,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E60F0": {
+      "rom_offset": 945392,
+      "size": 194,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E61B4": {
+      "rom_offset": 945588,
+      "size": 202,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E6280": {
+      "rom_offset": 945792,
+      "size": 186,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E5988": {
+      "rom_offset": 943496,
+      "size": 186,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E5A44": {
+      "rom_offset": 943684,
+      "size": 194,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E5B08": {
+      "rom_offset": 943880,
+      "size": 202,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E5BD4": {
+      "rom_offset": 944084,
+      "size": 186,
+      "type": "spline",
+      "stride": 4
+    },
+    "D_800E5C90": {
+      "rom_offset": 944272,
+      "size": 194,
+      "type": "spline",
+      "stride": 4
+    },
+    "gThomwpSpawns50CC": {
+      "rom_offset": 943188,
+      "size": 64,
+      "type": "s16",
+      "stride": 4
+    },
+    "gThwompSpawns100CCExtra": {
+      "rom_offset": 943252,
+      "size": 88,
+      "type": "s16",
+      "stride": 4
+    },
+    "gThomwpSpawns150CC": {
+      "rom_offset": 943340,
+      "size": 96,
+      "type": "s16",
+      "stride": 4
+    },
+    "D_800E5DF4": {
+      "rom_offset": 944628,
+      "size": 32,
+      "type": "s16",
+      "stride": 4
+    },
+    "gTorchSpawns": {
+      "rom_offset": 947080,
+      "size": 48,
+      "type": "s16",
+      "stride": 3
+    },
+    "gFireBreathsSpawns": {
+      "rom_offset": 942888,
+      "size": 24,
+      "type": "s16",
+      "stride": 3
+    },
+    "d_course_choco_mountain_falling_rock_spawns": {
+      "course": "choco_mountain",
+      "address": 100692528,
+      "size": 32,
+      "type": "s16",
+      "stride": 4
+    }
+  },
+  "positions": {
+    "yoshi_egg": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078020,
+        "low_instruction": 1078032
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078024,
+        "low_instruction": 1078028
+      }
+    ],
+    "yoshi_egg_radius": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1049580
+      }
+    ],
+    "crossing0": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078376
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1049648
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078388
+      }
+    ],
+    "crossing1": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078464
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1049648
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078388
+      }
+    ],
+    "crossing2": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078568,
+        "low_instruction": 1078580
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1049648
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078572,
+        "low_instruction": 1078576
+      }
+    ],
+    "crossing3": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078656,
+        "low_instruction": 1078672
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1049648
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078660,
+        "low_instruction": 1078668
+      }
+    ],
+    "mario_sign0": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1077756
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1057096
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1077744,
+        "low_instruction": 1077748
+      }
+    ],
+    "mario_sign1": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1077808,
+        "low_instruction": 1077812
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1077828
+      }
+    ],
+    "wario_sign0": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078812
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078816
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078824
+      }
+    ],
+    "wario_sign1": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078868,
+        "low_instruction": 1078872
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078880
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078888
+      }
+    ],
+    "wario_sign2": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078932,
+        "low_instruction": 1078944
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078956
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078936,
+        "low_instruction": 1078940
+      }
+    ],
+    "balloon": [
+      {
+        "type": "mips-f64-high",
+        "high_instruction": 548920
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 548944,
+        "low_instruction": 548952
+      }
+    ],
+    "fish": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 510312,
+        "low_instruction": 510320
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 510328
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 510312,
+        "low_instruction": 510320
+      }
+    ],
+    "penguin0": [
+      {
+        "type": "f64",
+        "rom_offset": 982736
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 544952
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 544940,
+        "low_instruction": 544948
+      }
+    ],
+    "penguin1": [
+      {
+        "type": "f64",
+        "rom_offset": 982744
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 545412
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 545396,
+        "low_instruction": 545404
+      }
+    ],
+    "penguin2": [
+      {
+        "type": "f64",
+        "rom_offset": 982752
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 545412
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 545496,
+        "low_instruction": 545504
+      }
+    ],
+    "penguin3": [
+      {
+        "type": "f64",
+        "rom_offset": 982760
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 545412
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 545608
+      }
+    ],
+    "penguin4": [
+      {
+        "type": "f64",
+        "rom_offset": 982768
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 545412
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 545692,
+        "low_instruction": 545700
+      }
+    ],
+    "penguin5": [
+      {
+        "type": "f64",
+        "rom_offset": 982808
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 545912
+      }
+    ],
+    "penguin6": [
+      {
+        "type": "f64",
+        "rom_offset": 982816
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 546072,
+        "low_instruction": 546080
+      }
+    ],
+    "penguin7": [
+      {
+        "type": "f64",
+        "rom_offset": 982840
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 546184
+      }
+    ],
+    "penguin8": [
+      {
+        "type": "f64",
+        "rom_offset": 981752
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 546284
+      }
+    ],
+    "penguin9": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 545960,
+        "low_instruction": 545968
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 546372,
+        "low_instruction": 546380
+      }
+    ],
+    "penguin10": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 546284
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 546472,
+        "low_instruction": 546480
+      }
+    ],
+    "seagull0": [
+      {
+        "type": "f64",
+        "rom_offset": 982416
+      },
+      {
+        "type": "mips-f64-high",
+        "high_instruction": 537148
+      },
+      {
+        "type": "f64",
+        "rom_offset": 982424
+      }
+    ],
+    "seagull1": [
+      {
+        "type": "f64",
+        "rom_offset": 982400
+      },
+      {
+        "type": "mips-f64-high",
+        "high_instruction": 537024
+      },
+      {
+        "type": "f64",
+        "rom_offset": 982408
+      }
+    ],
+    "special_koopa_item": [
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078128
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1049580
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 1078152,
+        "low_instruction": 1078164
+      }
+    ],
+    "large_fire": [
+      {
+        "type": "mips-f64-high",
+        "high_instruction": 464300
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 464320
+      },
+      {
+        "type": "mips-f32",
+        "high_instruction": 464332
+      }
+    ],
+    "bat1origin": [
+      {
+        "type": "f64",
+        "rom_offset": 981736
+      },
+      {
+        "type": "mips-f64-high",
+        "high_instruction": 516112
+      },
+      {
+        "type": "f64",
+        "rom_offset": 981744
+      }
+    ],
+    "bat1target": [
+      {
+        "type": "f64",
+        "rom_offset": 981752
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "f64",
+        "rom_offset": 981760
+      }
+    ],
+    "bat2origin": [
+      {
+        "type": "mips-s16",
+        "instruction": 516356
+      },
+      {
+        "type": "mips-s16",
+        "instruction": 516396
+      },
+      {
+        "type": "mips-s16",
+        "instruction": 516420
+      }
+    ],
+    "bat2target": [
+      {
+        "type": "f64",
+        "rom_offset": 981768
+      },
+      {
+        "type": "zero"
+      },
+      {
+        "type": "f64",
+        "rom_offset": 981776
+      }
+    ],
+    "bat1exit": [
+      {
+        "type": "f64",
+        "rom_offset": 981800
+      }
+    ],
+    "bat2exit": [
+      {
+        "type": "f64",
+        "rom_offset": 981816
+      }
+    ]
+  },
+  "motion_functions": {
+    "spline": "387bc6816e6657164993c28ca7c83e4fa1e0c4b79533ed604c3e3c3896db4d83",
+    "generate2d": "225e609d087614e8a7e1bcc60edd002fb9a70ef1fd6401ead073b961268a28d1",
+    "boundary": "940cfb1cc3673b67b373f733becf8a0446b6c390689d9b743f49b2f2e2d35784"
+  },
+  "rainbow_separation": 50.0
+}

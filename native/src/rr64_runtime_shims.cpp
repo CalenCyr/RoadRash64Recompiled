@@ -293,6 +293,12 @@ extern "C" void rr64_trace_race_frame(unsigned char *rdram, void *context, unsig
         rr64::engine::are_gameplay_shortcuts_active(mode, pending_mode, pause_menu_state);
     gameplay_shortcuts_active.store(live_gameplay_shortcuts, std::memory_order_release);
 
+    // Publish presentation on every mode transition, including authoritative
+    // sessions that skip the legacy controller work below. Rendering and music
+    // must distinguish the race/results scene from menus containing 3D models.
+    race_mode_active.store(live_race_mode, std::memory_order_relaxed);
+    race_presentation_active.store(race_shortcut_scene, std::memory_order_relaxed);
+
     // Authority admits eject edges into the same sequenced stream as movement.
     // The legacy physical-controller loop must not consume them first.
     if(rr64::netplay::get_status().authoritative)return;
@@ -461,10 +467,6 @@ extern "C" void rr64_trace_race_frame(unsigned char *rdram, void *context, unsig
                                   rumble_enabled.load(std::memory_order_acquire),
                               std::memory_order_release);
 
-    // The renderer uses this exact guest-mode signal to keep widescreen HUD
-    // placement completely separate from menus that also contain 3D models.
-    race_mode_active.store(live_race_mode, std::memory_order_relaxed);
-    race_presentation_active.store(race_shortcut_scene, std::memory_order_relaxed);
     const bool previous_gameplay_feedback =
         gameplay_feedback_active.exchange(live_gameplay_feedback, std::memory_order_release);
     if (previous_gameplay_feedback != live_gameplay_feedback) {
@@ -525,6 +527,10 @@ extern "C" void rr64_trace_race_frame(unsigned char *rdram, void *context, unsig
 
 extern "C" int rr64_is_live_race_mode(unsigned int mode) {
     return is_live_race_mode(mode) ? 1 : 0;
+}
+
+extern "C" int rr64_player_session_started() {
+    return player_started_title_session.load(std::memory_order_relaxed) ? 1 : 0;
 }
 
 extern "C" int rr64_is_race_mode_active() {
@@ -1299,6 +1305,7 @@ bool seed_manual_eject(const ManualEjectState &historical){
     if(!active())return false;
     isolated_state(manual_eject_protections,replay_eject_protections,replay_eject_epoch)=historical;return true;
 }
+
 void commit_manual_eject(const ManualEjectState &state) noexcept {if(!active())manual_eject_protections=state;}
 bool replay_manual_eject(ManualEjectState &out){
     if(!active() || replay_eject_epoch!=replay_epoch)return false;

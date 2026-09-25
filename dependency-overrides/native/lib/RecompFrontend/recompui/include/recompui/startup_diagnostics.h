@@ -5,7 +5,7 @@
 #include <cstring>
 
 namespace recompui {
-// Sparse process-start checkpoints only; disabled release capture reads no clock.
+// Sparse startup/resource-transition checkpoints; disabled capture reads no clock.
 inline void startup_checkpoint(const char* phase) {
     static const bool enabled = [] {
         const char* value = std::getenv("RR64_DIAGNOSTICS");

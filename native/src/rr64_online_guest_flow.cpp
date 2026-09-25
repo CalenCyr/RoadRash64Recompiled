@@ -1,4 +1,5 @@
 #include "rr64_online_flow.hpp"
+#include "rr64_online_bike_profile.hpp"
 #include "rr64_netplay.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_custom_cop_rules.hpp"
@@ -34,6 +35,10 @@ extern "C" void rr64_online_private_selection_begin(unsigned char *m) {
 extern "C" int rr64_online_selection_commit(unsigned char *m) {
     auto s=rr64::netplay::get_status();
     if (!selecting(s)) return 1;
+    // Content validation belongs to this revision. A stale confirmed selection
+    // must never advance the native carrier track after validation is revoked.
+    if (s.local_slot>=s.players.size() ||
+        s.players[s.local_slot].course_compatibility!=race_pack::Compatibility::Ready) return 0;
     if (std::getenv("RR64_SYNC_LOG")) {
         static std::array<unsigned,5> last{};
         unsigned confirmed=0,loaded=0;
@@ -63,6 +68,8 @@ extern "C" int rr64_online_selection_commit(unsigned char *m) {
         s=netplay::get_status();
     }
     if (s.phase!=netplay::Phase::TrackSelect) return 0;
+    for (const auto &player:s.players)
+        if (player.connected && player.course_compatibility!=race_pack::Compatibility::Ready) return 0;
     const unsigned humans=s.replicated_riders ? 1u : s.connected_players;
     if (humans<1 || humans>4) return 0;
     for (unsigned guest=0;guest<humans;++guest) {
@@ -148,6 +155,13 @@ extern "C" unsigned rr64_online_race_choice(unsigned guest, unsigned original, u
     // Inject at native actor creation, rather than extending four-controller
     // selection arrays. All fourteen network riders get their own identity.
     return bike ? p.selection.bike : p.selection.rider;
+}
+
+extern "C" unsigned rr64_online_bike_profile(unsigned char *m, unsigned actor, unsigned profile) {
+    return rr64::online_flow::bike_profile(m, actor, profile, rr64::netplay::get_status());
+}
+extern "C" void rr64_online_bike_profiles_reset() {
+    rr64::online_flow::reset_bike_profiles();
 }
 
 // Full-screen native HUD has a few direct actor-zero loads in addition to its

@@ -4,6 +4,9 @@
 #include "rr64_custom_cop.hpp"
 #include "rr64_custom_cop_roster.hpp"
 #include "rr64_engine_layout.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_experimental_course.hpp"
+#endif
 #include "recomp.h"
 #include <array>
 #include <algorithm>
@@ -88,6 +91,16 @@ extern "C" void rr64_custom_cop_post(unsigned char *rdram, void *context, unsign
     const unsigned state = word(rdram, a + 0xE8);
     if (!valid_guest_range(state, 0x64))
         return;
+#ifdef RR64_EXPERIMENTAL_COURSE
+    if (rr64::experimental_course::active()) {
+        // Imported courses already placed every rider on their checked grid.
+        // Big Game's police parking searches the original road graph and
+        // would move this officer back into the stock world. Keep controls
+        // available immediately instead of waiting at an unverified post.
+        rr64_custom_cop_equipment(rdram, a);
+        return;
+    }
+#endif
     auto call = *static_cast<recomp_context *>(context);
     if (!valid_guest_range(unsigned(call.r29) - 0x400, 0x400))
         return;
@@ -245,6 +258,13 @@ extern "C" float rr64_custom_cop_cue(unsigned char *m, unsigned slot) {
 extern "C" int rr64_custom_cop_trick(unsigned char *m, unsigned actor) {
     const int slot = slot_for(m, word(m, actor + 0xE0));
     return slot >= 0 && cop_posts()[slot].trick;
+}
+
+extern "C" int rr64_custom_cop_is_player(unsigned char *m, unsigned actor) {
+    if (!m || actor < 0x800D8570 || (actor - 0x800D8570) % 0x118 ||
+        (actor - 0x800D8570) / 0x118 >= 14)
+        return 0;
+    return slot_for(m, word(m, actor + 0xE0)) == int((actor - 0x800D8570) / 0x118);
 }
 
 // Cops are excluded from race placement (state+48 == 0), but a human cop

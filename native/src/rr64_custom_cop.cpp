@@ -2,11 +2,14 @@
 #include "rr64_prediction_rules.hpp"
 #include "rr64_prediction_cop_state.hpp"
 #include "rr64_custom_cop.hpp"
+#include "rr64_offline_modifiers_bikes.hpp"
 #include "rr64_custom_cop_rules.hpp"
 #include "rr64_custom_cop_roster.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_local_players.hpp"
+#include "rr64_local_race_options.hpp"
 #include "rr64_netplay.hpp"
+#include "rr64_thrash_options.hpp"
 #include <cstring>
 #include <cmath>
 
@@ -23,7 +26,7 @@ CopState &cop_state() {
 bool local() {
     const auto s = rr64::prediction::status_for_rules();
     return s.active ? s.connected && (s.authoritative || !s.replicated_riders)
-                    : rr64::local_players::active.load();
+                    : rr64::local_players::active.load() || rr64_thrash_options_active();
 }
 bool owns_outcomes() {
     const auto s = rr64::prediction::status_for_rules();
@@ -83,6 +86,13 @@ extern "C" int rr64_custom_cop_can_start(unsigned char *m) {
     if (!rr64_custom_cop_enabled())
         return 1;
     const auto online = rr64::prediction::status_for_rules();
+    if (!online.active && rr64_thrash_options_active()) {
+        // The Thrash selector commits these slot-zero fields at 26E04/26E3C
+        // before confirmation at 26F1C. Its multiplayer count/ready arrays
+        // can still contain a previous local race and do not own this choice.
+        return rr64::custom_cop::selected_cop(true, word(m, 0x8009F660),
+                                                 word(m, 0x8009F400));
+    }
     if (online.active && online.game_setup.valid) {
         for (const auto &p : online.players)
             if (p.connected && p.selection.round == online.game_setup.revision &&
@@ -103,6 +113,8 @@ extern "C" int rr64_custom_cop_can_start(unsigned char *m) {
 extern "C" int rr64_custom_cop_confirm(unsigned char *m) {
     if (rr64_custom_cop_can_start(m))
         return 1;
+    if (rr64_thrash_options_active())
+        return 0; // Stay in the native single selector; no multiplayer ready rows.
     const unsigned humans = word(m, 0x8009EF5C);
     // Reopen each ready selector, keeping equipment intact. No synthetic
     // button presses: the player must confirm again after choosing a cop.
@@ -112,15 +124,20 @@ extern "C" int rr64_custom_cop_confirm(unsigned char *m) {
     return 0;
 }
 extern "C" unsigned rr64_custom_cop_bike_entry(unsigned char *m, unsigned player, unsigned stock) {
+    if (rr64_offline_bikes_active(m, 0))
+        return rr64_offline_bikes_entry(m, player, stock);
     if (!rr64_custom_cop_enabled() || player >= 4)
         return stock;
-    const unsigned level = word(m, 0x800A6690);
+    const bool thrash = rr64_thrash_options_active();
+    if (thrash && player != 0)
+        return stock;
+    const unsigned level = rr64_local_bike_menu_level(word(m, 0x800A6690));
     if (level >= 15)
         return stock;
     const unsigned count = word(m, 0x800A66B8 + level * 4);
+    const unsigned cursor = thrash ? 0x800A66B0 : 0x8009EF3C + player * 4;
     // Append the original cop record without altering the game's unlock tables.
-    return count >= 1 && count <= 4 && word(m, 0x8009EF3C + player * 4) == count ? 0x800A684C
-                                                                                 : stock;
+    return count >= 1 && count <= 4 && word(m, cursor) == count ? 0x800A684C : stock;
 }
 extern "C" unsigned rr64_custom_cop_rider(unsigned char *rdram, unsigned player,
                                           unsigned selected) {

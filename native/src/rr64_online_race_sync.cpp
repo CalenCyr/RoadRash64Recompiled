@@ -7,6 +7,8 @@
 #include <chrono>
 #include "rr64_online_race_sync.hpp"
 #include "rr64_local_players.hpp"
+#include "rr64_highlights.hpp"
+#include "rr64_highlight_camera.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -27,6 +29,10 @@
 #include "rr64_attack_visual_memory.hpp"
 #include "rr64_authoritative_capture.hpp"
 #include "rr64_prediction_cop_state.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_course_items.hpp"
+#include "rr64_course_hazards.hpp"
+#endif
 
 namespace rr64::online_race_sync {
 namespace {
@@ -215,6 +221,7 @@ bool capture_bike(unsigned char *rdram, std::uint32_t bike, netplay::RiderState 
         for(unsigned i=0;i<3;++i)
             ok &= engine::read_float(rdram,bike+display_offsets[i],state.root.bike_display_angles[i]) && std::isfinite(state.root.bike_display_angles[i]);
         ok &= engine::read_u16(rdram,bike+engine::bike::drive_control_lockout,state.root.drive_lockout);
+        ok &= engine::read_u16(rdram,bike+0x818u,state.root.vault_latch) && state.root.vault_latch<=3;
         ok &= engine::read_float(rdram,bike+0x550u,state.root.bike_height) && std::isfinite(state.root.bike_height);
         ok &= engine::read_float(rdram,rider+0x238u,state.root.rider_height) && std::isfinite(state.root.rider_height);
         ok &= engine::read_u16(rdram,bike+engine::bike::rider_attached,state.root.bike_attached);
@@ -247,7 +254,7 @@ void apply_bike(unsigned char *rdram, std::uint32_t bike, const netplay::RiderSt
     std::uint32_t rider=0,owner=0;
     // Resolve the complete local pair before any writes. Never copy pointers
     // from another process, and never install half of an attachment snapshot.
-    if (!state.root.valid || !state.rider_position_valid ||
+    if (!state.root.valid || !state.rider_position_valid || state.root.vault_latch>3 ||
         !engine::valid_guest_range(bike,engine::bike::stride) ||
         !engine::read_u32(rdram,bike+engine::bike::rider_pointer,rider) ||
         !engine::valid_guest_range(rider,engine::rider::stride) ||
@@ -283,6 +290,9 @@ void apply_bike(unsigned char *rdram, std::uint32_t bike, const netplay::RiderSt
     }
     // 5AFD0 chooses crash versus riding pose from this bike flag.
     engine::write_u16(rdram,bike+engine::bike::drive_control_lockout,state.root.drive_lockout);
+    // Restore the host's finite native vault phase, including its zero reset.
+    // Wheelie input/state remain owned by the native local simulation.
+    engine::write_u16(rdram,bike+0x818u,state.root.vault_latch);
     engine::write_u16(rdram,bike+engine::bike::rider_attached,state.root.bike_attached);
     engine::write_u16(rdram,rider+engine::rider::bike_attached,state.root.rider_attached);
     engine::write_u16(rdram,rider+engine::rider::ejected,state.root.ejected);
@@ -325,6 +335,16 @@ void apply_remote_riders(unsigned char *rdram, bool prepare_presentation=false) 
         prediction::MovementCorrection correction;
         if(!correction.prepare(rdram,remote_frame,status.local_slot,status.replicated_riders,true) ||
            !correction.commit([](void*) noexcept {return true;},nullptr))return;
+#ifdef RR64_EXPERIMENTAL_COURSE
+        // The same pinned host tick owns item presentation and rider equipment.
+        // Client prediction never consumes boxes or rolls another reward.
+        if(!course_items::apply_state(authority_frame.course_items,authority_frame.stamp.round,
+                                     authority_frame.stamp.tick) ||
+           !course_hazards::apply_state(authority_frame.course_hazards,authority_frame.stamp.round,
+                                       authority_frame.stamp.tick)) {
+            netplay::authority_fail("course item state could not be applied");return;
+        }
+#endif
     }
     for (std::uint8_t slot = 0; slot < netplay::kMaximumPlayers; ++slot) {
         if (slot == status.local_slot || (status.is_host && !status.players[slot].connected)) {
@@ -445,7 +465,7 @@ void capture_sync_sample(unsigned char *rdram, unsigned stage) {
         for(const auto &v:{root.bike_origin,root.bike_velocity,root.bike_motion,root.rider_velocity,root.rider_anchor})
             for(float x:v)scalar(x);
         scalar(root.bike_height);scalar(root.rider_height);scalar(root.rider_impact_reserve);scalar(root.durability);scalar(root.durability_capacity);word(root.equipment_valid);for(auto v:root.inventory)word(v);
-        word(root.bike_attached);word(root.rider_attached);word(root.ejected);word(root.drive_lockout);return hash;
+        word(root.bike_attached);word(root.rider_attached);word(root.ejected);word(root.drive_lockout);word(root.vault_latch);return hash;
     };
     const auto count=active_racers(rdram);
     if(campaign) {
@@ -505,6 +525,12 @@ std::uint32_t requested_racer_count(std::uint32_t original_count) {
 }
 
 std::uint32_t prepare_render_layout(std::uint32_t stock_layout) {
+    // A cinematic owns camera/matrix bank 0 regardless of this peer's rider
+    // slot. Do not restore a different logical bank after its physical viewport.
+    if (highlight_camera::active()) {
+        g_viewport_render_plan = {};
+        return 0;
+    }
     const netplay::Status status = netplay::get_status();
     g_viewport_render_plan =
         make_viewport_render_plan(stock_layout, status.active, status.connected,
@@ -638,6 +664,10 @@ extern "C" int rr64_online_authority_capture(unsigned char *rdram,const void *co
         const float age=now-posts[s].cue;
         if(posts[s].pursuit && age>=0 && age<4)frame.outcomes[s].cue_age=age;
     }
+#ifdef RR64_EXPERIMENTAL_COURSE
+    frame.course_items=rr64::course_items::capture_state();
+    frame.course_hazards=rr64::course_hazards::capture_state();
+#endif
     return rr64::netplay::authority_publish_frame(frame)?1:0;
 }
 
@@ -811,6 +841,7 @@ extern "C" void rr64_online_presentation_matrix(unsigned char *m,unsigned node,
                                                 unsigned weapon_source) {
     using namespace rr64::engine;
     using namespace rr64::online_race_sync;
+    if (rr64_highlights_presenting()) return;
     if (!record || !presentation_draw || m!=presentation_mapping || !valid_guest_range(matrix,64) || (matrix&3)) return;
     unsigned type=0,entity=0,root=0;
     if (!read_u32(m,node,type) || (type!=1 && type!=2) ||

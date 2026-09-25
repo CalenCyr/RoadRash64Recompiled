@@ -100,3 +100,98 @@ index 4827452..abd3a2f 100644
          UINT swapChainFlags = 0;
  
          D3D12SwapChain(D3D12CommandQueue *commandQueue, const RenderSwapChainDesc &desc);
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index f1dd503..d6fc087 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -2174,11 +2174,10 @@ namespace plume {
+             return;
+         }
+ 
+-        // Make sure maxImageCount is never below minImageCount, as it's allowed to be zero.
+-        surfaceCapabilities.maxImageCount = std::max(surfaceCapabilities.minImageCount, surfaceCapabilities.maxImageCount);
+-
+-        // Clamp the requested buffer count between the bounds of the surface capabilities.
+-        this->desc.textureCount = std::clamp(desc.textureCount, surfaceCapabilities.minImageCount, surfaceCapabilities.maxImageCount);
++        // A zero maximum means no upper limit; do not silently turn requested
++        // triple buffering into double buffering on those surfaces.
++        this->desc.textureCount = VulkanSwapChainPolicy::imageCount(desc.textureCount,
++            surfaceCapabilities.minImageCount, surfaceCapabilities.maxImageCount);
+ 
+         uint32_t surfaceFormatCount = 0;
+         vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, nullptr);
+@@ -2270,10 +2269,11 @@ namespace plume {
+         presentInfo.waitSemaphoreCount = uint32_t(waitSemaphoresVector.size());
+ 
+         VkPresentIdKHR presentId = {};
++        uint64_t currentPresentId = 0;
+         if (desc.enablePresentWait) {
+             assert(commandQueue->device->capabilities.presentWait && "Present wait must be supported by the RenderDevice.");
+ 
+-            currentPresentId++;
++            currentPresentId = presentHistory.next();
+             presentId.sType = VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
+             presentId.pPresentIds = &currentPresentId;
+             presentId.swapchainCount = 1;
+@@ -2303,9 +2303,10 @@ namespace plume {
+     void VulkanSwapChain::wait() {
+         assert(desc.enablePresentWait && "Present wait should've been explicitly enabled during swap chain creation before using the wait function.");
+ 
+-        if (currentPresentId >= desc.maxFrameLatency) {
++        const uint64_t targetId = presentHistory.waitTarget(desc.maxFrameLatency);
++        if (targetId != 0) {
+             constexpr uint64_t waitTimeout = 100000000;
+-            vkWaitForPresentKHR(commandQueue->device->vk, vk, currentPresentId - (desc.maxFrameLatency - 1), waitTimeout);
++            vkWaitForPresentKHR(commandQueue->device->vk, vk, targetId, waitTimeout);
+         }
+     }
+ 
+@@ -2355,8 +2356,9 @@ namespace plume {
+         // Store the chosen present mode to identify later whether the swapchain needs to be recreated.
+         createdPresentMode = requiredPresentMode;
+ 
+-        // Reset present counter.
+-        presentCount = 1;
++        // IDs belong to the newly created swapchain. Its first presentation
++        // must prime its own history before any present wait is allowed.
++        presentHistory.reset();
+ 
+         if (createInfo.oldSwapchain != VK_NULL_HANDLE) {
+             vkDestroySwapchainKHR(commandQueue->device->vk, createInfo.oldSwapchain, nullptr);
+@@ -2499,6 +2501,7 @@ namespace plume {
+             vkDestroySwapchainKHR(commandQueue->device->vk, vk, nullptr);
+             vk = VK_NULL_HANDLE;
+         }
++        presentHistory.reset();
+     }
+ 
+     void VulkanSwapChain::releaseImageViews() {
+diff --git a/plume_vulkan.h b/plume_vulkan.h
+index 0a1edbe..ee3d2a3 100644
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -8,6 +8,7 @@
+ #pragma once
+ 
+ #include "plume_render_interface.h"
++#include "plume_vulkan_swapchain_policy.h"
+ 
+ #include <mutex>
+ #include <set>
+@@ -229,7 +230,6 @@ namespace plume {
+ #if defined(__APPLE__)
+         std::unique_ptr<CocoaWindow> windowWrapper;
+ #endif
+-        uint64_t presentCount = 0;
+         uint32_t width = 0;
+         uint32_t height = 0;
+         VkSwapchainCreateInfoKHR createInfo = {};
+@@ -238,7 +238,7 @@ namespace plume {
+         VkPresentModeKHR requiredPresentMode = VK_PRESENT_MODE_FIFO_KHR;
+         VkCompositeAlphaFlagBitsKHR pickedAlphaFlag = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+         std::vector<VulkanTexture> textures;
+-        uint64_t currentPresentId = 0;
++        VulkanSwapChainPolicy::PresentHistory presentHistory;
+         bool immediatePresentModeSupported = false;
+         bool mailboxPresentModeSupported = false;
+ 

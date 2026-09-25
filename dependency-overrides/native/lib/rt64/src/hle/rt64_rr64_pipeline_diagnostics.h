@@ -32,7 +32,7 @@ namespace RT64::RR64PipelineDiagnostics {
         GuestUpdate, FullSyncTiles, FullSyncParameters, FullSyncUpload,
         FullSyncUploadWait, FullSyncGpuWait, FullSyncTextureWait,
         FullSyncAdvance, RspVertices, RspTriangles, RspTriangleBatch, GeometryCollect, GeometryIntern,
-        GeometryCertify, GeometryCoherence, MatchScene, GeometryHash, GeometryReuse, Count
+        GeometryCertify, GeometryCoherence, MatchScene, GeometryHash, GeometryReuse, PresentThrottleWait, Count
     };
 
     inline bool stageEnabled(Stage stage) {
@@ -56,7 +56,7 @@ namespace RT64::RR64PipelineDiagnostics {
         "full-sync-texture-wait", "full-sync-advance",
         "rsp-vertices", "rsp-triangles-inclusive", "rsp-triangle-batch-inclusive",
         "geometry-collect", "geometry-intern", "geometry-certify", "geometry-coherence",
-        "match-scene-inclusive", "geometry-hash", "geometry-reuse-copy"
+        "match-scene-inclusive", "geometry-hash", "geometry-reuse-copy", "present-throttle-wait"
     };
     static_assert(sizeof(Names) / sizeof(Names[0]) == static_cast<unsigned int>(Stage::Count));
 

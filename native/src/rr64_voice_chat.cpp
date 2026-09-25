@@ -16,6 +16,7 @@
 
 #include "rr64_netplay.hpp"
 #include "librecomp/config.hpp"
+#include "recompui/config.h"
 #include <string>
 
 namespace rr64::voice_chat {
@@ -326,8 +327,12 @@ void configure(recomp::config::Config &config){
     config.add_number_option("rr64_mic_threshold","Voice Activation Threshold","Level in dB. Lower values pick up quieter speech; higher values reject more background noise. -60 keeps the microphone open during online races.",-60,-10,1,0,false,-40);
     config.add_number_option("rr64_voice_volume","Voice Chat Volume","Other players' voice volume in percent, separate from music and effects.",0,200,5,0,false,100);
     config.add_number_option("rr64_voice_flyby","Voice Fly-by Effect","Subtle pitch shift as riders approach or move away, including airborne crashes. 0 disables pitch changes; direction and distance still apply.",0,100,5,0,false,100);
+    // Later tabs can relocate the frontend's config vector. Resolve the owned
+    // config by its stable ID when loading settings or changing an option.
     for(const auto *key:{"rr64_microphone","rr64_mic_mute","rr64_mic_gain","rr64_mic_threshold","rr64_voice_volume","rr64_voice_flyby"})
-        config.add_option_change_callback(key,[&config](auto,auto,auto){apply_config(config);});
+        config.add_option_change_callback(key,[config_id = config.id](auto,auto,auto){
+            apply_config(recompui::config::get_config(config_id));
+        });
 }
 
 void set_enabled(bool enabled_value) {

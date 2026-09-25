@@ -1,0 +1,65 @@
+[
+  {
+    "file": "_internal/libcrypto.so.3",
+    "sha256": "7be3a37c9d754ec214b30db1d00ce329d22ccebd5654dd7c3f92010a7b1ccf07",
+    "package": "libssl3:amd64",
+    "sourcePackage": "openssl",
+    "sourceVersion": "3.0.2-0ubuntu1.29",
+    "binaryVersion": "3.0.2-0ubuntu1.29",
+    "noticeSHA256": "6a7da622fe0637a334d2a8fc470852d2ffb77d9a2b2f930f854e32a41ad6ef35"
+  },
+  {
+    "file": "_internal/libffi.so.8",
+    "sha256": "247da4d5d34a91cadcdd6282be4c4644fcb8af001334d2b8a82ecda435418cbf",
+    "package": "libffi8:amd64",
+    "sourcePackage": "libffi",
+    "sourceVersion": "3.4.2-4",
+    "binaryVersion": "3.4.2-4",
+    "noticeSHA256": "7258c8acc378030d8dbe1fcdf394e915769fa31dcbaf3d2991d9a79891f3bcdc"
+  },
+  {
+    "file": "_internal/libgcc_s.so.1",
+    "sha256": "fc9d43b2f6c20e53b009238f767c5b949d202389e20de9e202ea684b4ba3729a",
+    "package": "libgcc-s1:amd64",
+    "sourcePackage": "gcc-12",
+    "sourceVersion": "12.3.0-1ubuntu1~22.04.3",
+    "binaryVersion": "12.3.0-1ubuntu1~22.04.3",
+    "noticeSHA256": "da8191658b3452ce9caf31638ba61dab31a38c619fa39df119812e050f592fd3"
+  },
+  {
+    "file": "_internal/liblzma.so.5",
+    "sha256": "7fa51c1500cb9fcc4c7d69b7fe0a6d7203cfe6af64373f6c411c5445ef1b402c",
+    "package": "liblzma5:amd64",
+    "sourcePackage": "xz-utils",
+    "sourceVersion": "5.2.5-2ubuntu1.1",
+    "binaryVersion": "5.2.5-2ubuntu1.1",
+    "noticeSHA256": "a2dc8fac0f496e1c58aff67018cf0c6b88336316afa5642f9335b71642e28aa8"
+  },
+  {
+    "file": "_internal/libssl.so.3",
+    "sha256": "3db6aff36baf2ced6dde3f340159edd2504f089c0d735765596ce96d2d835cb1",
+    "package": "libssl3:amd64",
+    "sourcePackage": "openssl",
+    "sourceVersion": "3.0.2-0ubuntu1.29",
+    "binaryVersion": "3.0.2-0ubuntu1.29",
+    "noticeSHA256": "6a7da622fe0637a334d2a8fc470852d2ffb77d9a2b2f930f854e32a41ad6ef35"
+  },
+  {
+    "file": "_internal/libstdc++.so.6",
+    "sha256": "ff0825e113603c3866680d5d52216bc6d8eedf3a59f52a0aef67ff01994db128",
+    "package": "libstdc++6:amd64",
+    "sourcePackage": "gcc-12",
+    "sourceVersion": "12.3.0-1ubuntu1~22.04.3",
+    "binaryVersion": "12.3.0-1ubuntu1~22.04.3",
+    "noticeSHA256": "da8191658b3452ce9caf31638ba61dab31a38c619fa39df119812e050f592fd3"
+  },
+  {
+    "file": "_internal/libz.so.1",
+    "sha256": "64c206f0146cc58bbddc4f22054436f4ff278f5a554aa3ce6921ddf7e9133370",
+    "package": "zlib1g:amd64",
+    "sourcePackage": "zlib",
+    "sourceVersion": "1:1.2.11.dfsg-2ubuntu9.2",
+    "binaryVersion": "1:1.2.11.dfsg-2ubuntu9.2",
+    "noticeSHA256": "d77204eee882807240f6351c4f5ae2a4bcdb5b773ff77d10647b9b66b826b2fb"
+  }
+]

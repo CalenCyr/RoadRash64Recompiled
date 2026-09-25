@@ -1,10 +1,31 @@
 #pragma once
 #include "rr64_roaming_route.hpp"
+#include "rr64_race_end_trace.hpp"
 #include "rr64_custom_cop.hpp"
+#include "rr64_thrash_options.hpp"
+#include "rr64_race_pack_menu.hpp"
+#include "rr64_online_terrain.hpp"
+#include "rr64_highlights.hpp"
+#include "rr64_highlight_camera.hpp"
+#include "rr64_offline_modifiers.hpp"
+#include "rr64_offline_modifiers_bikes.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_experimental_course.hpp"
+#include "rr64_course_material.hpp"
+#include "rr64_course_items.hpp"
+#include "rr64_course_pickups.hpp"
+#include "rr64_course_walls.hpp"
+#include "rr64_course_hazards.hpp"
+#include "rr64_course_ai.hpp"
+#include "rr64_course_boost.hpp"
+#include "rr64_course_diagnostics.hpp"
+#include "rr64_course_sky.hpp"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+void rr64_course_audio_step(unsigned char *);
 void rr64_sky_queue_begin(unsigned char *);
 void rr64_sky_queue_end(unsigned char *);
 void rr64_hud_widgets_begin(unsigned char *);
@@ -32,6 +53,7 @@ unsigned int rr64_music_stock_volume(unsigned int original);
 void rr64_lod_release_node(unsigned char *rdram, unsigned int node);
 void rr64_lod_reset_actor_pool(unsigned char *rdram);
 unsigned int rr64_combined_video_callback(unsigned char *rdram, unsigned int original);
+void rr64_refresh_viewport_dimensions(unsigned char *rdram, unsigned int layout);
 void rr64_trace_guest_value(const char *stage, unsigned int value);
 void rr64_engine_observe_frame(unsigned char *rdram);
 void rr64_engine_capture_pre_update(unsigned char *rdram);
@@ -63,6 +85,7 @@ void rr64_lod_observe_allocation(unsigned char *rdram, unsigned int node, unsign
 void rr64_lod_invalidate(unsigned char *rdram);
 void rr64_lod_begin_preparation(unsigned char *rdram);
 void rr64_lod_observe_pair(unsigned char *rdram, void *context);
+void rr64_lod_observe_recording_pairs(unsigned char *rdram, void *context);
 void rr64_lod_prepare_shadow(unsigned char *rdram, void *context, int direct_order);
 int rr64_lod_shadow_rider(unsigned char *rdram, unsigned int node);
 void rr64_lod_shadow_stage(unsigned char *rdram, unsigned int node, unsigned int stage);
@@ -102,6 +125,7 @@ void rr64_world_scale_root_matrix(unsigned char *rdram, unsigned node, unsigned 
                                   unsigned matrix);
 void rr64_world_end_actor();
 void rr64_world_camera_far(unsigned char *rdram, void *context);
+int rr64_world_camera_open_gap(unsigned char *rdram, void *context);
 void rr64_world_camera_normalization(unsigned char *rdram, void *context);
 void rr64_world_terrain_begin(unsigned char *rdram);
 unsigned rr64_world_terrain_stock_state(unsigned char *rdram, unsigned record, unsigned state);
@@ -136,6 +160,8 @@ void rr64_trace_race_frame(unsigned char *rdram, void *context, unsigned int mod
                            unsigned int wait_ticks_bits, unsigned int total_ticks_bits);
 int rr64_is_live_race_mode(unsigned int mode);
 int rr64_is_race_mode_active();
+// Published race scene includes the results/highlight handoff, unlike live simulation.
+int rr64_is_race_presentation_active();
 int rr64_is_gameplay_feedback_active();
 int rr64_are_gameplay_shortcuts_active();
 int rr64_is_road_rumble_allowed();
@@ -158,6 +184,9 @@ void rr64_render_resident_terrain(unsigned char *rdram, void *context);
 void rr64_trace_terrain_scene(unsigned char *rdram);
 void rr64_trace_lod_node(unsigned char *rdram, unsigned int kind, unsigned int node);
 unsigned int rr64_online_menu_route_mode(unsigned int requested_mode);
+void rr64_online_menu_mode_changed(unsigned int requested_mode);
+unsigned int rr64_online_bike_profile(unsigned char* rdram, unsigned int racer, unsigned int profile);
+void rr64_online_bike_profiles_reset();
 void rr64_online_main_menu_draw(unsigned char *memory, void *context);
 void rr64_online_ready_draw(unsigned char *memory, void *context);
 void rr64_online_disconnect_draw(unsigned char *memory, void *context);
@@ -187,8 +216,16 @@ unsigned int rr64_local_options_table(unsigned int stock);
 unsigned int rr64_local_options_visible(unsigned int row, unsigned int stock);
 void rr64_local_options_text(unsigned char *memory, unsigned int row, unsigned int buffer);
 void rr64_local_options_finish(unsigned char *memory);
+void rr64_character_restore(unsigned char *memory, unsigned int slot, unsigned int multiplayer);
+void rr64_character_remember(unsigned char *memory, unsigned int slot);
+void rr64_character_remember_multiplayer(unsigned char *memory);
+void rr64_character_new_campaign(unsigned char *memory);
 void rr64_local_options_race(unsigned char *memory);
+void rr64_local_options_thrash_roster(unsigned char *memory);
+void rr64_local_options_thrash_race(unsigned char *memory);
 unsigned int rr64_local_bike_level(unsigned int original);
+unsigned int rr64_local_bike_menu_level(unsigned int original);
+void rr64_local_bike_ai_pool(unsigned char *memory, void *context);
 unsigned int rr64_online_prepare_render_layout(unsigned int stock_layout);
 unsigned int rr64_online_render_first_viewport(unsigned int stock_viewport);
 unsigned int rr64_online_render_geometry_viewport(unsigned int stock_viewport);

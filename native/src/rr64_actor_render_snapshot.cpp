@@ -37,7 +37,8 @@ bool retained_actor_scene(std::uint32_t mode, std::uint32_t pending) noexcept {
 }
 
 bool root_plan(unsigned char *rdram, std::uint32_t node, std::uint32_t viewport,
-               const ModelGraphTopologySnapshot &topology, RootRenderPlan &plan) noexcept {
+               const ModelGraphTopologySnapshot &topology, RootRenderPlan &plan,
+               PreparationPurpose purpose) noexcept {
     plan = {};
     if (viewport >= 4u || topology.record_count == 0u ||
         topology.records[0].type != actor_scene::model_record_triple_transform) {
@@ -100,8 +101,9 @@ bool root_plan(unsigned char *rdram, std::uint32_t node, std::uint32_t viewport,
         return false;
     }
     const float private_distance_squared = distance_squared * 0.01f;
-    if (!(100.0f * distance_squared < root_distance_limit) ||
-        !(10000.0f * private_distance_squared < root_distance_limit)) {
+    const bool in_range = 100.0f * distance_squared < root_distance_limit &&
+                          10000.0f * private_distance_squared < root_distance_limit;
+    if (!in_range && purpose != PreparationPurpose::HighlightRecording) {
         return false;
     }
     // A second source-setting root would change the renderer's final source
@@ -112,13 +114,17 @@ bool root_plan(unsigned char *rdram, std::uint32_t node, std::uint32_t viewport,
             return false;
         }
     }
-    plan.private_distance_squared_bits = std::bit_cast<std::uint32_t>(private_distance_squared);
+    // The cloned root writers still need to run for off-camera recordings.
+    // Their roots are discarded; playback rebuilds them from recorded world
+    // anchors and its own camera. Never use this exemption for live drawing.
+    plan.private_distance_squared_bits =
+        std::bit_cast<std::uint32_t>(in_range ? private_distance_squared : 0.0f);
     plan.render_source = 2u;
     plan.normalized = true;
     return true;
 }
 
-bool normalized_pose_in_range(const Pose &pose) noexcept {
+bool normalized_pose_in_range(const Pose &pose, bool require_draw_range = true) noexcept {
     // Root writers retain their real source-1 pose. Before selecting bank 2,
     // also certify the actual captured translation (not just a node's distance
     // cache) and a bounded finite quaternion for the original matrix builder.
@@ -130,7 +136,7 @@ bool normalized_pose_in_range(const Pose &pose) noexcept {
         }
         translation_squared += value * value;
     }
-    if (!(translation_squared * 0.01 < root_distance_limit)) {
+    if (require_draw_range && !(translation_squared * 0.01 < root_distance_limit)) {
         return false;
     }
     double quaternion_squared = 0.0;
@@ -181,12 +187,12 @@ bool actor_identity(unsigned char *rdram, std::uint32_t node, std::uint32_t &typ
 } // namespace
 
 bool capture_root_render_plan(unsigned char *rdram, std::uint32_t node, std::uint32_t viewport,
-                              RootRenderPlan &plan) noexcept {
+                              RootRenderPlan &plan, PreparationPurpose purpose) noexcept {
     std::uint32_t graph = 0;
     ModelGraphTopologySnapshot topology{};
     return read_u32(rdram, node + actor_scene::lod_models, graph) &&
            capture_model_graph_topology(rdram, graph, topology) &&
-           root_plan(rdram, node, viewport, topology, plan);
+           root_plan(rdram, node, viewport, topology, plan, purpose);
 }
 
 bool root_render_bank_ready(unsigned char *rdram, const RootRenderPlan &plan,
@@ -443,7 +449,7 @@ const SnapshotStore::Allocation *SnapshotStore::allocation(unsigned char *rdram,
 
 bool SnapshotStore::capture_actor(unsigned char *live, unsigned char *poses, std::uint32_t node,
                                   std::uint32_t viewport, std::uint32_t slot, bool require_prepared,
-                                  ActorSnapshot &output) const noexcept {
+                                  ActorSnapshot &output, PreparationPurpose purpose) const noexcept {
     output = {};
     const auto *allocation_record = allocation(live, node);
     if (!allocation_record || viewport >= 4u || slot >= 2u || !poses) {
@@ -476,7 +482,7 @@ bool SnapshotStore::capture_actor(unsigned char *live, unsigned char *poses, std
     if (!capture_model_graph_topology(live, output.model, topology) ||
         !capture_model_graph_topology(poses, output.model, prepared_topology) ||
         !compatible_transform_topology(topology, prepared_topology) ||
-        !root_plan(live, node, viewport, topology, output.root_plan)) {
+        !root_plan(live, node, viewport, topology, output.root_plan, purpose)) {
         return false;
     }
     for (std::uint32_t destination_slot = 0; destination_slot < 2u; ++destination_slot) {
@@ -623,7 +629,7 @@ bool SnapshotStore::capture_actor(unsigned char *live, unsigned char *poses, std
     output.resource_signature = signature;
     if (require_prepared && output.root_plan.normalized &&
         (output.pose_count == 0u || output.poses[0].record != output.root_plan.record ||
-         !normalized_pose_in_range(output.poses[0]))) {
+         !normalized_pose_in_range(output.poses[0], purpose == PreparationPurpose::LiveDraw))) {
         return false;
     }
     return output.pose_count != 0u &&
@@ -698,22 +704,22 @@ bool SnapshotStore::isolated_pose_ranges(const PairSnapshot &pair) const noexcep
 
 bool SnapshotStore::can_prepare(unsigned char *rdram, std::uint32_t bike_node,
                                 std::uint32_t rider_node, std::uint32_t viewport,
-                                std::uint32_t slot) const noexcept {
+                                std::uint32_t slot, PreparationPurpose purpose) const noexcept {
     std::uint32_t views = 0;
     if (!supported_scene(rdram) || !read_u32(rdram, viewport_count, views) || viewport >= views ||
         !visual_pair(rdram, bike_node, rider_node)) {
         return false;
     }
     PairSnapshot pair{};
-    return capture_actor(rdram, rdram, bike_node, viewport, slot, false, pair.actors[0]) &&
-           capture_actor(rdram, rdram, rider_node, viewport, slot, false, pair.actors[1]) &&
+    return capture_actor(rdram, rdram, bike_node, viewport, slot, false, pair.actors[0], purpose) &&
+           capture_actor(rdram, rdram, rider_node, viewport, slot, false, pair.actors[1], purpose) &&
            isolated_pose_ranges(pair);
 }
 
 bool SnapshotStore::publish(unsigned char *live, unsigned char *prepared, std::uint32_t bike_node,
                             std::uint32_t rider_node, std::uint32_t viewport,
-                            std::uint32_t slot) noexcept {
-    if (live == prepared || !can_prepare(live, bike_node, rider_node, viewport, slot) ||
+                            std::uint32_t slot, PreparationPurpose purpose) noexcept {
+    if (live == prepared || !can_prepare(live, bike_node, rider_node, viewport, slot, purpose) ||
         !visual_pair(prepared, bike_node, rider_node)) {
         return false;
     }
@@ -721,10 +727,22 @@ bool SnapshotStore::publish(unsigned char *live, unsigned char *prepared, std::u
     candidate.generation = generation_;
     candidate.viewport = viewport;
     candidate.buffer_slot = slot;
-    if (!capture_actor(live, prepared, bike_node, viewport, slot, true, candidate.actors[0]) ||
-        !capture_actor(live, prepared, rider_node, viewport, slot, true, candidate.actors[1]) ||
+    candidate.purpose = purpose;
+    if (!capture_actor(live, prepared, bike_node, viewport, slot, true, candidate.actors[0], purpose) ||
+        !capture_actor(live, prepared, rider_node, viewport, slot, true, candidate.actors[1], purpose) ||
         !isolated_pose_ranges(candidate)) {
         return false;
+    }
+    if (purpose == PreparationPurpose::HighlightRecording) {
+        // Recording history may retain children outside the live camera's
+        // matrix range. Only pairs independently meeting the unchanged draw
+        // certificate can also be consumed by the ordinary Max LOD renderer.
+        for (const auto &actor : candidate.actors) {
+            RootRenderPlan draw_plan{};
+            candidate.drawable &= capture_root_render_plan(live, actor.node, viewport, draw_plan) &&
+                                  draw_plan == actor.root_plan &&
+                                  (!draw_plan.normalized || normalized_pose_in_range(actor.poses[0]));
+        }
     }
     PairSnapshot *destination = nullptr;
     bool conflict = false;
@@ -835,7 +853,7 @@ bool SnapshotStore::seed_previous_rider_children(unsigned char *live, unsigned c
         for (std::size_t actor = 0; actor < 2; ++actor) {
             const auto &saved = prior.actors[actor];
             auto &now = current.actors[actor];
-            if (!capture_actor(live, prepared, saved.node, viewport, slot, false, now) ||
+            if (!capture_actor(live, prepared, saved.node, viewport, slot, false, now, prior.purpose) ||
                 now.entity != saved.entity || now.model_state != saved.model_state ||
                 now.resource_signature != saved.resource_signature ||
                 now.pose_count != saved.pose_count ||
@@ -941,6 +959,8 @@ const PairSnapshot *SnapshotStore::find(unsigned char *rdram, std::uint32_t node
             absent_reason = FindFailure::View;
             continue;
         }
+        if (!pair.drawable)
+            return reject(FindFailure::RootPlan);
         if (!visual_pair(rdram, pair.actors[0].node, pair.actors[1].node)) {
             return reject(FindFailure::Ownership);
         }

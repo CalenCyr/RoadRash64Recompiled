@@ -20,6 +20,7 @@ void set_input_binding(int, GameInput, size_t, InputField) {}
 }
 namespace recompinput::players {
 bool is_single_player_mode() { return false; }
+size_t get_number_of_assigned_players() { return 0; }
 const Player& get_player(int, bool) { static Player player; return player; }
 }
 

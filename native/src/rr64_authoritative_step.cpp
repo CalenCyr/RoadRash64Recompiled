@@ -3,6 +3,7 @@
 #include "rr64_authoritative_native.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_netplay.hpp"
+#include "rr64_online_terrain.hpp"
 
 extern "C" int rr64_online_authority_capture(unsigned char*,const void*);
 extern "C" void rr64_prediction_capture_reset();
@@ -34,6 +35,12 @@ bool owns(unsigned actor) {
 // Hooks remain dormant until the integrated authority lifecycle enables the
 // mode. Never infer authority merely from an online session being present.
 extern "C" int rr64_authority_step_begin(unsigned char *m,void *context) {
+    // Reserve collision scratch before any prediction snapshot. A missing
+    // graphics cell must never become missing physical ground for a remote racer.
+    if (!rr64_online_terrain_prepare(m, context)) {
+        rr64::netplay::authority_fail("online collision terrain unavailable");
+        return 0;
+    }
     if(rr64::prediction::active())return 1;
     rr64_prediction_verify_before(m,context);
     using namespace rr64;

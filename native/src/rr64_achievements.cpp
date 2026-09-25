@@ -1,5 +1,6 @@
 #include "rr64_msvc_crt_compat.hpp"
 #include "rr64_achievements.hpp"
+#include "rr64_offline_modifiers.hpp"
 #include "rr64_prediction_replay.hpp"
 
 #include <algorithm>
@@ -363,7 +364,8 @@ void load_progress() {
 }
 
 void queue_unlock(std::size_t index) {
-    if (!g_enabled.load(std::memory_order_acquire) || index >= kAchievements.size()) {
+    if (!g_enabled.load(std::memory_order_acquire) || rr64::offline_modifiers::enabled_any() ||
+        index >= kAchievements.size()) {
         return;
     }
 

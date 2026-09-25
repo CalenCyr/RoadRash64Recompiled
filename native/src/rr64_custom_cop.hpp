@@ -8,6 +8,8 @@ extern "C" {
 #endif
 int rr64_custom_cop_roaming(unsigned char *, unsigned);
 int rr64_custom_cop_can_recover(unsigned char *, unsigned);
+// Canonical human cop identity, independent of mounted/crash timing.
+int rr64_custom_cop_is_player(unsigned char *, unsigned);
 int rr64_custom_cop_trick(unsigned char *, unsigned);
 float rr64_custom_cop_win_age(unsigned char *);
 void rr64_custom_cop_post(unsigned char *, void *, unsigned);

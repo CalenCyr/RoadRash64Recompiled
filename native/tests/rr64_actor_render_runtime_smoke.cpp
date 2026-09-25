@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include "highlight_hooks_disabled.hpp"
 
 #include "recomp.h"
 #include "rr64_native.hpp"

@@ -4,6 +4,10 @@ Run this after a normal native/build (see BUILDING.md / the Linux build
 steps) has produced native/build/bin/RoadRash64Recompiled. Produces
 native/build/RoadRash64Recompiled-x86_64.AppImage.
 
+Course-enabled builds require --mk64-importer-bundle pointing to the Linux
+bundle.json from build_mk64_importer.py. The verified tool is installed beside
+the executable; players' imported data remains outside the read-only image.
+
 This does its own dependency bundling pass rather than trusting
 linuxdeploy's bundled patchelf for the final library copies: on newer
 toolchains (glibc/binutils that emit DT_RELR compressed relative
@@ -29,6 +33,7 @@ host having it - which broke the AppImage on SteamOS (Steam Deck), which
 has no libselinux at all. Bundle everything linuxdeploy finds; don't
 assume any of it is safe to leave off the host's word alone.
 """
+import argparse
 import hashlib
 import json
 import re
@@ -96,9 +101,46 @@ def original_libraries() -> dict[str, Path]:
             re.findall(r"^\s*(\S+) => (/\S+) \(", listing, re.M)}
 
 
+def copy_importer(manifest_path: Path) -> None:
+    """Keep the tested frozen tool intact and outside linuxdeploy's rewriting."""
+    manifest = json.loads(manifest_path.read_text())
+    if not manifest.get("passed") or manifest.get("platform") != "linux":
+        raise ValueError("Provide a verified native Linux importer bundle.")
+    if manifest.get("contains_converted_assets") is not False:
+        raise ValueError("The importer bundle must contain no converted game assets.")
+    source = Path(manifest["directory"]).resolve()
+    files = manifest["files"]
+    actual = {p.relative_to(source).as_posix() for p in source.rglob("*") if p.is_file()}
+    if actual != set(files):
+        raise ValueError("The frozen importer file inventory has changed.")
+    for name, expected in files.items():
+        path = source / name
+        if Path(name).is_absolute() or not path.resolve().is_relative_to(source):
+            raise ValueError("Importer path escapes its bundle: " + name)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise ValueError("Importer file differs from its manifest: " + name)
+    for name in ("rr64-mk64-importer", "rr64-mk64-contact", "rr64-mk64-motion"):
+        executable = source / name
+        if executable.read_bytes()[:4] != b"\x7fELF" or not os.access(executable, os.X_OK):
+            raise ValueError("Missing executable Linux importer component: " + name)
+    target = APPDIR / "usr/bin/tools/mk64-importer"
+    shutil.copytree(source, target)
+    for name, expected in files.items():
+        if hashlib.sha256((target / name).read_bytes()).hexdigest() != expected:
+            raise ValueError("Copied importer differs: " + name)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mk64-importer-bundle", type=Path,
+                        help="bundle.json produced by build_mk64_importer.py on Linux")
+    args = parser.parse_args()
     if not BINARY.exists():
         sys.exit(f"Build the project first: {BINARY} does not exist.")
+    cache = NATIVE_BUILD / "CMakeCache.txt"
+    if cache.is_file() and "RR64_EXPERIMENTAL_COURSE:BOOL=ON" in cache.read_text():
+        if args.mk64_importer_bundle is None:
+            sys.exit("Course-enabled packages require --mk64-importer-bundle.")
 
     originals = original_libraries()
     linuxdeploy = TOOLS_DIR / "linuxdeploy"
@@ -108,11 +150,18 @@ def main() -> None:
     download(APPIMAGETOOL_URL, appimagetool)
     download(RUNTIME_URL, runtime)
 
+    if APPDIR.resolve().parent != NATIVE_BUILD.resolve():
+        raise ValueError("AppDir must resolve inside this build directory.")
     if APPDIR.exists():
         shutil.rmtree(APPDIR)
     (APPDIR / "usr" / "bin").mkdir(parents=True)
     shutil.copy2(BINARY, APPDIR / "usr" / "bin" / BINARY.name)
-    shutil.copytree(ASSETS, APPDIR / "usr" / "bin" / "assets")
+    # Keep the runtime UI inventory clean. AppImage's icon is installed below;
+    # Windows icon resources and historical artwork are not loaded from assets/.
+    shutil.copytree(ASSETS, APPDIR / "usr" / "bin" / "assets",
+                    ignore=shutil.ignore_patterns("sky", "RoadRashLauncher-v3.png",
+                                                  "RoadRashIcon.ico", "RoadRashIcon.png",
+                                                  "RoadRashIcon.rc"))
 
     icon_path = APPDIR / "roadrash64recompiled.png"
     subprocess.run(["convert", str(ICON_SOURCE), "-resize", "512x512", str(icon_path)], check=True)
@@ -152,8 +201,11 @@ def main() -> None:
             sha256=hashlib.sha256(so_file.read_bytes()).hexdigest()))
     (NATIVE_BUILD / "bundled-libraries.json").write_text(json.dumps(inventory, indent=2))
     shutil.copytree(ROOT / "licenses", APPDIR / "usr/share/licenses/roadrash64", dirs_exist_ok=True)
-    for name in ["LICENSE", "CREDITS.md", "THIRD_PARTY_NOTICES.md"]:
+    for name in ["LICENSE", "CREDITS.md", "THIRD_PARTY_NOTICES.md", "LEGAL.md"]:
         shutil.copy2(ROOT / name, APPDIR / "usr/share/licenses/roadrash64" / name)
+
+    if args.mk64_importer_bundle is not None:
+        copy_importer(args.mk64_importer_bundle)
 
     # Also restore the pristine executable: avoid whatever patchelf did to it too.
     shutil.copy2(BINARY, APPDIR / "usr" / "bin" / BINARY.name)

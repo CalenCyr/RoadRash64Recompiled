@@ -68,6 +68,7 @@ struct PreparationInput {
     std::uint32_t stage_mask = 0;
     std::array<lod::RootRenderPlan, 2> root_plans{};
     bool eligible = false;
+    lod::PreparationPurpose purpose = lod::PreparationPurpose::LiveDraw;
 };
 
 struct RiderRangeProof {
@@ -490,7 +491,9 @@ extern "C" void rr64_lod_observe_allocation(unsigned char *rdram, unsigned int n
     // Replay allocations belong to a disposable image. Registering that image
     // here resets the live Max LOD allocation store and loses distant poses.
     if (rr64::prediction::active()) return;
-    if (!rr64_render_only_max_lod_enabled() || shadow_mapping) {
+    // Keep bounded allocation certificates even when live Max LOD is off:
+    // recording starts after these native allocations have already happened.
+    if (shadow_mapping) {
         return;
     }
     count_activity(lod::ActivityCounter::Allocation);
@@ -505,7 +508,7 @@ extern "C" void rr64_lod_observe_allocation(unsigned char *rdram, unsigned int n
 extern "C" void rr64_lod_invalidate(unsigned char *rdram) {
     if (rr64::prediction::active()) return;
     end_binding();
-    if (!rr64_render_only_max_lod_enabled() || shadow_mapping) {
+    if (shadow_mapping) {
         return;
     }
     auto &state = runtime();
@@ -518,7 +521,7 @@ extern "C" void rr64_lod_invalidate(unsigned char *rdram) {
 
 extern "C" void rr64_lod_release_node(unsigned char *rdram, unsigned int node) {
     if(rr64::prediction::active())return;
-    if (!rr64_render_only_max_lod_enabled() || shadow_mapping)
+    if (shadow_mapping)
         return;
     auto &state = runtime();
     std::lock_guard guard(state.mutex);
@@ -532,7 +535,7 @@ extern "C" void rr64_lod_release_node(unsigned char *rdram, unsigned int node) {
 
 extern "C" void rr64_lod_reset_actor_pool(unsigned char *rdram) {
     if (rr64::prediction::active()) return;
-    if (!rr64_render_only_max_lod_enabled() || shadow_mapping)
+    if (shadow_mapping)
         return;
     auto &state = runtime();
     std::lock_guard guard(state.mutex);
@@ -546,7 +549,7 @@ extern "C" void rr64_lod_reset_actor_pool(unsigned char *rdram) {
 extern "C" void rr64_lod_begin_preparation(unsigned char *rdram) {
     if (rr64::prediction::active()) return;
     rr64_lod_invalidate(rdram);
-    if (!rr64_render_only_max_lod_enabled() || shadow_mapping) {
+    if ((!rr64_render_only_max_lod_enabled() && !rr64_highlights_needs_detail(rdram)) || shadow_mapping) {
         return;
     }
     auto &state = runtime();
@@ -590,7 +593,7 @@ extern "C" void rr64_lod_observe_rider_range(unsigned char *rdram, unsigned int 
 }
 
 extern "C" void rr64_lod_observe_pair(unsigned char *rdram, void *context) {
-    if (!rr64_render_only_max_lod_enabled() || shadow_mapping || !context) {
+    if ((!rr64_render_only_max_lod_enabled() && !rr64_highlights_needs_detail(rdram)) || shadow_mapping || !context) {
         return;
     }
     count_activity(lod::ActivityCounter::PairObserved);
@@ -604,7 +607,12 @@ extern "C" void rr64_lod_observe_pair(unsigned char *rdram, void *context) {
     const auto bike = static_cast<std::uint32_t>(ctx.r20);
     const auto rider = static_cast<std::uint32_t>(ctx.r19);
     std::uint32_t view = 0, slot = 0;
-    if (!viewport(rdram, view, slot) || !state.store.can_prepare(rdram, bike, rider, view, slot) ||
+    if (!viewport(rdram, view, slot))
+        return;
+    const auto purpose = view == 0 && rr64_highlights_needs_detail(rdram)
+                             ? lod::PreparationPurpose::HighlightRecording
+                             : lod::PreparationPurpose::LiveDraw;
+    if (!state.store.can_prepare(rdram, bike, rider, view, slot, purpose) ||
         state.input_count == state.inputs.size()) {
         count_activity(lod::ActivityCounter::PreflightRejected);
         return;
@@ -621,6 +629,7 @@ extern "C" void rr64_lod_observe_pair(unsigned char *rdram, void *context) {
     input.context.f_odd = nullptr;
     input.bike_node = bike;
     input.rider_node = rider;
+    input.purpose = purpose;
     if (!read_suffix_vectors(rdram,
                              suffix_addresses(static_cast<std::uint32_t>(ctx.r22),
                                               static_cast<std::uint32_t>(ctx.r18)),
@@ -630,6 +639,41 @@ extern "C" void rr64_lod_observe_pair(unsigned char *rdram, void *context) {
     }
     state.inputs[state.input_count++] = input;
     count_activity(lod::ActivityCounter::PairQueued);
+}
+
+extern "C" void rr64_lod_observe_recording_pairs(unsigned char *rdram, void *context) {
+    // D9A4 skips hidden bikes before its ordinary pair observer. Enroll active
+    // recording subjects before that branch, while the camera is still in the
+    // original world basis. Only viewport zero adds off-camera recording work.
+    if (!context || shadow_mapping || !rr64_highlights_needs_detail(rdram))
+        return;
+    std::uint32_t view = 0, slot = 0, count = 0;
+    if (!viewport(rdram, view, slot) || view != 0 ||
+        !engine::read_u32(rdram, 0x800A656Cu, count) || // Native race roster, not the menu player count.
+        count == 0 || count > engine::kMaximumRacers)
+        return;
+    for (unsigned i = 0; i < count; ++i) {
+        const auto actor = 0x800D8570u + i * 0x118u;
+        std::uint16_t active = 0;
+        std::uint32_t bike = 0, rider = 0, bike_node = 0, rider_node = 0, owner = 0, id = 0;
+        if (!engine::read_u16(rdram, actor + 0x24u, active) || !active ||
+            !engine::read_u32(rdram, actor + 0xe0u, bike) ||
+            !engine::read_u32(rdram, actor + 0xe4u, rider) ||
+            !engine::read_u32(rdram, bike + 8u, bike_node) ||
+            !engine::read_u32(rdram, rider + 8u, rider_node) ||
+            !engine::read_u32(rdram, bike + 4u, owner) ||
+            !engine::read_u32(rdram, owner, id) || id != i)
+            continue;
+        auto input = *static_cast<const recomp_context *>(context);
+        input.r20 = static_cast<std::int32_t>(bike_node);
+        input.r19 = static_cast<std::int32_t>(rider_node);
+        input.r22 = static_cast<std::int32_t>(bike);
+        input.r18 = static_cast<std::int32_t>(rider);
+        input.r17 = static_cast<std::int32_t>(0x800D6880u + id * 12u);
+        input.r16 = static_cast<std::int32_t>(0x800D6940u + id * 12u);
+        input.r30 = static_cast<std::int32_t>(suffix_camera);
+        rr64_lod_observe_pair(rdram, &input);
+    }
 }
 
 extern "C" int rr64_lod_shadow_rider(unsigned char *rdram, unsigned int node) {
@@ -853,7 +897,7 @@ extern "C" void rr64_lod_shadow_full_weight(unsigned char *rdram, void *context,
 }
 
 extern "C" void rr64_lod_prepare_shadow(unsigned char *rdram, void *context, int direct_order) {
-    if (!rr64_render_only_max_lod_enabled() || shadow_mapping || !context) {
+    if ((!rr64_render_only_max_lod_enabled() && !rr64_highlights_needs_detail(rdram)) || shadow_mapping || !context) {
         return;
     }
     count_activity(lod::ActivityCounter::Prepare);
@@ -915,9 +959,9 @@ extern "C" void rr64_lod_prepare_shadow(unsigned char *rdram, void *context, int
         auto &input = state.inputs[i];
         input.stage_mask = 0;
         input.eligible =
-            state.store.can_prepare(rdram, input.bike_node, input.rider_node, view, slot) &&
-            lod::capture_root_render_plan(rdram, input.bike_node, view, input.root_plans[0]) &&
-            lod::capture_root_render_plan(rdram, input.rider_node, view, input.root_plans[1]);
+            state.store.can_prepare(rdram, input.bike_node, input.rider_node, view, slot, input.purpose) &&
+            lod::capture_root_render_plan(rdram, input.bike_node, view, input.root_plans[0], input.purpose) &&
+            lod::capture_root_render_plan(rdram, input.rider_node, view, input.root_plans[1], input.purpose);
         const bool far_pair =
             input.eligible && (input.root_plans[0].normalized || input.root_plans[1].normalized);
         input.eligible = input.eligible &&
@@ -1015,7 +1059,11 @@ extern "C" void rr64_lod_prepare_shadow(unsigned char *rdram, void *context, int
         const auto &input = state.inputs[i];
         if (input.eligible && input.stage_mask == (1u | 2u | 4u | 128u)) {
             if (state.store.publish(rdram, scratch, input.bike_node, input.rider_node, view,
-                                    slot)) {
+                                    slot, input.purpose)) {
+                // Copy this complete authored tier-zero pose before scratch is
+                // reused. The recorder tags it with the current update epoch;
+                // no live graph, model preference or simulation word changes.
+                rr64_highlights_capture_detail(rdram, scratch, input.bike_node, input.rider_node);
                 published_pair_count.fetch_add(1u, std::memory_order_relaxed);
                 if (view_diagnostics_enabled())
                     view_published[view].fetch_add(1u, std::memory_order_relaxed);
@@ -1080,7 +1128,7 @@ extern "C" void rr64_lod_end_draw(unsigned char *rdram) {
     draw_active = false;
     // The next draw must have a new producer. Host interpolation uses RT64's
     // completed matrices and never needs to extend a guest pose transaction.
-    if (rr64_render_only_max_lod_enabled()) {
+    if (rr64_render_only_max_lod_enabled() || rr64_highlights_needs_detail(rdram)) {
         rr64_lod_invalidate(rdram);
     }
 }
@@ -1189,6 +1237,9 @@ extern "C" unsigned int rr64_lod_actor_hidden(unsigned char *rdram, unsigned int
 
 extern "C" unsigned int rr64_lod_root_source(unsigned char *rdram, unsigned int node,
                                              unsigned int record, unsigned int original_source) {
+    const auto replay_source = rr64_highlights_root_source(rdram, node, record, original_source);
+    if (replay_source != original_source)
+        return replay_source;
     if (!pose_binding.active() || shadow_mapping || rdram != bound_mapping || node != bound_node ||
         !bound_root_plan.normalized || record != bound_root_plan.record ||
         original_source != bound_root_plan.original_source) {
@@ -1253,6 +1304,8 @@ rr64::lod::RootRangeReport rr64::lod::take_root_range_report() {
 
 extern "C" void rr64_lod_scale_root_matrix(unsigned char *rdram, unsigned int node,
                                            unsigned int record, unsigned int matrix_address) {
+    if (rr64_highlights_scale_root_matrix(rdram, node, record, matrix_address))
+        return;
     capture_root_range(rdram, node, record, matrix_address);
     if (!root_source_selected || !pose_binding.active() || shadow_mapping ||
         rdram != bound_mapping || node != bound_node || record != bound_root_plan.record ||

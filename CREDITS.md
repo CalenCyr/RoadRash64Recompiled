@@ -47,3 +47,23 @@ shutdown diagnosis and AppImage packaging work in PR #4. The contributor disclos
 substantial Claude AI assistance and reported Fedora and Steam Deck testing. This
 experimental integration carries later Road Rash fixes and additional packaging
 changes; that earlier testing does not establish acceptance of this binary.
+
+## Optional MK64 course import
+
+Mario Kart 64 and its original courses, artwork and audio belong to their original creators and rights holders. Importing uses the player's own supported ROM; the release does not include that ROM or the resulting course assets.
+
+The importer uses the [n64decomp/mk64 project](https://github.com/n64decomp/mk64/tree/58cfcb022e10f83bc3b889d7e97508cae6837098), revision `58cfcb022e10f83bc3b889d7e97508cae6837098`, for course layouts, display-list and compression formats, collision, animation, path and audio behavior. Its contributors' work made the conversion possible. References include `libmio0`, `n64graphics`, the course/rendering code and the native audio sequencer. The motion helper adapts original path/spline routines; the contact helper uses selected translated Road Rash routines with N64Recomp support. No endorsement is implied, and these credits do not relicense original game code.
+
+Course music and sound effects are rendered locally from the ROM's original sequences and instrument samples by the project's Python converter. It uses NumPy for sample processing; a separate MIDI converter or downloaded soundtrack is not required. The result approximates the original audio processing and is not a bit-exact N64 recording. The Linux player's FFmpeg custom-soundtrack decoder is a separate component, credited below.
+
+| Importer component | Authors and contributors | Use |
+|---|---|---|
+| [Python](https://www.python.org/) | Guido van Rossum, Python Software Foundation and Python contributors | Portable conversion runtime |
+| [NumPy](https://numpy.org/) | NumPy developers and contributors | Sample processing and numerical operations |
+| [OpenBLAS](https://github.com/OpenMathLib/OpenBLAS), LAPACK and GCC runtime | OpenBLAS contributors, LAPACK authors and Free Software Foundation contributors | Libraries included in the NumPy wheels; the Linux wheel also includes libquadmath |
+| [PyInstaller](https://pyinstaller.org/) | PyInstaller development team and contributors | Freezing the converter and its bootloader |
+| [OpenSSL](https://openssl-library.org/) | OpenSSL Project authors and contributors | Python's bundled cryptography/TLS libraries |
+| [libffi](https://github.com/libffi/libffi) | Anthony Green, Red Hat and contributors | Python's foreign-function support |
+| [FFmpeg](https://ffmpeg.org/) | FFmpeg developers and contributors | Linux custom-soundtrack decoding; not part of MK64 course conversion |
+
+Full importer runtime notices are in `tools/mk64-importer/licenses` in the Windows package and `usr/bin/tools/mk64-importer/licenses` inside the Linux AppImage, with supplemental notices in `licenses/mk64-importer`. The Linux runtime also credits the zlib and XZ Utils authors. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for versions and terms, and `scripts/MK64-IMPORTER-NOTICES.md` in the source package for build details. Original game developers, mod creators, upstream researchers and tool authors retain credit for their respective work.

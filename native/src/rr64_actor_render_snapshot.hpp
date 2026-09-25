@@ -16,6 +16,10 @@ constexpr std::size_t maximum_actors = maximum_pairs * 2u;
 constexpr std::size_t maximum_poses = engine::actor_scene::maximum_model_records;
 constexpr std::size_t pose_words = 8u;
 
+// Recording retains local child animation, not a drawable camera-space root.
+// Live consumption always repeats the normal camera-range certificate.
+enum class PreparationPurpose { LiveDraw, HighlightRecording };
+
 struct Pose {
     std::uint32_t record = 0;
     std::uint32_t source_record = 0;
@@ -46,7 +50,8 @@ struct RootRenderPlan {
 };
 
 bool capture_root_render_plan(unsigned char *rdram, std::uint32_t node, std::uint32_t viewport,
-                              RootRenderPlan &plan) noexcept;
+                              RootRenderPlan &plan,
+                              PreparationPurpose purpose = PreparationPurpose::LiveDraw) noexcept;
 bool root_render_bank_ready(unsigned char *rdram, const RootRenderPlan &plan,
                             std::uint32_t viewport, std::uint32_t slot) noexcept;
 bool rider_in_stock_view(unsigned char *rdram, std::uint32_t entity) noexcept;
@@ -84,6 +89,8 @@ struct PairSnapshot {
     // two exact certificates saved for each actor.
     std::uint32_t buffer_slot = 0;
     bool valid = false;
+    bool drawable = true;
+    PreparationPurpose purpose = PreparationPurpose::LiveDraw;
 };
 
 // The runtime checks these before executing any original helper on its private
@@ -127,13 +134,15 @@ class SnapshotStore {
     bool forget_allocation(unsigned char *rdram, std::uint32_t node) noexcept;
 
     bool can_prepare(unsigned char *rdram, std::uint32_t bike_node, std::uint32_t rider_node,
-                     std::uint32_t viewport, std::uint32_t buffer_slot) const noexcept;
+                     std::uint32_t viewport, std::uint32_t buffer_slot,
+                     PreparationPurpose purpose = PreparationPurpose::LiveDraw) const noexcept;
 
     // live and prepared must be distinct mappings. This operation is read-only
     // for BOTH mappings; it deep-copies every pose into renderer-owned storage.
     bool publish(unsigned char *live, unsigned char *prepared, std::uint32_t bike_node,
                  std::uint32_t rider_node, std::uint32_t viewport,
-                 std::uint32_t buffer_slot) noexcept;
+                 std::uint32_t buffer_slot,
+                 PreparationPurpose purpose = PreparationPurpose::LiveDraw) noexcept;
 
     bool seed_previous_rider_children(unsigned char *live, unsigned char *prepared,
                                       std::uint32_t rider_node, std::uint32_t viewport,
@@ -169,7 +178,8 @@ class SnapshotStore {
     const Allocation *allocation(unsigned char *rdram, std::uint32_t node) const noexcept;
     bool capture_actor(unsigned char *live, unsigned char *poses, std::uint32_t node,
                        std::uint32_t viewport, std::uint32_t slot, bool require_prepared,
-                       ActorSnapshot &output) const noexcept;
+                       ActorSnapshot &output,
+                       PreparationPurpose purpose = PreparationPurpose::LiveDraw) const noexcept;
     bool isolated_pose_ranges(const PairSnapshot &pair) const noexcept;
 
     unsigned char *rdram_ = nullptr;

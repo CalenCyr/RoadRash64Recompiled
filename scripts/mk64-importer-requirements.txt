@@ -1,0 +1,3 @@
+# Build-time dependencies; the frozen importer contains its own runtime.
+numpy==2.3.5
+PyInstaller==6.22.3

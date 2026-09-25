@@ -53,6 +53,26 @@ namespace RT64::RR64FramePacing {
             (softwarePacing || (stablePresentation && vsync)));
     }
 
+    constexpr bool useSoftwarePacing(bool stablePresentation, bool d3d12,
+        bool vulkan, bool vsync, uint32_t targetRate, uint32_t displayRate,
+        uint32_t originalRate, bool hasPreviousPresent)
+    {
+        // Preserve the legacy comparison path and D3D12's existing pacing.
+        // FIFO owns Vulkan's cadence when the cap reaches the display rate.
+        // A lower cap (or unknown refresh) still needs a software deadline.
+        if (d3d12 && vsync) return false;
+        if (stablePresentation && vulkan && vsync && displayRate > 0 &&
+            targetRate >= displayRate) return false;
+        return targetRate > 0 &&
+            (stablePresentation || (hasPreviousPresent && targetRate > originalRate));
+    }
+
+    constexpr bool waitBeforeSoftwarePacing(bool stablePresentation, bool vulkan) {
+        // Queue throttling consumes the current frame's budget; it must not
+        // be stacked after the software deadline once the image is ready.
+        return stablePresentation && vulkan;
+    }
+
     enum class InterpolationTargetSelection : uint32_t {
         Unavailable = 0,
         StockFlag = 1,
@@ -157,9 +177,10 @@ namespace RT64::RR64FramePacing {
     // The old presenter derived every wait from whichever frame happened to
     // reach Present last. When its source-rate guess changed, pacing toggled
     // on and off and a missed interval could be followed by an uneven catch-up
-    // interval. This coordinator owns one absolute deadline stream. A late
-    // frame is rebased immediately, so timing debt is discarded instead of
-    // accumulating or being replayed as a burst.
+    // interval. This coordinator owns one absolute deadline stream. Preserve
+    // that phase through tiny wake/submission errors rather than adding each
+    // error to every future interval. A real stall still discards timing debt;
+    // a phase correction can shorten an interval by at most 1% (and 250 us).
     class StableDeadlinePacer {
     public:
         constexpr void reset() {
@@ -188,25 +209,37 @@ namespace RT64::RR64FramePacing {
 
             const int64_t plannedDeadline =
                 deadlineNanoseconds + periodNanoseconds;
-            if (nowNanoseconds >= plannedDeadline) {
+            if (nowNanoseconds - plannedDeadline > phaseCorrectionTolerance()) {
                 deadlineNanoseconds = nowNanoseconds;
                 return { deadlineNanoseconds, true };
             }
 
+            // A slightly expired deadline is intentional: the caller proceeds
+            // immediately, then the next frame resumes the original phase.
             deadlineNanoseconds = plannedDeadline;
             return { deadlineNanoseconds, false };
         }
 
         // schedule() cannot see a late timer wake or work between the wait and
-        // submission. Anchor the next deadline to that actual submission if it
-        // missed this deadline; otherwise the next frame can burst to catch up.
+        // submission. Apply the same small-error bound here; rebasing on every
+        // positive nanosecond would turn this back into a drifting relative
+        // timer. Larger delays get a full interval before the next submission.
         constexpr void recordPresent(int64_t actualNanoseconds) {
-            if (initialized && actualNanoseconds > deadlineNanoseconds) {
+            if (initialized &&
+                actualNanoseconds - deadlineNanoseconds > phaseCorrectionTolerance()) {
                 deadlineNanoseconds = actualNanoseconds;
             }
         }
 
     private:
+        constexpr int64_t phaseCorrectionTolerance() const {
+            // This is a host scheduling allowance, not a new game/frame rate.
+            // At 60 Hz at most 166.7 us can be recovered on the next interval;
+            // lower rates never accumulate a correction beyond 250 us.
+            return std::min<int64_t>(250'000,
+                (1'000'000'000LL / static_cast<int64_t>(scheduledRate)) / 100);
+        }
+
         bool initialized = false;
         uint32_t scheduledRate = 0;
         int64_t deadlineNanoseconds = 0;
