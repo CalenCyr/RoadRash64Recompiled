@@ -1,8 +1,8 @@
-# Road Rash 64 Recompiled 1.4.0 — Experimental Linux download
+# Road Rash 64 Recompiled 1.4.1 — Experimental Linux download
 
 This native Linux package builds on CalenCyr's contribution and the current
-1.4.0 source. Select your own supported Road Rash 64 USA v1.0 ROM at startup.
-The optional texture mod is included in the ZIP, and the AppImage contains a
+1.4.1 source. Select your own supported Road Rash 64 USA v1.0 ROM at startup.
+The optional texture mod is a separate release download. The AppImage contains a
 native MK64 importer with its own Python/NumPy runtime. Importing requires your
 own supported Mario Kart 64 USA ROM. Neither ROM nor generated course data is
 distributed. The existing achievement badges and branded launcher art remain.

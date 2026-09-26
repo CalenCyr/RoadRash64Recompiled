@@ -1,8 +1,8 @@
-# Road Rash 64 Recompiled — 1.4.0
+# Road Rash 64 Recompiled — 1.4.1
 
 An unofficial PC recompilation for Windows and experimental native Linux of **Road Rash 64**, built with N64Recomp, N64ModernRuntime, RT64, and RecompFrontend.
 
-**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** This is **1.4.0**, prepared for release. Online multiplayer remains experimental.
+**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** This is **1.4.1**, Hotfix. Online multiplayer remains experimental.
 
 ## Why this exists, credits, and AI disclosure
 
@@ -14,7 +14,7 @@ I do not want to take credit for creating Road Rash 64, the recompilation techno
 
 ## Getting started
 
-1. Use **RoadRash64Recompiled-v1.4.0-Win64.zip** from the 1.4.0 release. Players do not need the source-code download or a compiler.
+1. Use **RoadRash64Recompiled-v1.4.1-Win64.zip** from the 1.4.1 release. Players do not need the source-code download or a compiler.
 2. Extract the entire ZIP to a writable folder. Do not run it inside the archive.
 3. Open **RoadRash64Recompiled.exe**. Choose **Select Game ROM** and select your supported `.z64`, `.n64`, or `.v64` dump.
 4. After validation, choose **Start Game**. Use **Settings** to configure your controller, graphics, and sound.
@@ -29,7 +29,7 @@ Supported normalized ROM SHA-1: `87727a298f583ec8325f5655088ff21e37b335b2` (USA 
 
 N64Recomp translates the game's machine-code routines into native code during the **developer build**. The distributed executable already contains that translated code. At play time, the runtime reads game content from the player's ROM. Selecting a ROM does **not** compile the whole game on the player's computer.
 
-This is the same broad static-recompilation/user-ROM architecture described by [Zelda 64: Recompiled](https://github.com/Zelda64Recomp/Zelda64Recomp#plug-and-play). It is not an endorsement from that project, a claim of identical implementation, or a legal conclusion. Gameplay content and soundtrack data remain ROM-supplied; launcher and achievement imagery are included and credited separately.
+This is the same broad static-recompilation/user-ROM architecture described by [Zelda 64: Recompiled](https://github.com/Zelda64Recomp/Zelda64Recomp#plug-and-play). It is not an endorsement from that project, a claim of identical implementation, or a legal conclusion. Gameplay content and soundtrack data remain ROM-supplied. The existing achievement images and custom launcher artwork are retained unchanged.
 
 ## Features
 
@@ -41,12 +41,12 @@ This is the same broad static-recompilation/user-ROM architecture described by [
 - **Persistent saves** through the virtual Controller Pak implementation and saved frontend settings.
 - **Optional custom music rotation** from the `music` folder. WAV, OGG, FLAC, MP3, MP4/M4A, AAC, and WMA are all supported on both Windows (via Windows Media Foundation) and Linux (via a bundled shared FFmpeg subset). No additional music is included and there is no song-title popout.
 - **52 local achievements**, saved on this computer, with paged browsing. There is no RetroAchievements account login, account scoring, or unlock synchronization.
-- **Mod/texture-pack support** through Settings. The Windows package includes an optional conversion of Crisaty’s Remastered Edition pack; see its credits and installation instructions below.
+- **Mod/texture-pack support** through Settings. The release provides a separate optional download of Crisaty’s Remastered Edition pack; see its credits and installation instructions below.
 - A compact launcher, direct-start executable, and input guards intended to stop overlay dismissal from activating a menu behind it.
 
 Draw Distance adjusts terrain and scenery range together. MAX LOD controls rider/bike detail separately. The Music Volume slider covers original and custom music. Local player controls support controller assignment and per-player names. Existing mods targeting the internal 1.0.6 interface remain compatible.
 
-This 1.4.0 release supplies Windows x64, an experimental Linux x86-64 AppImage, and corresponding source. Both downloads include the optional texture mod and a native MK64 importer. Linux gameplay and hardware coverage remain limited; offline build and import checks do not replace community testing.
+This 1.4.1 release supplies Windows x64, an experimental Linux x86-64 AppImage, and corresponding source. Both platform downloads include a native MK64 importer. The optional texture mod is a separate release download. Linux gameplay and hardware coverage remain limited; offline build and import checks do not replace community testing.
 
 ## Requirements
 
@@ -84,11 +84,11 @@ Code contributions are welcome as focused pull requests. Explain the problem, im
 
 ## Optional texture conversion
 
-Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. The Windows package includes the same optional **RT64 conversion of that original Jabo texture pack** previously supplied with 1.3.1. All credit for the original mod and artwork belongs to its creator; the recompilation project does not claim authorship of those textures or endorsement by the creator.
+Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. The separate optional download provides the same **RT64 conversion of that original Jabo texture pack** previously supplied with 1.3.1. All credit for the original mod and artwork belongs to its creator; the recompilation project does not claim authorship of those textures or endorsement by the creator.
 
 [Original creator and project page](https://crisaty.tumblr.com/post/113116999840/road-rash-64-remastered-edition)
 
-The optional RTZ is in `optional-mods`. Install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.
+Download **RoadRash64Recompiled-Optional-Texture-Mod.zip** separately and extract its RTZ. Install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.
 
 See [current local race options and controls](docs/LOCAL_RACE_OPTIONS_RELEASE.md). Release 1.4 retains these options and adds them to single-player Thrash. See [release notes](RELEASE_NOTES.md).
 
@@ -104,7 +104,7 @@ Contributor navigation: [source layout](docs/SOURCE_READABILITY.md) and [traffic
 - **Crash highlights:** end-of-race clips include major crashes from human and
   AI riders, with replay cameras and slow motion. Press A to continue; online control
   remains with the host.
-- **Offline Cheats tab:** rider health, bike durability, bike availability and
+- **Offline Cheats tab:** rider health, bike durability, freezing opponents, bike availability and
   starting weapon options. These are disabled online and suppress local
   achievement unlocks while active.
 - **Race options and fixes:** single-player Thrash options, remembered character
@@ -135,3 +135,7 @@ multiplayer. **50–60% is the recommended starting point** for balanced perform
 
 See [release notes](RELEASE_NOTES.md) and the
 [contributor feature map](docs/RELEASE_CANDIDATE_EDITING_GUIDE.md).
+
+## 1.4.1 Hotfix
+
+See [release notes](RELEASE_NOTES.md) for profile names, keyboard multiplayer entry, ultrawide framing, imported-course standings and completed Big Game saves. Online peers must all use 1.4.1 (protocol 58).

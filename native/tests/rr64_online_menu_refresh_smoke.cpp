@@ -26,6 +26,9 @@ bool shown = false;
 unsigned text_writes = 0, status_reads = 0, shutdowns = 0;
 unsigned resets = 0, queued_entries = 0, focus_passes = 0, rumble_stops = 0;
 bool single_player = true, all_ready = false;
+struct Player { int controller = 0; bool keyboard_enabled = false; };
+std::array<Player, 4> players{{{1, false}, {}, {}, {}}};
+constexpr int saved_solo_keyboard = 37;
 }
 
 namespace recompui {
@@ -76,16 +79,49 @@ void drain_visible() {
 }
 
 namespace recompinput {
+constexpr int max_num_players_supported = 4;
+enum class InputDevice { Controller, Keyboard };
 void suspend_all_rumble() { ++fixture::rumble_stops; }
 namespace players {
 void set_single_player_mode(bool value) { fixture::single_player = value; }
+bool is_single_player_mode() { return fixture::single_player; }
+fixture::Player get_player(int index) { return fixture::players.at(index); }
+bool get_player_is_assigned(int index) {
+    return index >= 0 && index < 4 &&
+        (fixture::players[index].controller || fixture::players[index].keyboard_enabled);
 }
+std::size_t get_number_of_assigned_players() {
+    std::size_t count = 0;
+    for (int index = 0; index < 4; ++index)
+        count += get_player_is_assigned(index);
+    return count;
+}
+}
+namespace profiles {
+int get_game_input_profile_for_player(int, InputDevice);
+int get_input_profile_for_player(int slot, InputDevice device) {
+    if (device == InputDevice::Controller && fixture::players[slot].controller)
+        return 100 + slot;
+    if (device == InputDevice::Keyboard && fixture::players[slot].keyboard_enabled)
+        return 200 + slot;
+    return -1;
+}
+int get_sp_keyboard_profile_index() { return fixture::saved_solo_keyboard; }
+int get_sp_controller_profile_index() { return 38; }
+}
+#include "rr64_local_profile_query_fixture.inc"
+}
+namespace ultramodern::input {
+enum class Device { None, Controller };
+enum class Pak { None, RumblePak };
+struct connected_device_info_t { Device connected_device; Pak connected_pak; };
 }
 namespace rr64 {
 namespace local_players { std::atomic_bool active = false; }
 namespace race_pack { enum class Compatibility { Ready, Pending, Missing, Disabled, Different }; }
 namespace netplay {
 constexpr std::uint8_t kMaximumPlayers = 14;
+constexpr int kMaximumLocalControllers = 4;
 enum class Phase { Offline, Lobby, GameSetup, CharacterSelect, Race };
 struct PlayerInfo {
     bool connected = false, ready = false;
@@ -96,6 +132,7 @@ struct PlayerInfo {
 };
 struct Status {
     bool active = false, connected = false, is_host = false;
+    bool replicated_riders = false;
     Phase phase = Phase::Offline;
     std::uint8_t local_slot = 255;
     std::string message = "Offline";
@@ -138,10 +175,13 @@ void apply_pending_page() {
     if (g_ui.pending_page) { set_page(*g_ui.pending_page); g_ui.pending_page.reset(); }
 }
 void restore_page_focus_if_ready() { ++fixture::focus_passes; }
+bool controls_online_players() { return netplay::state.active && netplay::state.connected &&
+    netplay::state.phase >= netplay::Phase::GameSetup; }
 
 #include "rr64_online_menu_update_fixture.inc"
 }
 }
+#include "rr64_local_device_query_fixture.inc"
 
 int main() {
     using namespace rr64;
@@ -215,6 +255,60 @@ int main() {
     update_ui();
     require(!local_players::active && fixture::single_player && fixture::rumble_stops >= 2,
         "hidden local cleanup was skipped");
+
+    // Run the actual local-start branch through the actual device/profile
+    // callbacks. A fresh keyboard-only setup must remain controllable, while
+    // assigned local controllers must never be merged into shared input.
+    for (unsigned count : {0u, 1u, 2u, 4u}) {
+        fixture::players = {};
+        for (unsigned index = 0; index < count; ++index)
+            fixture::players[index].controller = static_cast<int>(index + 1);
+        const auto entries = fixture::queued_entries;
+        g_local_start_requested = true;
+        update_ui();
+        require(local_players::active && fixture::queued_entries == entries + 1,
+            "local entry did not retain local gameplay ownership or native transition");
+        unsigned connected_ports = 0;
+        for (int port = 0; port < 4; ++port) {
+            const auto info = get_connected_device_info(port);
+            connected_ports += info.connected_device == ultramodern::input::Device::Controller;
+        }
+        require(connected_ports == (count ? count : 1),
+            "local entry lost its only controller or duplicated shared input");
+        if (!count) {
+            require(recompinput::profiles::get_game_input_profile_for_player(0,
+                recompinput::InputDevice::Keyboard) == fixture::saved_solo_keyboard,
+                "keyboard-only entry discarded the saved solo keyboard mapping");
+            require(recompinput::profiles::get_game_input_profile_for_player(1,
+                recompinput::InputDevice::Keyboard) == -1,
+                "shared keyboard input leaked to another player port");
+            require(recompinput::players::get_number_of_assigned_players() == 0,
+                "fallback changed persistent player assignments");
+        } else {
+            require(!fixture::single_player, "assigned multiplayer entered shared mode");
+            for (unsigned port = 0; port < count; ++port)
+                require(recompinput::profiles::get_game_input_profile_for_player(port,
+                    recompinput::InputDevice::Controller) == 100 + static_cast<int>(port),
+                    "local entry lost an assigned controller's selected mapping");
+        }
+        g_reset_local_requested = true;
+        update_ui();
+        require(!local_players::active && fixture::single_player,
+            "local return failed to restore solo input ownership");
+    }
+
+    // Explicit keyboard profiles, including custom mappings, retain their own
+    // assignment path and must not be replaced with the solo fallback profile.
+    fixture::players = {};
+    fixture::players[0].keyboard_enabled = true;
+    g_local_start_requested = true;
+    update_ui();
+    require(!fixture::single_player &&
+        recompinput::profiles::get_game_input_profile_for_player(0,
+            recompinput::InputDevice::Keyboard) == 200,
+        "explicit keyboard assignment was replaced by fallback bindings");
+    g_reset_local_requested = true;
+    update_ui();
 
     // Reopening after a hidden session must paint the newly connected peer,
     // and disconnected/not-ready state still redirects the pending focus.

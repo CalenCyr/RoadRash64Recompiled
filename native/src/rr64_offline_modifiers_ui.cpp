@@ -14,7 +14,7 @@ struct Option {
     const char *label;
     const char *description;
 };
-constexpr std::array<Option, 4> options{{
+constexpr std::array<Option, 5> options{{
     {Flag::RiderHealth, "infinite_rider_health", "Infinite Rider Health",
      "Prevents rider stamina damage for local players. Physical crashes, ejects and busts still happen."},
     {Flag::BikeDurability, "indestructible_bikes", "Indestructible Bikes",
@@ -23,6 +23,8 @@ constexpr std::array<Option, 4> options{{
      "Shows all bikes in selection and the bike shop. Big Game purchases still cost money; permanent unlock flags are unchanged."},
     {Flag::AllWeapons, "all_weapons", "Start with All Weapons",
      "Gives local racers every weapon at maximum starting quantity. Also grants once when switched on during a race. Use and theft remain normal; cops keep their police equipment."},
+    {Flag::FreezeOpponents, "freeze_opponents", "Prevent Opponents from Moving",
+     "Holds computer-controlled racers in place while riding. Local players can still race; crashes and recovery continue normally. Switch off to let opponents race again."},
 }};
 bool initialized = false;
 int previous_online = -1;

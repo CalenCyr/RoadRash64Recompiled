@@ -1,4 +1,5 @@
 #pragma once
+#include "rr64_campaign_completion.hpp"
 #include "rr64_roaming_route.hpp"
 #include "rr64_race_end_trace.hpp"
 #include "rr64_custom_cop.hpp"
@@ -247,6 +248,8 @@ unsigned int rr64_write_button_prompt(unsigned char *rdram, unsigned int logical
                                       unsigned int destination, unsigned int capacity);
 void rr64_name_entry_navigation(unsigned char *rdram, unsigned int column_count,
                                 unsigned int maximum_row);
+void rr64_profile_name_new_campaign(unsigned char *rdram);
+void rr64_profile_name_thrash(unsigned char *rdram);
 void rr64_online_apply_display_names(unsigned char *rdram);
 void rr64_achievement_observe_frame(unsigned char *rdram);
 void rr64_achievement_game_event(unsigned char *rdram, unsigned int event_id, unsigned int value,

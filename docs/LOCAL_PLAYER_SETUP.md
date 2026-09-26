@@ -1,5 +1,13 @@
 # Local player setup candidate
 
+September 26 follow-up: a keyboard-only user without assigned player cards now
+retains the working shared port-one input when entering Local Multiplayer.
+This permits solo play against AI and preserves navigation/Back. Assigned
+controllers continue using independent ports. See
+`local-multiplayer-keyboard-entry.md` for diagnosis and verification limits.
+The older keyboard-toggle description below is historical; current builds
+select Mouse and Keyboard directly in each Controls card.
+
 Configure local players before entering Local Multiplayer through **Settings →
 Controls** in the launcher or in-game settings overlay. Each of the four cards
 has an **In-game name**, control-profile selector and profile editor. Names are

@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -8,6 +9,13 @@ inline float sourceAspect(bool combined, std::uint32_t width, std::uint32_t heig
     return combined || height == 0u ? 4.0f / 3.0f : float(width) / float(height);
 }
 inline constexpr float combinedTarget = 16.0f / 9.0f;
+
+inline float expandedAspect(float source, std::uint32_t width, std::uint32_t height) {
+    // The frontend's ultrawide option follows the output window. Fixed 16:9
+    // uses Manual mode separately; clamping Expand here makes both identical.
+    if (width == 0u || height == 0u) return source;
+    return std::max(source, float(width) / float(height));
+}
 
 inline bool adjustPairAspect(bool liveRace, bool ownedMenu, float scissorWidth,
     float scissorHeight, float physicalAspect, std::uint32_t framebufferWidth,

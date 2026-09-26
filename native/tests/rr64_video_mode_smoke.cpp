@@ -63,6 +63,17 @@ int main() {
         check(std::abs((320.0f*scale/240.0f)-target)<0.00001f,"VI television viewport presents at 16:9");
     }
     check(RT64::RR64Video::sourceAspect(false,512u,240u)==512.0f/240.0f,"legacy renderer aspect is unchanged");
+    // Exercise the renderer's actual Expand target calculation. 3440x1440 is
+    // slightly wider than nominal 21:9, so testing only 16:9 hides a clamp.
+    for (const auto size : {std::array<unsigned,2>{3440,1440}, {2560,1080}, {5120,1440}, {1920,1080}}) {
+        const float aspect=RT64::RR64Video::expandedAspect(4.f/3.f,size[0],size[1]);
+        check(std::abs(aspect*float(size[1])-float(size[0]))<.001f,
+            "ultrawide target fills the real output width without a 16:9 cap");
+    }
+    for (const auto size : {std::array<unsigned,2>{0,1440}, {3440,0}, {0,0}, {800,1200}}) {
+        check(RT64::RR64Video::expandedAspect(4.f/3.f,size[0],size[1])==4.f/3.f,
+            "minimized and narrow outputs retain the source aspect");
+    }
     for (unsigned width : {320u, 512u, 640u}) {
         check(RT64::RR64Video::adjustPairAspect(false, true, float(width), 240, 4.f/3.f,
             width, width, 240), "native menu output uses VI pixel dimensions at every resolution");
@@ -110,6 +121,13 @@ int main() {
     check(rr64::world::WorldFrustum(identity,identity).intersects(low,high,model),"21:9 admits additional side geometry");
     model[12]=1.9f;
     check(!rr64::world::WorldFrustum(identity,identity).intersects(low,high,model),"21:9 still rejects beyond its side boundary");
+    rr64::view_width.store(RT64::RR64Video::expandedAspect(4.f/3.f,3440,1440)/(4.f/3.f));
+    model[12]=1.77f;
+    check(rr64::world::WorldFrustum(identity,identity).intersects(low,high,model),
+        "3440x1440 side geometry follows the actual window rather than nominal 21:9");
+    model[12]=1.81f;
+    check(!rr64::world::WorldFrustum(identity,identity).intersects(low,high,model),
+        "3440x1440 retains bounded side culling");
     rr64::view_width.store(4.0/3.0);
     std::puts(passed?"[RR64-VIDEO] PASS":"[RR64-VIDEO] FAIL");return passed?0:1;
 }

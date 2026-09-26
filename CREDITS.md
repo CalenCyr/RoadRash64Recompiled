@@ -22,7 +22,7 @@ This project exists because of the original Road Rash 64 development team and th
 | Lato / LatoLatin | Łukasz Dziedzic and font contributors | Frontend text, SIL OFL 1.1 |
 | Noto Emoji | Noto font contributors | Emoji fallback, SIL OFL 1.1 |
 | [RetroAchievements Road Rash 64 Base Set](https://retroachievements.org/) | Set and badge contributors | Local achievement names, descriptions and badge imagery; no account integration |
-| [Road Rash 64 Remastered Edition](https://crisaty.tumblr.com/post/113116999840/road-rash-64-remastered-edition) | Crisaty (Cristian A.T.) | Original mod and texture artwork; optional RT64 conversion included in the Windows package |
+| [Road Rash 64 Remastered Edition](https://crisaty.tumblr.com/post/113116999840/road-rash-64-remastered-edition) | Crisaty (Cristian A.T.) | Original mod and texture artwork; optional RT64 conversion provided as a separate optional release download |
 
 Additional dependency credit belongs to the authors of Dear ImGui, ImPlot, im3d, hlsl++, ddspp, re-spirv, SPIRV-Cross, SPIRV-Headers, Vulkan-Headers, VulkanMemoryAllocator, D3D12MemoryAllocator, volk, nativefiledialog-extended, stb, miniz, zstd, xxHash, fmt, o1heap, Rabbitizer, ELFIO, toml++, SLJIT, concurrentqueue, and other bundled dependency components. Consult their preserved notices and pinned sources for individual names and exact terms. This list does not replace those notices.
 
@@ -34,11 +34,11 @@ Please report omissions or incorrect credit so the record can be corrected. No c
 
 ## Included optional texture conversion
 
-Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. This package includes an **RT64 conversion of that original Jabo texture pack** for Road Rash 64 Recompiled. All credit for the original mod and artwork belongs to its creator; the recompilation project does not claim authorship of those textures or endorsement by the creator.
+Road Rash 64 Remastered Edition was created by **Crisaty (Cristian A.T.)**. The separate optional download includes an **RT64 conversion of that original Jabo texture pack** for Road Rash 64 Recompiled. All credit for the original mod and artwork belongs to its creator; the recompilation project does not claim authorship of those textures or endorsement by the creator.
 
 [Original creator and project page](https://crisaty.tumblr.com/post/113116999840/road-rash-64-remastered-edition)
 
-The optional RTZ is in `optional-mods`. Install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.
+The optional RTZ is in the separate **RoadRash64Recompiled-Optional-Texture-Mod.zip** release download. Install it through Settings > Mods. Replace an older copy rather than installing duplicates. The source ZIP does not include the texture pack. Attribution is not a redistribution license; no explicit redistribution license was found in the supplied pack or linked creator page.
 
 ## Native Linux contribution
 

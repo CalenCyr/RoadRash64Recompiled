@@ -164,6 +164,12 @@ inline constexpr std::uint32_t controller_stick_y = 0x8009CDA4u;
 // The Big Game name-entry keyboard stores its free-moving cursor in cell-space
 // coordinates. The native navigation shim snaps that cursor to one letter at a
 // time while this specific screen is active.
+// 8009EF9C is the keyboard's letter grid, not a player-name buffer.
+// 7280C initializes eleven editable name characters and a terminator in the
+// campaign record. 2B7A8 edits that record using a separate character cursor.
+inline constexpr std::uint32_t campaign_name = 0x800D6A48u;
+inline constexpr std::uint32_t campaign_name_capacity = 12u;
+inline constexpr std::uint32_t name_entry_character = 0x800A668Cu;
 inline constexpr std::uint32_t name_entry_cell_width = 0x8009F03Cu;
 inline constexpr std::uint32_t name_entry_cell_height = 0x8009F040u;
 inline constexpr std::uint32_t name_entry_cursor_x = 0x8009F04Cu;

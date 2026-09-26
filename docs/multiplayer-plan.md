@@ -4,7 +4,7 @@ Online remains experimental. Preserve original local multiplayer behavior unless
 a change explicitly requires altering it. The active implementation is the
 host-authoritative runtime in native/src/rr64_netplay.cpp and the authoritative
 step/prediction helpers. Earlier relay/lobby prototypes are not foundations for
-new work. Match the protocol constants in source; 1.4.0 uses protocol 57.
+new work. Match the protocol constants in source; 1.4.1 uses protocol 58.
 
 - The host owns shared game settings, race state and pause. Each participant
   selects their own rider/bike and uses their own full-screen presentation.

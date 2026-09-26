@@ -22,6 +22,10 @@ see [Traffic and presentation editing](TRAFFIC_AND_PRESENTATION_EDITING.md).
 | Video | `rr64_video_mode.cpp`, view/frustum headers | Separate camera projection, HUD policy and original framebuffer restrictions. |
 | Audio and music | `rr64_audio_output.cpp`, `rr64_music.cpp` | Queue lifetime, original fades and the shared music-volume setting. |
 | Achievements | `rr64_achievements.cpp`, achievement helpers | Local save identity and bounded UI work. |
+| Player profile names | `rr64_profile_names.cpp` | New-profile/solo boundaries; never overwrite loaded saves. |
+| Campaign completion | `rr64_campaign_completion.cpp` | Native ending rewards, profile checksum and explicit save confirmation. |
+| Offline cheats | `rr64_offline_modifiers.cpp` | Exclude humans, online, prediction, attract and highlight playback. |
+| Imported-course progress | `rr64_experimental_course_route.cpp` | Signed movement and eligible human/AI authority; stock roads remain native. |
 | Local race additions | `docs/CUSTOM_COP_EDITING_GUIDE.md` | Player counts, local-only gates and existing control IDs. |
 | Online play | `rr64_netplay.cpp`, `rr64_online_menu.cpp` | Follow `docs/multiplayer-plan.md`; transport remains experimental. |
 

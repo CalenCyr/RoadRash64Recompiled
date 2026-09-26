@@ -298,6 +298,7 @@ add_executable(RoadRash64Recompiled
     src/rr64_custom_cop_runtime.cpp
     src/rr64_local_race_options.cpp
     src/rr64_thrash_options.cpp
+    src/rr64_campaign_completion.cpp
     src/rr64_character_preferences.cpp
     src/rr64_character_menu.cpp
     src/rr64_race_end_trace.cpp
@@ -311,6 +312,7 @@ add_executable(RoadRash64Recompiled
     src/rr64_input_prompts.cpp
     src/rr64_menu_navigation.cpp
     src/rr64_name_entry.cpp
+    src/rr64_profile_names.cpp
     src/rr64_terrain_residency.cpp
     src/rr64_terrain_snapshot.cpp
     src/rr64_netplay.cpp
@@ -465,9 +467,13 @@ set_property(TARGET RoadRash64Recompiled PROPERTY VS_DEBUGGER_WORKING_DIRECTORY 
 add_executable(RR64NetplaySmoke EXCLUDE_FROM_ALL
     tests/rr64_netplay_smoke.cpp
     src/rr64_netplay.cpp
+    src/rr64_highlight_network.cpp
+    src/rr64_highlight_recording.cpp
 )
+target_link_libraries(RR64NetplaySmoke PRIVATE libzstd_static)
 target_include_directories(RR64NetplaySmoke PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/rt64/src/contrib/zstd/lib"
     "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
     "${N64MODERN_RUNTIME_ROOT}/ultramodern/include"
     "${N64MODERN_RUNTIME_ROOT}/librecomp/include"
@@ -841,6 +847,14 @@ if(RR64_TEST_POWERSHELL)
     endfunction()
     rr64_generated_world_test(RR64CombatCreditSmoke generate_combat_credit_fixture.ps1
         rr64_combat_credit_smoke.cpp)
+    rr64_generated_world_test(RR64ProfileNamesSmoke generate_profile_names_fixture.ps1
+        rr64_profile_names_smoke.cpp src/rr64_profile_names.cpp src/rr64_name_entry.cpp)
+    rr64_generated_world_test(RR64CampaignBikeSmoke generate_campaign_bike_fixture.ps1
+        rr64_campaign_bike_smoke.cpp src/rr64_campaign_completion.cpp
+        src/rr64_local_race_options.cpp src/rr64_thrash_options.cpp
+        src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp
+        src/rr64_character_menu.cpp src/rr64_character_preferences.cpp)
+    target_compile_features(RR64CampaignBikeSmoke PRIVATE cxx_std_20)
     set(RR64_ACHIEVEMENT_FIXTURE "${CMAKE_CURRENT_BINARY_DIR}/generated/achievements/rr64_achievement_flush.hpp")
     add_custom_command(OUTPUT "${RR64_ACHIEVEMENT_FIXTURE}"
         COMMAND "${RR64_TEST_POWERSHELL}" -NoProfile -File
@@ -894,6 +908,19 @@ add_executable(RR64EngineContractSmoke EXCLUDE_FROM_ALL
     src/rr64_terrain_snapshot.cpp
 )
 target_include_directories(RR64EngineContractSmoke PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
+    "${N64MODERN_RUNTIME_ROOT}/ultramodern/include"
+    "${N64MODERN_RUNTIME_ROOT}/librecomp/include"
+    "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon"
+)
+
+# ROM-free checks for opponent ownership and offline-only freeze boundaries.
+add_executable(RR64OfflineOpponentsSmoke EXCLUDE_FROM_ALL
+    tests/rr64_offline_opponents_smoke.cpp
+    src/rr64_offline_modifiers.cpp
+)
+target_include_directories(RR64OfflineOpponentsSmoke PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
     "${N64MODERN_RUNTIME_ROOT}/ultramodern/include"

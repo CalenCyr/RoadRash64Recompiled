@@ -57,7 +57,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr std::uint32_t kProtocolMagic = 0x52523634u; // RR64
-constexpr std::uint16_t kProtocolVersion = 57; // Item roulette now includes native attack multipliers.
+constexpr std::uint16_t kProtocolVersion = 58; // Imported AI now shares signed crash/recovery progress rules.
 constexpr std::size_t kPlayerNameCapacity = 24;
 constexpr auto kHelloInterval = std::chrono::milliseconds(500);
 constexpr auto kStateInterval = std::chrono::milliseconds(25);

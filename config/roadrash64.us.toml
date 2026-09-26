@@ -292,7 +292,9 @@ hook = [
     { func = "func_8006AFFC", before_vram = 0x8006B0A4, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_hazards_step(rdram);\n#endif\n" },
     { func = "func_8006AFFC", before_vram = 0x8006B678, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_step(rdram,ctx);\n#endif\nrr64_authority_step_finish(rdram); rr64_online_combat_drain(rdram,ctx); rr64_online_sync_before_pose(rdram);\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_audio_step(rdram);\n#endif\n" },
     { func = "func_80040664", text = "if (rr64_authority_translate(rdram,ctx)) return;" },
-    { func = "func_8006AFFC", before_vram = 0x8006B1C8, text = "rr64_authority_actor_route(ctx,0);" },
+    # Keep online routing first; the freeze query rejects every online/replay
+    # session and only substitutes the sound-only callback for offline AI.
+    { func = "func_8006AFFC", before_vram = 0x8006B1C8, text = "rr64_authority_actor_route(ctx,0); if (rr64_offline_modifiers_freeze_actor(rdram, ctx->r16)) ctx->r3 = (int32_t)0x8005264C;" },
     { func = "func_8006AFFC", before_vram = 0x8006B1D4, text = "rr64_authority_actor_route(ctx,1);" },
     { func = "func_8006AFFC", before_vram = 0x8006B224, text = "rr64_authority_actor_route(ctx,2);" },
     { func = "func_8006AFFC", before_vram = 0x8006B43C, text = "rr64_online_traffic_prepare(rdram);" },
@@ -431,6 +433,11 @@ hook = [
     # Failed stock AI reacquisition may leave a recovered rider facing backwards.
     # Supply only a navigation segment; original projection still owns the route.
     { func = "func_8005A9DC", before_vram = 0x8005ABC0, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_ai_reacquire(rdram,ctx);\n#endif\n" },
+    # Pair the shared offline freeze callback above with the physics guard.
+    # This takes the loop's inactive branch for paired bike/rider
+    # physics, preserving its delay-slot pointer increments. No actor flag is
+    # changed and crashes/recovery/results/highlights keep their native paths.
+    { func = "func_8006AFFC", before_vram = 0x8006B2F4, text = "if (rr64_offline_modifiers_freeze_actor(rdram, ctx->r16)) ctx->r2 = 0;" },
     { func = "func_8003F4D4", before_vram = 0x8003F588, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_walls_end(rdram,ctx,0);\n#endif\n" },
     { func = "func_8003F4D4", before_vram = 0x8003F92C, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_walls_begin(rdram,ctx,2);\n#endif\n" },
     { func = "func_8003F4D4", before_vram = 0x8003F934, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_walls_end(rdram,ctx,2);\n#endif\n" },
@@ -450,6 +457,12 @@ hook = [
     # deliberate held-direction repeat. This keeps the original screen and
     # pixel-art A/B prompts intact while making quick taps reliable.
     { func = "func_8002B7A8", text = "rr64_name_entry_navigation(rdram, 8, 4);" },
+    # Seed only the new campaign name field, after its native reset. The
+    # keyboard grid, manual editing and loaded campaign names stay native.
+    { func = "func_8007280C", before_vram = 0x80072868, text = "rr64_profile_name_new_campaign(rdram);" },
+    # Solo Thrash does not use multiplayer's display-name table. Its own
+    # actor initializer copies a stock literal; replace that completed copy.
+    { func = "func_8006C414", before_vram = 0x8006C4E8, text = "if (rr64_thrash_options_active()) rr64_profile_name_thrash(rdram);" },
 
     # The stock menu footer draws its B and A faces from isolated two-byte
     # strings. Refresh only those glyphs from the active profile before layout
@@ -460,11 +473,17 @@ hook = [
     # Big Game promotion is committed in two authoritative guest paths: race
     # results (when the required bike is already owned), and the bike shop
     # (when the required races are already qualified). Hook immediately after
-    # the save call in each path so loading an existing profile cannot produce
+    # the tier-unlock call in each path so loading an existing profile cannot produce
     # a false unlock. Level-five completion has its own terminal branch.
     { func = "func_80073054", before_vram = 0x800733AC, text = "rr64_achievement_campaign_level_advanced(rdram, MEM_W(0x6A7C, S32(0x800D << 16)));" },
     { func = "func_8002CD60", before_vram = 0x8002DB6C, text = "rr64_achievement_campaign_level_advanced(rdram, MEM_W(0x6A7C, S32(0x800D << 16)));" },
     { func = "func_80073054", before_vram = 0x80073374, text = "rr64_achievement_campaign_completed(rdram);" },
+
+    # Preserve the original ending/reward/credits, then retain the completed
+    # profile at Save Game instead of discarding it on return to the main menu.
+    { func = "func_80022C90", before_vram = 0x80023810, text = "ctx->r4 = rr64_campaign_ending_exit(rdram, ctx->r4);" },
+    { func = "func_80073658", before_vram = 0x80073718, text = "rr64_campaign_finish_menu(rdram);" },
+    { func = "func_800207DC", before_vram = 0x80020AB4, text = "if (ctx->r18 == ctx->r17) rr64_campaign_restore_unlocks(rdram, (unsigned)ctx->r16);" },
 
     # func_80061224 is entered only after the stock bike/rider collision path
     # accepts an impact. Pulse every involved local port at that boundary so

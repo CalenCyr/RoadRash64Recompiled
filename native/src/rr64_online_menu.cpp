@@ -527,7 +527,13 @@ void update_ui() {
         complete_session_reset();
         netplay::configure({});
         recompinput::suspend_all_rumble();
-        recompinput::players::set_single_player_mode(false);
+        // Keyboard-only users can navigate the main menu without assigning a
+        // player card. Keep their shared port-one input for this local session;
+        // otherwise switching to empty assigned ports loses both Select and
+        // Back. The native multiplayer menu already supports one human vs AI.
+        // Do not create a persistent keyboard assignment or duplicate a pad.
+        recompinput::players::set_single_player_mode(
+            recompinput::players::get_number_of_assigned_players() == 0);
         local_players::active.store(true, std::memory_order_release);
         queue_original_multiplayer();
     }

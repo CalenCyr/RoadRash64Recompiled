@@ -1,4 +1,4 @@
-# Controller support — 1.4.0
+# Controller support — 1.4.1
 
 ## Set up your controller
 

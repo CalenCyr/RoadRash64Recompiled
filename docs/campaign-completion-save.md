@@ -1,0 +1,71 @@
+# Completed Big Game saves and Insanity selection
+
+Private September 26 follow-up. No game was launched for these changes.
+
+## Completion save
+
+The original `73054` terminal branch sends Level 5 completion to mode `38`.
+That mode runs `22C90`: the completion summary, difficulty reward and credits.
+Its final exit at `23810` previously requested main-menu mode `1`, leaving no
+opportunity to save the newly completed campaign.
+
+The exit now returns a genuinely completed profile to campaign-menu mode `2F`
+with Save Game highlighted. The original `73658` initializer remains intact:
+it selects track zero when all eight Level 5 tracks are qualified and leaves the
+campaign at valid level index four. It does not charge a race fee or alter the
+profile. The user still chooses a native save slot and confirms any overwrite.
+The original ending, credits, difficulty rewards and achievement hooks remain.
+
+When native Pak scanning accepts a completed saved profile, the new helper
+restores the same normal and special tier flags that the original ending grants.
+It also verifies the copied profile's version and checksum without changing the
+record. Completion follows the native rule: level index four and all eight final
+qualification nibbles nonzero. The native reward is Insanity for difficulty
+values one/two, Scooter for three/four, and the cop tier for zero. No new save
+format, sidecar unlock file, achievement dependency or automatic overwrite is
+introduced. After restarting, open/load the completed Big Game save through the
+native Load Game menu before using its earned tier in Thrash or local multiplayer.
+
+## Offline verification
+
+`RR64CampaignBikeSmoke` extracts the production generated native ending-exit,
+campaign initializer, accepted-save branch, unlock helper and solo selector.
+Its private-ROM test passed:
+
+- Ending exit reaches the native Save menu; profile bytes, money, stack and
+  return address stay intact. Later ordinary entries retain their original
+  behavior, and a completed record chooses a valid replay track.
+- Thirty saved rewards (six slots, five difficulty values) match the original
+  `5F420` unlock helper. Incomplete levels/tracks, invalid versions, corrupt
+  checksums and the native rejected-checksum branch do not grant rewards.
+- Ninety solo Insanity selections (fifteen map tiers, Custom Cop off/on, bike
+  sequence 25/26/25) preserve both preview/selection fields and the selected
+  model in the race-profile helper. The actual character-preference restore is
+  included. The two ROM preview mappings select distinct resources 66 and 67.
+
+The reported single Insanity variant was **not reproduced** by this fixture or
+the surrounding native-source audit. The selector is unchanged. These checks do
+not establish on-screen appearance, disk/Pak round-trip behavior or a full live
+campaign completion. Those remain gated on the user's fresh permission to test.
+Private output: `build/campaign-bike-smoke.log`.
+
+## Archived input diagnostic
+
+Candidate02 temporarily captured native selection input and model changes.
+That run is complete and the selection-only probe has been removed for 1.4.1.
+The shared optional race recorder and meaningful native fixture remain.
+
+## Candidate02 owner acceptance
+
+The September 26 11:09 test is complete. The owner confirms that both solo Thrash
+and local multiplayer Thrash allow changing Insanity bikes. Solo tracing records
+a two-entry list and matching selected/committed/preview models changing
+25 -> 26 -> 25 -> 26 -> 25. Its 220 records have contiguous sequence numbers and
+no loss/cap notice. Multiplayer acceptance comes from the owner's visual report;
+the recorder is intentionally scoped to solo Thrash.
+
+No selector gameplay change was applied, and the original failure was not
+reproduced. Keep the working implementation; no further selection-only run is
+required. Evidence is in root
+`analysis/race-rank-20260926/session-20260926-110922-325/`.
+This acceptance does not establish live campaign-save or race-ranking behavior.

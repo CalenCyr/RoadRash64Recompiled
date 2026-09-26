@@ -156,6 +156,8 @@ void fill(unsigned char* memory) {
         write_float(memory, state + 8, 0.25f);
         write_float(memory, state + 0xC, 123.5f + float(slot));
         write_float(memory, state + 0x20, 500.0f + float(slot));
+        write_u32(memory, state + 0x40, 13 - slot);
+        write_u32(memory, state + 0x44, 12 - (slot % 13));
         write_u16(memory, state + 0x48, 1);
         write_u16(memory, state + 0x4C, slot == 3);
         write_u16(memory, state + 0x4E, slot == 4);
@@ -193,6 +195,7 @@ int main(int argc, char** argv) {
     const bool diagnostics = argc == 2 && std::strcmp(argv[1], "--diagnostics") == 0;
     environment("RR64_RUNTIME_TRACE", !disabled && !diagnostics ? "1" : "0");
     environment("RR64_DIAGNOSTICS", diagnostics ? "1" : "0");
+    environment("RR64_COURSE_PHYSICS_TRACE", "0");
     std::vector<unsigned char> memory(engine::kRdramSize, 0);
     fill(memory.data());
     const auto original = memory;
@@ -220,6 +223,8 @@ int main(int argc, char** argv) {
     require(text.find("state=800D7801 state_valid=0") != std::string::npos, "unaligned state skipped");
     require(text.find("bike=FFFFFFFC bike_valid=0") != std::string::npos, "invalid bike skipped");
     require(text.find("eligible=1 busted=1 wrecked=0 finished=0 flag52=5") != std::string::npos, "terminal flags");
+    require(text.find("table_rank=10 race_place=9 eligible=1 busted=1") != std::string::npos,
+            "table order and eligible race place remain distinct");
     require(text.find("health=75 health_bits=42960000 max_health=100") != std::string::npos, "bike health");
     require(memory == original, "capture and drain never modify guest memory");
     race_end_trace::drain();

@@ -423,14 +423,30 @@ bool progress_owner(unsigned char* memory, unsigned state) {
     for (unsigned slot = 0; slot < kMaximumRacers; ++slot) {
         const unsigned actor = 0x800D8570 + slot * 0x118;
         if (word(memory, actor + 0xE8) != state) continue;
+        std::uint16_t ai = 1;
+        read_u16(memory, actor + 0x26, ai);
+        const unsigned controller = word(memory, actor + 8);
+        const bool native_ai = ai == 1 && controller == 0xFFFFFFFF &&
+            word(memory, actor + 0x20) != 7;
         // Authoritative simulation uses canonical actor slots, including human
         // riders beyond the four native controller slots. Replay uses its saved
         // rule view and its private RDRAM; there is no host-only lap cache.
-        if (status.active && status.authoritative)
-            return status.connected && (status.authority_humans & (1u << slot));
-        std::uint16_t ai = 1;
-        read_u16(memory, actor + 0x26, ai);
-        return ai == 0 && word(memory, actor + 8) < 4;
+        if (status.active && status.authoritative) {
+            if (!status.connected) return false;
+            if (status.authority_humans & (1u << slot)) return true;
+            // Only the live host advances AI. Guest replicas and private human
+            // prediction must not acquire ownership of their route state.
+            return native_ai && status.is_host && status.phase == rr64::netplay::Phase::Race &&
+                !rr64::prediction::active();
+        }
+        if (ai == 0 && controller < 4) return true;
+        // Imported AI can reacquire a curve behind its saved position after an
+        // ordinary road crash. The native forward-only accumulator interprets
+        // that as almost a full circuit, falsely ranking it ahead of humans.
+        // Use the same signed progress for locally simulated racers; stock
+        // courses, police, temporary route records and online replicas retain
+        // their existing paths.
+        return native_ai && !status.active && !rr64::prediction::active();
     }
     return false;
 }

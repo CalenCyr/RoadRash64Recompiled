@@ -20,7 +20,7 @@ std::uint64_t applied_bike_epoch = 1;
 unsigned char *live_memory = nullptr;
 std::array<std::uint64_t, engine::kMaximumRacers> granted{};
 constexpr unsigned actors = 0x800D8570u, actor_stride = 0x118u;
-constexpr unsigned known_flags = 15;
+constexpr unsigned known_flags = 31;
 
 bool offline() {
     // Reject the entire online session, including lobby, failed connect and
@@ -45,6 +45,46 @@ void grant_once(unsigned char *memory, unsigned actor) {
     const auto epoch = weapon_epoch.load(std::memory_order_acquire);
     if (granted[slot] != epoch && grant_max_weapons(memory, actor, true))
         granted[slot] = epoch;
+}
+
+unsigned actor_slot(unsigned actor) {
+    return actor >= actors && (actor - actors) % actor_stride == 0
+               ? (actor - actors) / actor_stride
+               : engine::kMaximumRacers;
+}
+
+bool mounted_opponent(unsigned char *memory, unsigned actor, unsigned &bike_address) {
+    using namespace engine;
+    const auto word = [memory](unsigned address) {
+        unsigned value = 0;
+        read_u32(memory, address, value);
+        return value;
+    };
+    const auto half = [memory](unsigned address) {
+        std::uint16_t value = 0;
+        read_u16(memory, address, value);
+        return value;
+    };
+    if (actor_slot(actor) >= kMaximumRacers || !half(actor + 0x24) ||
+        half(actor + 0x26) != 1 || word(actor + 8) != 0xFFFFFFFFu)
+        return false;
+    bike_address = word(actor + 0xE0);
+    const unsigned rider_address = word(actor + 0xE4), route = word(actor + 0xE8);
+    if ((bike_address | rider_address | route) & 3u ||
+        !valid_guest_range(bike_address, bike::stride) ||
+        !valid_guest_range(rider_address, rider::stride) || !valid_guest_range(route, 0x64) ||
+        word(bike_address + 4) != actor || word(rider_address + 4) != actor ||
+        word(bike_address + bike::rider_pointer) != rider_address ||
+        word(rider_address + rider::bike_pointer) != bike_address ||
+        !half(bike_address + bike::rider_attached) ||
+        !half(rider_address + rider::bike_attached) ||
+        half(bike_address + bike::drive_control_lockout) || half(rider_address + rider::ejected))
+        return false;
+    // Busted, wrecked and finished actors must retain native completion/recovery.
+    for (const unsigned offset : {0x4Cu, 0x4Eu, 0x50u, 0x52u})
+        if (half(route + offset))
+            return false;
+    return true;
 }
 }
 
@@ -104,6 +144,25 @@ extern "C" void rr64_offline_modifiers_frame(unsigned char *memory) {
         return;
     for (unsigned slot = 0; slot < rr64::engine::kMaximumRacers; ++slot)
         grant_once(memory, actors + slot * actor_stride);
+}
+extern "C" int rr64_offline_modifiers_freeze_actor(unsigned char *memory, unsigned actor) {
+    using namespace rr64::offline_modifiers;
+    if (!enabled(Flag::FreezeOpponents) || !live_race(memory))
+        return 0;
+    unsigned bike = 0;
+    if (!mounted_opponent(memory, actor, bike))
+        return 0;
+    // Cancel forward momentum before holding BOTH native control and paired
+    // bike/rider integration. No saved position, route progress, AI profile or
+    // drive lock is written; disabling the option resumes from this position.
+    // A hit that detaches the rider makes mounted_opponent false on the next
+    // pass, so native crash/recovery can run instead of trapping a wreck.
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        rr64::engine::write_float(memory, bike + 0x178u + axis * 4u, 0.0f);
+        rr64::engine::write_float(memory, bike + 0x1A0u + axis * 4u, 0.0f);
+    }
+    rr64::engine::write_float(memory, bike + 0x184u, 0.0f);
+    return 1;
 }
 extern "C" int rr64_offline_rider_protected(unsigned char *memory, unsigned rider) {
     using namespace rr64::offline_modifiers;

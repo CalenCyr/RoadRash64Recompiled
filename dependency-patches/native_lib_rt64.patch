@@ -3289,7 +3289,7 @@ index 8ea27d5..75bdf28 100644
 \ No newline at end of file
 +};
 diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
-index 5a331aa..00854b1 100644
+index 5a331aa..cdc2b3a 100644
 --- a/src/hle/rt64_workload_queue.cpp
 +++ b/src/hle/rt64_workload_queue.cpp
 @@ -5,8 +5,26 @@
@@ -3343,7 +3343,7 @@ index 5a331aa..00854b1 100644
              writeCursor = nextWriteCursor;
          }
  
-@@ -131,14 +149,18 @@ namespace RT64 {
+@@ -131,23 +149,25 @@ namespace RT64 {
          const uint32_t referenceHeight = (viFbSize[1] > 0) ? std::max(viFbSize[1], MinimumReferenceHeight) : 240;
  
          // Compute the aspect ratio to be used for the frame.
@@ -3354,17 +3354,18 @@ index 5a331aa..00854b1 100644
          const auto ratioMode = ext.sharedResources->userConfig.aspectRatio;
          switch (ratioMode) {
          case UserConfiguration::AspectRatio::Expand:
-             if ((ext.sharedResources->swapChainWidth > 0) && (ext.sharedResources->swapChainHeight > 0)) {
-                 const float derivedRatioTarget = float(ext.sharedResources->swapChainWidth) / float(ext.sharedResources->swapChainHeight);
+-            if ((ext.sharedResources->swapChainWidth > 0) && (ext.sharedResources->swapChainHeight > 0)) {
+-                const float derivedRatioTarget = float(ext.sharedResources->swapChainWidth) / float(ext.sharedResources->swapChainHeight);
 -                workloadConfig.aspectRatioTarget = std::max(derivedRatioTarget, workloadConfig.aspectRatioSource);
-+                constexpr float kRoadRashWidescreenTarget = 16.0f / 9.0f;
-+                workloadConfig.aspectRatioTarget = std::max(
-+                    std::min(derivedRatioTarget, kRoadRashWidescreenTarget),
-+                    workloadConfig.aspectRatioSource);
-             }
-             else {
-                 workloadConfig.aspectRatioTarget = workloadConfig.aspectRatioSource;
-@@ -148,6 +170,12 @@ namespace RT64 {
+-            }
+-            else {
+-                workloadConfig.aspectRatioTarget = workloadConfig.aspectRatioSource;
+-            }
+-
++            workloadConfig.aspectRatioTarget = RR64Video::expandedAspect(
++                workloadConfig.aspectRatioSource, ext.sharedResources->swapChainWidth,
++                ext.sharedResources->swapChainHeight);
+             break;
          case UserConfiguration::AspectRatio::Manual:
              workloadConfig.aspectRatioTarget = float(ext.sharedResources->userConfig.aspectTarget);
              break;
@@ -3377,7 +3378,7 @@ index 5a331aa..00854b1 100644
          case UserConfiguration::AspectRatio::Original:
          default:
              workloadConfig.aspectRatioTarget = workloadConfig.aspectRatioSource;
-@@ -271,6 +299,9 @@ namespace RT64 {
+@@ -271,6 +291,9 @@ namespace RT64 {
              fbManager.destroyAllTileCopies();
              ext.sharedResources->fbConfigChanged = false;
              ext.sharedResources->interpolatedColorTargets.clear();
@@ -3387,7 +3388,7 @@ index 5a331aa..00854b1 100644
          }
  
          if (ext.sharedResources->userConfigChanged) {
-@@ -289,28 +320,36 @@ namespace RT64 {
+@@ -289,28 +312,36 @@ namespace RT64 {
          }
      }
      
@@ -3428,7 +3429,7 @@ index 5a331aa..00854b1 100644
              projParams.curFrameWeight = curFrameWeight;
              projParams.prevFrameWeight = prevFrameWeight;
              projParams.aspectRatioScale = workloadConfig.aspectRatioScale;
-@@ -319,7 +358,7 @@ namespace RT64 {
+@@ -319,7 +350,7 @@ namespace RT64 {
              uploadProjections = true;
          }
  
@@ -3437,7 +3438,7 @@ index 5a331aa..00854b1 100644
          bool uploadTransforms = false;
          if (processTransforms) {
              TransformProcessor::ProcessParams transformParams;
-@@ -387,7 +426,7 @@ namespace RT64 {
+@@ -387,7 +418,7 @@ namespace RT64 {
                  rspProcessor->process(rspParams);
              }
  
@@ -3446,7 +3447,7 @@ index 5a331aa..00854b1 100644
              if (processWorldVertices) {
                  workload.resetWorldOutputBuffers();
  
-@@ -697,7 +736,26 @@ namespace RT64 {
+@@ -697,7 +728,26 @@ namespace RT64 {
              }
  #       endif
  
@@ -3473,7 +3474,7 @@ index 5a331aa..00854b1 100644
              ext.workloadGraphicsWorker->commandList->begin();
              ext.workloadGraphicsWorker->commandList->resetQueryPool(queryPool.get(), 0, 2);
              ext.workloadGraphicsWorker->commandList->writeTimestamp(queryPool.get(), 0);
-@@ -839,34 +897,111 @@ namespace RT64 {
+@@ -839,34 +889,111 @@ namespace RT64 {
  
              ext.workloadGraphicsWorker->commandList->writeTimestamp(queryPool.get(), 1);
              ext.workloadGraphicsWorker->commandList->end();
@@ -3587,7 +3588,7 @@ index 5a331aa..00854b1 100644
      }
  
      void WorkloadQueue::threadAdvanceWorkloadId(uint64_t newWorkloadId) {
-@@ -880,14 +1015,20 @@ namespace RT64 {
+@@ -880,14 +1007,20 @@ namespace RT64 {
  
      void WorkloadQueue::renderThreadLoop() {
          Thread::setCurrentThreadName("RT64 Workload");
@@ -3609,7 +3610,7 @@ index 5a331aa..00854b1 100644
          while (threadsRunning) {
              {
                  std::unique_lock<std::mutex> cursorLock(cursorMutex);
-@@ -904,7 +1045,9 @@ namespace RT64 {
+@@ -904,7 +1037,9 @@ namespace RT64 {
              if (processCursor >= 0) {
                  std::unique_lock<std::mutex> threadLock(threadMutex);
                  Workload &workload = workloads[processCursor];
@@ -3619,7 +3620,7 @@ index 5a331aa..00854b1 100644
  
                  if (!threadsRunning) {
                      continue;
-@@ -914,6 +1057,43 @@ namespace RT64 {
+@@ -914,6 +1049,43 @@ namespace RT64 {
                  workloadProfiler.start();
                  threadConfigurationUpdate(workload.viFbSize, workloadConfig);
  
@@ -3663,7 +3664,7 @@ index 5a331aa..00854b1 100644
                  // FIXME: This is a very hacky way to find out if we need to advance the frame if the workload was paused for the first time.
                  if (!workload.paused || (!gameFrames[curFrameIndex].workloads.empty() && (gameFrames[curFrameIndex].workloads[0] != (uint32_t)processCursor))) {
                      prevFrameIndex = curFrameIndex;
-@@ -929,6 +1109,12 @@ namespace RT64 {
+@@ -929,6 +1101,12 @@ namespace RT64 {
                  // Detect the color image to interpolate for this workload.
                  RenderTargetKey interpolationTargetKey;
                  int32_t interpolationTargetFbPairIndex = -1;
@@ -3676,7 +3677,7 @@ index 5a331aa..00854b1 100644
                  {
                      std::scoped_lock<std::mutex> managerLock(ext.sharedResources->managerMutex);
                      FramebufferManager &fbManager = ext.sharedResources->framebufferManager;
-@@ -955,47 +1141,176 @@ namespace RT64 {
+@@ -955,47 +1133,176 @@ namespace RT64 {
                              colorSet.insert(colorImg.address);
                          }
  
@@ -3874,7 +3875,7 @@ index 5a331aa..00854b1 100644
  
                  // Estimate amount of frames to render based on how many display frames it'd take to reach the next logical frame.
                  uint32_t displayFrames = 1;
-@@ -1004,12 +1319,6 @@ namespace RT64 {
+@@ -1004,12 +1311,6 @@ namespace RT64 {
                      displayFrames = uint32_t((logicalTicks - displayTicks) / workload.viOriginalRate);
                      deltaTimeMs = 1.0f / float(workloadConfig.targetRate);
  
@@ -3887,7 +3888,7 @@ index 5a331aa..00854b1 100644
                      assert((logicalTicks > displayTicks) && "Logical ticks must always remain bigger than the display ticks.");
                      assert(((logicalTicks - displayTicks) <= (workloadConfig.targetRate + workload.viOriginalRate)) && "The gap between logical ticks and display ticks can't be bigger than the target rate.");
                      assert((displayFrames > 0) && "At least one display frame must be generated.");
-@@ -1019,6 +1328,29 @@ namespace RT64 {
+@@ -1019,6 +1320,29 @@ namespace RT64 {
                  }
  
                  ext.sharedResources->viOriginalRate = workload.viOriginalRate;
@@ -3917,7 +3918,7 @@ index 5a331aa..00854b1 100644
                  
                  // Get the current and previous set of frame counters. The other set can be in use by the present queue. Skip if no new present event has arrived before this workload event.
                  InterpolatedFrameCounters &prevFrameCounters = ext.sharedResources->interpolatedFrames[ext.sharedResources->interpolatedFramesIndex];
-@@ -1029,7 +1361,7 @@ namespace RT64 {
+@@ -1029,7 +1353,7 @@ namespace RT64 {
                  }
                  // If the same set of counters is used, we wait until the presentation of its targets is finished so the targets are available to use. Waiting is ignored
                  // if the frame counter has never presented anything yet, as it'll only be a valid value if the previous present event actually did something.
@@ -3926,7 +3927,7 @@ index 5a331aa..00854b1 100644
                      std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
                      ext.sharedResources->interpolatedCondition.wait(interpolatedLock, [&]() {
                          return (prevFrameCounters.presented == 0) || (prevFrameCounters.presented >= prevFrameCounters.available);
-@@ -1040,13 +1372,22 @@ namespace RT64 {
+@@ -1040,13 +1364,22 @@ namespace RT64 {
                  curFrameCounters.skipped = false;
                  curFrameCounters.presented = 0;
                  curFrameCounters.available = 0;
@@ -3951,7 +3952,7 @@ index 5a331aa..00854b1 100644
                  if ((requiredFrames > 0) && (interpolatedTargets.size() < requiredFrames)) {
                      uint32_t previousSize = uint32_t(interpolatedTargets.size());
                      interpolatedTargets.resize(requiredFrames);
-@@ -1055,28 +1396,11 @@ namespace RT64 {
+@@ -1055,28 +1388,11 @@ namespace RT64 {
                      }
                  }
                  
@@ -3981,7 +3982,7 @@ index 5a331aa..00854b1 100644
                      RenderTarget *overrideTarget = nullptr;
                      uint32_t overrideModifier = 0;
                      if (generateInterpolatedFrames) {
-@@ -1085,7 +1409,7 @@ namespace RT64 {
+@@ -1085,7 +1401,7 @@ namespace RT64 {
                          curFrameWeight = std::clamp((workloadConfig.targetRate + displayTicks - logicalTicks) / float(workloadConfig.targetRate), 0.0f, 1.0f);
  
                          // Override the render target.
@@ -3990,7 +3991,7 @@ index 5a331aa..00854b1 100644
                              overrideTarget = interpolatedTargets[targetIndex].get();
                              overrideModifier = (targetIndex + 1);
  
-@@ -1093,7 +1417,6 @@ namespace RT64 {
+@@ -1093,7 +1409,6 @@ namespace RT64 {
                                  // Wait until the target has finished presenting if the alternate frame counter (used by the present queue) is making use of this target.
                                  std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
                                  ext.sharedResources->interpolatedCondition.wait(interpolatedLock, [&]() {
@@ -3998,7 +3999,7 @@ index 5a331aa..00854b1 100644
                                      return prevFrameCounters.presented > targetIndex;
                                  });
                              }
-@@ -1116,23 +1439,40 @@ namespace RT64 {
+@@ -1116,23 +1431,40 @@ namespace RT64 {
                          ext.workloadExtrasUploader->submit(ext.workloadGraphicsWorker, { extrasUpload });
                      }
  
@@ -4048,7 +4049,7 @@ index 5a331aa..00854b1 100644
                          }
  
                          {
-@@ -1143,7 +1483,8 @@ namespace RT64 {
+@@ -1143,7 +1475,8 @@ namespace RT64 {
  
                          // Add the amount of display ticks that correspond to the remaining frames.
                          if (skipWorkloadNow) {
@@ -4058,7 +4059,7 @@ index 5a331aa..00854b1 100644
                          }
  
                          ext.sharedResources->interpolatedCondition.notify_all();
-@@ -1152,16 +1493,27 @@ namespace RT64 {
+@@ -1152,16 +1485,27 @@ namespace RT64 {
                      framesRendered++;
                  }
  
@@ -4094,7 +4095,7 @@ index 5a331aa..00854b1 100644
                  threadConfigurationValidate();
  
                  if (!workload.paused) {
-@@ -1221,4 +1573,4 @@ namespace RT64 {
+@@ -1221,4 +1565,4 @@ namespace RT64 {
              }
          }
      }

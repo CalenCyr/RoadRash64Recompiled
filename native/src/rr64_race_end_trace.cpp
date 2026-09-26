@@ -28,6 +28,7 @@ constexpr std::array<unsigned, 5> counter_addresses{0x800D7648, 0x800D764C, 0x80
 struct Actor {
     unsigned controller = 0, role = 0, state = 0, bike = 0;
     unsigned segment = 0, lap = 0, parameter = 0, length = 0, base = 0;
+    unsigned table_rank = 0, race_place = 0;
     unsigned health = 0, max_health = 0, crash_4cc = 0, x = 0, z = 0;
     std::uint16_t active = 0, ai = 0, eligible = 0, busted = 0, wrecked = 0;
     std::uint16_t finished = 0, flag_52 = 0, lockout = 0;
@@ -174,6 +175,9 @@ Actor capture_actor(unsigned char* memory, unsigned slot) {
         actor.parameter = word(memory, actor.state + 8);
         actor.length = word(memory, actor.state + 0xC);
         actor.base = word(memory, actor.state + 0x20);
+        // Native 6E5E0 owns both fields; the HUD displays +44, not +40.
+        actor.table_rank = word(memory, actor.state + 0x40);
+        actor.race_place = word(memory, actor.state + 0x44);
         actor.eligible = half(memory, actor.state + 0x48);
         actor.busted = half(memory, actor.state + 0x4C);
         actor.wrecked = half(memory, actor.state + 0x4E);
@@ -359,7 +363,7 @@ void print(const Snapshot& sample) {
             "[%s] sequence=%u slot=%u actor=%08X controller=%d role=%u active=%u ai=%u "
             "state=%08X state_valid=%u segment=%u lap=%u t=%.9g t_bits=%08X "
             "length=%.9g length_bits=%08X base=%.9g base_bits=%08X "
-            "eligible=%u busted=%u wrecked=%u finished=%u flag52=%u "
+            "table_rank=%u race_place=%u eligible=%u busted=%u wrecked=%u finished=%u flag52=%u "
             "bike=%08X bike_valid=%u health=%.9g health_bits=%08X max_health=%.9g max_health_bits=%08X "
             "crash4cc_bits=%08X lockout=%u x=%.9g x_bits=%08X z=%.9g z_bits=%08X\n",
             sample.reasons ? "RR64-LAP-ACTOR" : "RR64-RACE-END-ACTOR",
@@ -367,7 +371,8 @@ void print(const Snapshot& sample) {
             static_cast<std::int32_t>(actor.controller), actor.role, unsigned(actor.active), unsigned(actor.ai),
             actor.state, unsigned(actor.state_valid), actor.segment, actor.lap,
             floating(actor.parameter), actor.parameter, floating(actor.length), actor.length,
-            floating(actor.base), actor.base, unsigned(actor.eligible), unsigned(actor.busted),
+            floating(actor.base), actor.base, actor.table_rank, actor.race_place,
+            unsigned(actor.eligible), unsigned(actor.busted),
             unsigned(actor.wrecked), unsigned(actor.finished), unsigned(actor.flag_52),
             actor.bike, unsigned(actor.bike_valid), floating(actor.health), actor.health,
             floating(actor.max_health), actor.max_health, actor.crash_4cc, unsigned(actor.lockout),

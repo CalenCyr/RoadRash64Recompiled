@@ -160,7 +160,7 @@
       },
       {
         "path": "src/common/rt64_rr64_video_aspect.h",
-        "sha256": "08ad26f8989b739a50786e27a1ec4301f65f1ae599ebf2fd50c09ff8bd8b9fbb"
+        "sha256": "128b1fd61a0861c523b7618ed57eb214c96be194cbd650ceebbc54e3338cc458"
       },
       {
         "path": "src/common/rt64_sky_sampling.h",
