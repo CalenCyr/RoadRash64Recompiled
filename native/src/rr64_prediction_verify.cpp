@@ -244,7 +244,7 @@ extern "C" void rr64_prediction_verify_before(unsigned char *m,void *raw){
         if(!input.entry.capture(*static_cast<recomp_context*>(raw)) || !prediction::capture_timing(m,input.timing) ||
            !prediction::capture_update_counters(m,input.counters) ||
            !prediction::capture_cop_rules(input.rules) || !prediction::capture_cop_posts(input.posts) ||
-           !prediction::capture_manual_eject(input.eject))return;
+           !prediction::capture_manual_eject(input.eject) || !prediction::capture_item_state(input.items))return;
         input.passes=input.timing.substeps;
         auto check=std::make_unique<Verification>();check->local=local;check->humans=humans;check->mapped=mapped;
         check->stage=previous?previous->stage:stage;check->mode=mode;check->bike=bike;
@@ -253,6 +253,7 @@ extern "C" void rr64_prediction_verify_before(unsigned char *m,void *raw){
             check->resources=std::move(previous->resources);
             check->rng_before_order=rng_pair(m,check->resources->memory());
             input.rules=previous->native.rules;input.posts=previous->native.posts;input.eject=previous->native.eject;
+            input.items=previous->native.items;
             if(!prediction::replay_native_order(*check->resources,input)){
                 std::fprintf(stderr,"[RR64-REPLAY-VERIFY] order replay failed depth=%u reason=%s\n",
                     check->depth,prediction::last_native_replay_error());return;
@@ -371,8 +372,8 @@ extern "C" void rr64_prediction_verify_after(unsigned char *m){
             a.directions==b.directions,a.road_distance,b.road_distance);
     }
     prediction::FrameOutput native;
-    const bool native_captured=prediction::capture_cop_rules(native.rules) && prediction::capture_cop_posts(native.posts) && prediction::capture_manual_eject(native.eject);
-    const bool native_equal=native_captured && native.rules==check->native.rules && native.posts==check->native.posts && native.eject==check->native.eject;
+    const bool native_captured=prediction::capture_cop_rules(native.rules) && prediction::capture_cop_posts(native.posts) && prediction::capture_manual_eject(native.eject) && prediction::capture_item_state(native.items);
+    const bool native_equal=native_captured && native.rules==check->native.rules && native.posts==check->native.posts && native.eject==check->native.eject && native.items==check->native.items;
     if(!native_equal){
         std::fprintf(stderr,"[RR64-REPLAY-NATIVE] rules-equal=%u\n",native.rules==check->native.rules);
         for(unsigned slot=0;slot<14;++slot){
@@ -461,7 +462,7 @@ extern "C" int rr64_prediction_run_case(const char* path,const char* rom_path,in
         const auto cars=world_sync::compare_traffic(expected.traffic,actual.traffic);
         if(differences || cars.count)trace.dependencies.report();
         const auto rng=rng_pair(c.after_live.data(),resources.memory());
-        const bool native_equal=c.header.native_valid && native.rules==c.expected_native.rules && native.posts==c.expected_native.posts && native.eject==c.expected_native.eject;
+        const bool native_equal=c.header.native_valid && native.rules==c.expected_native.rules && native.posts==c.expected_native.posts && native.eject==c.expected_native.eject && native.items==c.expected_native.items;
         std::fprintf(stderr,"[RR64-OFFLINE-NATIVE] valid=%u equal=%u\n",c.header.native_valid,native_equal);
         std::fprintf(stderr,"[RR64-OFFLINE] attempt=%u baseline=%s actors=%u traffic=%u rng=%08x/%08x random-calls=%u\n",
             c.header.attempt,live_baseline?"live":"private",differences,cars.count,rng[0],rng[1],trace.private_random.count);

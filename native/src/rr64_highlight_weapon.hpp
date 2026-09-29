@@ -11,6 +11,7 @@ bool capture_weapon(unsigned char *, unsigned rider, WeaponPose &) noexcept;
 // buffers before this call returns.
 bool draw_weapon(unsigned char *, void *context, const WeaponPose &,
                  const Vec3 &anchor, const Quaternion &, const Vec3 &camera,
-                 unsigned source_bank) noexcept;
+                 unsigned source_bank, float model_scale = 1.f,
+                 const Vec3 &pivot = {}) noexcept;
 void reset_weapon_scratch() noexcept;
 }

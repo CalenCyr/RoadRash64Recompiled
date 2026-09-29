@@ -2,6 +2,7 @@
 #include "rr64_authoritative_loading.hpp"
 #include "rr64_prediction_correction.hpp"
 #include "rr64_prediction_reconcile.hpp"
+#include "rr64_prediction_presentation.hpp"
 #include <mutex>
 #include "rr64_remote_presentation.hpp"
 #include <chrono>
@@ -32,6 +33,7 @@
 #ifdef RR64_EXPERIMENTAL_COURSE
 #include "rr64_course_items.hpp"
 #include "rr64_course_hazards.hpp"
+#include "rr64_mk64_items.hpp"
 #endif
 
 namespace rr64::online_race_sync {
@@ -60,6 +62,7 @@ thread_local unsigned char *presentation_mapping=nullptr;
 std::uint32_t g_local_tick = 0;
 thread_local ViewportRenderPlan g_viewport_render_plan{};
 std::atomic_bool g_render_race{false};
+std::atomic_bool g_render_results{false};
 std::atomic_bool g_host_pause_open{false};
 
 float read_float(unsigned char *rdram, std::uint32_t address) {
@@ -303,12 +306,14 @@ void apply_remote_riders(unsigned char *rdram, bool prepare_presentation=false) 
     const netplay::Status status = netplay::get_status();
     if(presentation_authority!=status.authoritative || presentation_round!=status.game_setup.revision) {
         presentation_history={};presentation_offsets={};frame_attacks={};
+        prediction::local_correction_presentation.reset();
         presentation_authority=status.authoritative;presentation_round=status.game_setup.revision;
     }
     if (!status.active || !status.connected || status.host_disconnected ||
         (status.authoritative && status.is_host) ||
         status.phase != netplay::Phase::Race || status.local_slot >= netplay::kMaximumPlayers) {
         presentation_history={}; presentation_offsets={};
+        prediction::local_correction_presentation.reset();
         { std::lock_guard lock(presentation_mutex); published_offsets={}; published_mapping=nullptr; }
         return;
     }
@@ -341,13 +346,25 @@ void apply_remote_riders(unsigned char *rdram, bool prepare_presentation=false) 
         if(!course_items::apply_state(authority_frame.course_items,authority_frame.stamp.round,
                                      authority_frame.stamp.tick) ||
            !course_hazards::apply_state(authority_frame.course_hazards,authority_frame.stamp.round,
-                                       authority_frame.stamp.tick)) {
+                                       authority_frame.stamp.tick) ||
+           !mk64_items::apply_state(authority_frame.mk64_items,authority_frame.stamp.round,
+                                   authority_frame.stamp.tick)) {
             netplay::authority_fail("course item state could not be applied");return;
         }
 #endif
     }
     for (std::uint8_t slot = 0; slot < netplay::kMaximumPlayers; ++slot) {
-        if (slot == status.local_slot || (status.is_host && !status.players[slot].connected)) {
+        if (slot == status.local_slot) {
+            presentation_history[slot].reset();
+            if(prepare_presentation && status.authoritative) {
+                const auto guest=online_flow::mapped_slot(slot,status.local_slot,status.replicated_riders);
+                const auto pose=prediction::mounted_pose(rdram,authority_frame.stamp.round,guest);
+                const auto delta=prediction::local_correction_presentation.sample(pose,prediction::presentation_time_us());
+                if(pose.valid)presentation_offsets[slot]={pose.bike,pose.rider,delta};
+            }
+            continue;
+        }
+        if (status.is_host && !status.players[slot].connected) {
             presentation_history[slot].reset();
             continue;
         }
@@ -444,6 +461,7 @@ void capture_sync_sample(unsigned char *rdram, unsigned stage) {
     if (campaign && stage==1 && frame && now-last_campaign<std::chrono::milliseconds(100)) { ++frame; return; }
     if (campaign) last_campaign=now;
     sync_log::Sample s{};
+    s.reconciliation=prediction::last_reconcile;
     s.host=status.is_host; s.local=status.local_slot; s.race=race;
     s.frame=frame; s.phase=unsigned(status.phase); s.stage=stage;
     s.options=status.game_setup.race_options;
@@ -534,7 +552,8 @@ std::uint32_t prepare_render_layout(std::uint32_t stock_layout) {
     const netplay::Status status = netplay::get_status();
     g_viewport_render_plan =
         make_viewport_render_plan(stock_layout, status.active, status.connected,
-                                  status.phase == netplay::Phase::Race && g_render_race.load(),
+                                  status.phase == netplay::Phase::Race &&
+                                      (g_render_race.load() || g_render_results.load()),
                                   status.replicated_riders, status.local_slot);
     return g_viewport_render_plan.layout;
 }
@@ -571,6 +590,7 @@ void before_guest_update(unsigned char *rdram, std::uint32_t mode) {
     std::uint32_t pending = 0;
     engine::read_u32(rdram, engine::globals::pending_mode, pending);
     g_render_race.store(engine::is_live_race_transition(mode, pending));
+    g_render_results.store(engine::is_race_results_mode(mode));
     // The optional queue replaces synchronous transition logging on this thread.
     capture_sync_sample(rdram, 0);
     if (rr64_is_live_race_mode(mode) != 0) {
@@ -583,6 +603,7 @@ void after_guest_update(unsigned char *rdram, std::uint32_t mode) {
     std::uint32_t pending = 0;
     engine::read_u32(rdram, engine::globals::pending_mode, pending);
     g_render_race.store(engine::is_live_race_transition(mode, pending));
+    g_render_results.store(engine::is_race_results_mode(mode));
     if (rr64_is_live_race_mode(mode) == 0) {
         return;
     }
@@ -667,11 +688,13 @@ extern "C" int rr64_online_authority_capture(unsigned char *rdram,const void *co
 #ifdef RR64_EXPERIMENTAL_COURSE
     frame.course_items=rr64::course_items::capture_state();
     frame.course_hazards=rr64::course_hazards::capture_state();
+    frame.mk64_items=rr64::mk64_items::capture_state();
 #endif
     return rr64::netplay::authority_publish_frame(frame)?1:0;
 }
 
 extern "C" int rr64_online_wait_for_race(unsigned char *rdram, unsigned mode) {
+    if(rr64_online_postrace_update(rdram,mode)) return 1;
     static bool disconnect_transition_requested=false;
     static unsigned finish_round=0,requested_finish=0;
     auto s=rr64::netplay::get_status();

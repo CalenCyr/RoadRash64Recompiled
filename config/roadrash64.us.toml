@@ -133,18 +133,18 @@ hook = [
     { func = "func_80068E20", before_vram = 0x80068EB4, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif (rr64_experimental_course_recovery_point(rdram, ctx)) goto L_800692BC;\n#endif\nif (rr64_roaming_recovery_point(rdram, ctx)) goto L_800692BC;" },
     # Relocation is not a full forward circuit traversal. Preserve signed
     # recovery displacement, then let the original lap evaluator run once.
-    { func = "func_80068E20", before_vram = 0x80069464, text = "rr64_trace_race_recovery(rdram, ctx->r17); rr64_highlights_recovery(rdram, ctx->r17);\n#ifdef RR64_EXPERIMENTAL_COURSE\nif (rr64_experimental_course_recovery_progress(rdram, ctx)) goto rr64_recovery_lap_update;\n#endif\nif (rr64_roaming_recovery_progress(rdram, ctx)) goto rr64_recovery_lap_update;" },
+    { func = "func_80068E20", before_vram = 0x80069464, text = "rr64_rival_engine_recovery(rdram, ctx, (unsigned)ctx->r17); rr64_trace_race_recovery(rdram, ctx->r17); rr64_highlights_recovery(rdram, ctx->r17);\n#ifdef RR64_EXPERIMENTAL_COURSE\nif (rr64_experimental_course_recovery_progress(rdram, ctx)) goto rr64_recovery_lap_update;\n#endif\nif (rr64_roaming_recovery_progress(rdram, ctx)) goto rr64_recovery_lap_update;" },
     { func = "func_80068E20", before_vram = 0x8006946C, text = "rr64_recovery_lap_update: ;" },
     # Copy bounded terminal race evidence before results initialization clears
     # it. The UI thread writes queued diagnostics; this hook does no file I/O.
-    { func = "func_80048544", text = "rr64_trace_race_end(rdram, ctx->r4, ctx->r31); rr64_thrash_options_mode(ctx->r4); rr64_online_menu_mode_changed(ctx->r4);" },
-    { func = "func_80048558", text = "rr64_online_menu_mode_changed(ctx->r4);" },
+    { func = "func_80048544", text = "ctx->r4 = rr64_online_postrace_route_mode(rdram, ctx->r4); \n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_mk64_items_mode(rdram, (unsigned)ctx->r4);\n#endif\nrr64_rival_engine_mode(rdram, ctx, (unsigned)ctx->r4); rr64_trace_race_end(rdram, ctx->r4, ctx->r31); rr64_thrash_options_mode(ctx->r4); rr64_online_menu_mode_changed(ctx->r4);" },
+    { func = "func_80048558", text = "ctx->r4 = rr64_online_postrace_route_mode(rdram, ctx->r4); \n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_mk64_items_mode(rdram, (unsigned)ctx->r4);\n#endif\nrr64_rival_engine_mode(rdram, ctx, (unsigned)ctx->r4); rr64_online_menu_mode_changed(ctx->r4);" },
     # Preserve the selected bike's normal health in custom rules, not stock cop-mode health.
     { func = "func_8003EF78", before_vram = 0x8003F024, text = "if (rr64_custom_cop_active()) { ctx->f0.u32l = MEM_W(0x4FC, ctx->r16); goto L_8003F054; }" },
     { func = "func_800645E4", before_vram = 0x80064AB8, text = "if (rr64_custom_cop_trick(rdram, ctx->r23)) ctx->r3 = 0;" },
     { func = "func_800576D4", before_vram = 0x8005778C, text = "if (rr64_custom_cop_siren(rdram, ctx->r16) == 1) MEM_W(0x18, ctx->r29) = 0x42FE0000;" },
     { func = "func_8004090C", text = "rr64_custom_cop_control(rdram, ctx);" },
-    { func = "func_80030220", text = "if (rr64_highlights_presenting()) return; rr64_online_hud_begin(rdram); rr64_hud_widgets_begin(rdram);\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_hud_begin();\n#endif\n" },
+    { func = "func_80030220", text = "if (rr64_highlights_presenting()) return; rr64_online_hud_begin(rdram); rr64_hud_widgets_begin(rdram);\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_cycle_publish(rdram); rr64_course_items_hud_begin();\n#endif\n" },
     # Only the original weapon icon inputs change during item roulette. Actor
     # inventory, equipped weapon, view origins and world render state are intact.
     { func = "func_80030220", before_vram = 0x80032290, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nctx->r5=rr64_course_items_hud_weapon(rdram,(unsigned)ctx->r3,(unsigned)ctx->r5);\n#endif\n" },
@@ -168,6 +168,8 @@ hook = [
     { func = "func_80030220", before_vram = 0x80032E94, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_hud_sprite_end(rdram);\n#endif\n" },
     { func = "func_80030220", before_vram = 0x80033124, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_hud_sprite_end(rdram);\n#endif\n" },
     { func = "func_8001EB90", text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif(rr64_course_items_hud_hide((unsigned)ctx->r5)) { ctx->r2=0; return; }\n#endif\n" },
+    # Replace registered MK item icons only at the original weapon sprite draw.
+    { func = "func_8001EF8C", before_vram = 0x8001F19C, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif(rr64_mk64_item_hud_draw_record(rdram,(unsigned)ctx->r16)) { ctx->r3=ADD32(ctx->r19,1); goto L_8001F5C8; }\n#endif\n" },
     # Health fills are HUD overlays, although the original code uses world
     # depth compare/write (0x00552230). Clear only those two bits at these
     # native HUD producers: single/online and local two-player layouts.
@@ -247,7 +249,7 @@ hook = [
     { func = "func_8004E830", before_vram = 0x8004E998, text = "rr64_autotest_input(rdram, MEM_W(0X1810, S32(0X800A << 16))); rr64_trace_guest_input(MEM_W(0X1810, S32(0X800A << 16)), MEM_W(0X2194, S32(0X800A << 16)), MEM_HU(-0X3270, S32(0X800A << 16)), MEM_BU(-0X3260, S32(0X800A << 16)), MEM_BU(-0X325C, S32(0X800A << 16)), MEM_BU(0XAB4, S32(0X800B << 16)), MEM_BU(0XABA, S32(0X800B << 16)), MEM_BU(0XAC0, S32(0X800B << 16)), MEM_BU(0XAC6, S32(0X800B << 16)));" },
     { func = "func_8004E830", before_vram = 0x8004E9BC, text = "rr64_trace_guest_value(\"frame-update-target\", ctx->r3); rr64_engine_capture_pre_update(rdram); rr64_engine_capture_dispatch_boundary(rdram, 0, ctx->r3); rr64_online_race_sync_before_update(rdram, MEM_W(0X1810, S32(0X800A << 16))); if (rr64_highlights_frame_gate(rdram, MEM_W(0X1810, S32(0X800A << 16)), ctx)) goto rr64_online_wait_render;" },
     { func = "func_8004E830", before_vram = 0x8004E9C4, text = "rr64_online_wait_render:;" },
-    { func = "func_8004E830", before_vram = 0x8004E9DC, text = "rr64_online_race_sync_after_update(rdram, MEM_W(0X1810, S32(0X800A << 16))); rr64_trace_lap_frame(rdram); rr64_engine_capture_post_update(rdram); rr64_engine_capture_dispatch_boundary(rdram, 1, ctx->r3); rr64_trace_guest_value(\"frame-render-target\", ctx->r3); if (rr64_highlights_block_dispatch()) goto rr64_highlights_after_prepare;" },
+    { func = "func_8004E830", before_vram = 0x8004E9DC, text = "rr64_online_race_sync_after_update(rdram, MEM_W(0X1810, S32(0X800A << 16))); rr64_rival_engine_frame(rdram, ctx); rr64_trace_lap_frame(rdram); rr64_engine_capture_post_update(rdram); rr64_engine_capture_dispatch_boundary(rdram, 1, ctx->r3); rr64_trace_guest_value(\"frame-render-target\", ctx->r3); if (rr64_highlights_block_dispatch()) goto rr64_highlights_after_prepare;" },
     { func = "func_8004E830", before_vram = 0x8004E9E4, text = "rr64_highlights_after_prepare:;" },
     { func = "func_8004E830", before_vram = 0x8004E9FC, text = "rr64_engine_capture_dispatch_boundary(rdram, 2, ctx->r3); rr64_trace_guest_value(\"frame-finish-target\", ctx->r3); if (rr64_highlights_block_dispatch()) { ctx->r16 = S32(0X800A << 16); goto rr64_highlights_after_results; }" },
     { func = "func_8004E830", before_vram = 0x8004EA04, text = "rr64_highlights_after_results:; rr64_engine_capture_dispatch_boundary(rdram, 3, 0);" },
@@ -288,10 +290,48 @@ hook = [
     # pipeline without changing guest state.
     { func = "func_800146C8", text = "rr64_online_terrain_query_begin(rdram, ctx);" },
     { func = "func_800146C8", before_vram = 0x80014768, text = "rr64_online_terrain_lookup(rdram, ctx);" },
-    { func = "func_8006AFFC", text = "if (!rr64_authority_step_begin(rdram, ctx)) return; rr64_lod_invalidate(rdram); rr64_world_invalidate(rdram); rr64_engine_capture_race_update_boundary(rdram, 0);" },
+    { func = "func_8006AFFC", text = "if (!rr64_authority_step_begin(rdram, ctx)) return; \n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_mk64_items_before_physics(rdram);\n#endif\nrr64_lod_invalidate(rdram); rr64_world_invalidate(rdram); rr64_engine_capture_race_update_boundary(rdram, 0);" },
     { func = "func_8006AFFC", before_vram = 0x8006B0A4, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_hazards_step(rdram);\n#endif\n" },
     { func = "func_8006AFFC", before_vram = 0x8006B678, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_step(rdram,ctx);\n#endif\nrr64_authority_step_finish(rdram); rr64_online_combat_drain(rdram,ctx); rr64_online_sync_before_pose(rdram);\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_audio_step(rdram);\n#endif\n" },
     { func = "func_80040664", text = "if (rr64_authority_translate(rdram,ctx)) return;" },
+    # Native local-human audio is shared by every split-screen player. Online
+    # keeps that privilege only for this peer; remote sounds retain stock gain.
+    # Register-only hooks never change actor/controller ownership in guest RAM.
+    { func = "func_80059324", before_vram = 0x8005934C, text = "rr64_online_audio_owner(rdram, ctx);" },
+    { func = "func_80059324", before_vram = 0x8005935C, text = "rr64_online_audio_owner(rdram, ctx);" },
+    { func = "func_80059324", before_vram = 0x80059384, text = "rr64_online_audio_listener(rdram, ctx);" },
+    { func = "func_800593F0", before_vram = 0x80059418, text = "rr64_online_audio_owner(rdram, ctx);" },
+    { func = "func_800593F0", before_vram = 0x80059428, text = "rr64_online_audio_owner(rdram, ctx);" },
+    { func = "func_800593F0", before_vram = 0x80059450, text = "rr64_online_audio_listener(rdram, ctx);" },
+    { func = "func_800594BC", before_vram = 0x800594E4, text = "rr64_online_audio_owner(rdram, ctx);" },
+    { func = "func_800594BC", before_vram = 0x800594F4, text = "rr64_online_audio_owner(rdram, ctx);" },
+    { func = "func_800594BC", before_vram = 0x8005951C, text = "rr64_online_audio_listener(rdram, ctx);" },
+    { func = "func_80059588", before_vram = 0x800595B0, text = "rr64_online_audio_owner(rdram, ctx);" },
+    { func = "func_80059588", before_vram = 0x800595DC, text = "rr64_online_audio_listener(rdram, ctx);" },
+    { func = "func_80059648", before_vram = 0x80059670, text = "rr64_online_audio_owner(rdram, ctx);" },
+    { func = "func_80059648", before_vram = 0x8005969C, text = "rr64_online_audio_listener(rdram, ctx);" },
+    # Weapon selection bypasses the positional gain routines. Preserve its
+    # exact source before the native delay slot replaces the rider with the ID.
+    # Exact wrap branches select the virtual MK slot after native weapon 1.
+    { func = "func_8004090C", before_vram = 0x80040F08, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_weapon_wrapped(rdram,(unsigned)ctx->r4);\n#endif\n" },
+    { func = "func_800645E4", before_vram = 0x80064E38, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_weapon_wrapped(rdram,(unsigned)ctx->r16);\n#endif\n" },
+    { func = "func_8004090C", before_vram = 0x80040F80, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_weapon_switched(rdram,(unsigned)ctx->r4);\n#endif\nrr64_online_audio_weapon_source(rdram, ctx, (unsigned)ctx->r4);" },
+    { func = "func_800645E4", before_vram = 0x80064E98, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_weapon_switched(rdram,(unsigned)ctx->r16);\n#endif\nrr64_online_audio_weapon_source(rdram, ctx, (unsigned)ctx->r16);" },
+    { func = "func_80058600", before_vram = 0x80058600, text = "rr64_online_audio_weapon_gain(rdram, ctx);" },
+    # Rival engines reuse the original ROM producer/profile. Suppress only the
+    # duplicate online-human engine call; all local-human audio stays native.
+    { func = "func_8005980C", before_vram = 0x80059858, text = "rr64_rival_engine_gate(rdram, ctx);" },
+    { func = "func_80059648", text = "if (rr64_rival_engine_gain(rdram, ctx)) return;" },
+    { func = "func_80058600", before_vram = 0x80058610, text = "rr64_rival_engine_threshold(rdram, ctx);" },
+    # Every rival row, including native script children, needs free capacity.
+    # Its allocator may never steal an existing voice; four effect rows remain.
+    { func = "func_80082798", text = "if (rr64_rival_engine_allocate(rdram, ctx)) return;" },
+    { func = "func_80082798", before_vram = 0x800828B0, text = "rr64_rival_engine_no_steal(rdram, ctx);" },
+    { func = "func_80082798", before_vram = 0x8008286C, text = "rr64_rival_engine_allocated(rdram, ctx);" },
+    { func = "func_80083408", before_vram = 0x8008345C, text = "rr64_rival_engine_child(rdram, ctx, 1);" },
+    { func = "func_80083408", before_vram = 0x800834A8, text = "rr64_rival_engine_child_adopt(rdram, ctx);" },
+    { func = "func_80083408", before_vram = 0x800834C0, text = "rr64_rival_engine_child(rdram, ctx, 0);" },
+    { func = "func_8007FE9C", text = "rr64_rival_engine_audio_reset();" },
     # Keep online routing first; the freeze query rejects every online/replay
     # session and only substitutes the sound-only callback for offline AI.
     { func = "func_8006AFFC", before_vram = 0x8006B1C8, text = "rr64_authority_actor_route(ctx,0); if (rr64_offline_modifiers_freeze_actor(rdram, ctx->r16)) ctx->r3 = (int32_t)0x8005264C;" },
@@ -344,7 +384,10 @@ hook = [
     { func = "func_8005EB50", before_vram = 0x8005EC28, text = "rr64_lod_observe_rider_range(rdram, ctx->r17, c1cs);" },
     { func = "func_80011CC0", before_vram = 0x80011D8C, text = "if (MEM_W(0x50, ctx->r29) == 0) { ctx->r21 = rr64_highlights_presenting() ? rr64_highlights_lod(rdram, ctx->r19, ctx->r21) : rr64_lod_select(rdram, ctx->r19, ctx->r21); ctx->r21 = rr64_world_select(rdram, ctx->r19, ctx->r21); if (!rr64_highlights_actor(rdram, ctx->r19, ctx->r21)) goto L_800120C8; }" },
     { func = "func_80011CC0", before_vram = 0x80011DDC, text = "ctx->r15 = rr64_lod_root_source(rdram, ctx->r19, ctx->r18, ctx->r15); ctx->r15 = rr64_world_root_source(rdram, ctx->r19, ctx->r18, ctx->r15);" },
-    { func = "func_80011CC0", before_vram = 0x80011E80, text = "rr64_online_presentation_matrix(rdram, ctx->r19, ctx->r18, ctx->r29 + 0x10, 3); rr64_lod_scale_root_matrix(rdram, ctx->r19, ctx->r18, ctx->r29 + 0x10); rr64_world_scale_root_matrix(rdram, ctx->r19, ctx->r18, ctx->r29 + 0x10);" },
+    { func = "func_80011CC0", before_vram = 0x80011E80, text = "rr64_online_presentation_matrix(rdram, ctx->r19, ctx->r18, ctx->r29 + 0x10, 3); \n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_mk64_items_scale_matrix(rdram, ctx->r19, ctx->r18, ctx->r29 + 0x10);\n#endif\nrr64_lod_scale_root_matrix(rdram, ctx->r19, ctx->r18, ctx->r29 + 0x10); rr64_world_scale_root_matrix(rdram, ctx->r19, ctx->r18, ctx->r29 + 0x10);" },
+    # Per-frame Star/Boo copies preserve the shared native actor material.
+    { func = "func_80011CC0", before_vram = 0x80012028, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\n{ unsigned list = rr64_mk64_items_actor_call(rdram,(unsigned)ctx->r19,(unsigned)ctx->r4,(unsigned)ctx->r6); if (list != (unsigned)ctx->r4) { ctx->r6 = ADD32(ctx->r6,16); ctx->r5 = ADD32(ctx->r5,16); MEM_W(-0x39B0,ctx->r23) = ADD32(MEM_W(-0x39B0,ctx->r23),16); ctx->r4 = (int32_t)list; } }\n#endif\n" },
+    { func = "func_80011CC0", before_vram = 0x80012074, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\n{ unsigned list = rr64_mk64_items_actor_call(rdram,(unsigned)ctx->r19,(unsigned)ctx->r4,(unsigned)ctx->r6); if (list != (unsigned)ctx->r4) { ctx->r6 = ADD32(ctx->r6,16); ctx->r5 = ADD32(ctx->r5,16); MEM_W(-0x39B0,ctx->r23) = ADD32(MEM_W(-0x39B0,ctx->r23),16); ctx->r4 = (int32_t)list; } }\n#endif\n" },
     { func = "func_80011CC0", before_vram = 0x80011F00, text = "rr64_highlights_actor_end(); rr64_lod_end_actor(); rr64_world_end_actor();" },
     { func = "func_80011CC0", before_vram = 0x800120C8, text = "rr64_highlights_actor_end(); rr64_lod_end_actor(); rr64_world_end_actor();" },
     { func = "func_80011CC0", before_vram = 0x800120D4, text = "rr64_highlights_actor_end(); rr64_lod_end_actor(); rr64_world_end_actor();" },
@@ -379,7 +422,7 @@ hook = [
     { func = "func_8007C524", before_vram = 0x8007C748, text = "rr64_world_terrain_draw(rdram);" },
     { func = "func_8007CDA4", before_vram = 0x8007CF3C, text = "rr64_world_objects_observe(rdram, ctx->r17);" },
     { func = "func_8007CDA4", before_vram = 0x8007CF44, text = "rr64_world_objects_sample(rdram, ctx->r17, ctx->r19);" },
-    { func = "func_8007C524", before_vram = 0x8007C7D0, text = "rr64_world_objects_draw(rdram);\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_diagnostics_draw(rdram); rr64_course_items_draw(rdram); rr64_course_hazards_draw(rdram);\n#endif\n" },
+    { func = "func_8007C524", before_vram = 0x8007C7D0, text = "rr64_world_objects_draw(rdram);\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_diagnostics_draw(rdram); rr64_course_items_draw(rdram); rr64_course_hazards_draw(rdram); rr64_mk64_items_draw(rdram);\n#endif\n" },
     # Opt-in, local-player-only dynamics capture. Full bike and rider records
     # are sampled before/after each isolated terrain/contact/chassis boundary
     # when RR64_NATIVE_DYNAMICS_LOG names an output file. No guest state is
@@ -479,6 +522,72 @@ hook = [
     { func = "func_8002CD60", before_vram = 0x8002DB6C, text = "rr64_achievement_campaign_level_advanced(rdram, MEM_W(0x6A7C, S32(0x800D << 16)));" },
     { func = "func_80073054", before_vram = 0x80073374, text = "rr64_achievement_campaign_completed(rdram);" },
 
+    # After the original ending, a completed Level 5 profile with an Insanity
+    # bike may Join the optional bonus chapter. Its tables and qualification
+    # storage are explicitly extended; ordinary campaign promotion stays native.
+    { func = "func_8002CD60", before_vram = 0x8002DB4C, text = "ctx->r12 = rr64_campaign_shop_promotion(rdram, (unsigned)ctx->r12);" },
+
+    # Bonus index 5 uses eight Level 5 campaign descriptors/economics, with
+    # the actual Insanity tier 6 routes and rider pool applied after the copy.
+    # Redirect individual reads; never overwrite adjacent shared ROM tables.
+    { func = "func_80029DB8", before_vram = 0x80029F8C, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_80029DB8", before_vram = 0x80029FA8, text = "rr64_campaign_bonus_menu(rdram);" },
+    { func = "func_80029DB8", before_vram = 0x80029FD8, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_80029DB8", before_vram = 0x8002A038, text = "rr64_campaign_bonus_descriptor(rdram);" },
+    { func = "func_80029DB8", before_vram = 0x8002A070, text = "ctx->r4 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r4);" },
+    { func = "func_80029DB8", before_vram = 0x8002A080, text = "ctx->r4 = rr64_campaign_bonus_route(rdram, (unsigned)ctx->r4);" },
+    { func = "func_80029DB8", before_vram = 0x8002A134, text = "rr64_campaign_bonus_label(rdram, (unsigned)ctx->r17);" },
+    { func = "func_80029DB8", before_vram = 0x8002A45C, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_8002CD60", before_vram = 0x8002DB00, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_80073054", before_vram = 0x8007322C, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_80073054", before_vram = 0x8007327C, text = "if (rr64_campaign_bonus_active(rdram)) ctx->r19 = 0;" },
+    { func = "func_80073658", before_vram = 0x800736B4, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_80073658", before_vram = 0x800736F4, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_80073728", before_vram = 0x80073778, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_80073728", before_vram = 0x800737D0, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+
+    # Bonus repair/arrest charges retain the final campaign level's amounts.
+    { func = "func_8002C13C", before_vram = 0x8002C3D8, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_8002C520", before_vram = 0x8002C718, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_800728B8", before_vram = 0x8007290C, text = "ctx->r5 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r5);" },
+    { func = "func_80072930", before_vram = 0x800729B4, text = "ctx->r4 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r4);" },
+    { func = "func_80072A14", before_vram = 0x80072AB8, text = "if (rr64_campaign_bonus_active(rdram)) ctx->r5 = 5;" },
+    { func = "func_80072B40", before_vram = 0x80072B84, text = "if (rr64_campaign_bonus_active(rdram)) ctx->r3 = 5;" },
+    { func = "func_80072E74", before_vram = 0x80072F34, text = "if (rr64_campaign_bonus_active(rdram)) ctx->r5 = 5;" },
+    { func = "func_80073054", before_vram = 0x800730C4, text = "if (rr64_campaign_bonus_active(rdram)) ctx->r3 = 5;" },
+    # Native passwords describe only the original campaign; bonus progress is
+    # saved in the Pak extension. Keep its five-entry password lookup bounded.
+    { func = "func_80021FD0", before_vram = 0x80022210, text = "if (rr64_campaign_bonus_active(rdram)) ctx->r3 = 4;" },
+
+    # Both current/next bike-shop views retain the two real Insanity choices.
+    { func = "func_8002DC30", before_vram = 0x8002DE20, text = "ctx->r3 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r3);" },
+    { func = "func_8002DC30", before_vram = 0x8002DE4C, text = "ctx->r3 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r3);" },
+    { func = "func_8002DC30", before_vram = 0x8002DE84, text = "ctx->r3 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r3);" },
+    { func = "func_80073940", before_vram = 0x80073994, text = "ctx->r2 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r2);" },
+    { func = "func_800739E8", before_vram = 0x80073A34, text = "ctx->r3 = (int32_t)rr64_campaign_table_address(rdram, (unsigned)ctx->r3);" },
+
+    # Optional Insanity progress uses the native Pak file's eight padding bytes.
+    # Qualification reads replace only the bonus word; the two native stores
+    # retain the original reputation word at profile+54. No guest scratch slot.
+    { func = "func_80029DB8", before_vram = 0x8002A474, text = "ctx->r6 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r2 + 0x40u, (unsigned)ctx->r6);" },
+    { func = "func_80029DB8", before_vram = 0x8002A628, text = "ctx->r4 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r8 + 0x40u, (unsigned)ctx->r4);" },
+    { func = "func_8002CD60", before_vram = 0x8002DB20, text = "ctx->r6 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r2 + 0x40u, (unsigned)ctx->r6);" },
+    { func = "func_80072A14", before_vram = 0x80072A5C, text = "ctx->r5 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r3 + 0x40u, (unsigned)ctx->r5);" },
+    { func = "func_80072E74", before_vram = 0x80072EC8, text = "ctx->r3 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r4, (unsigned)ctx->r3);" },
+    { func = "func_80072E74", before_vram = 0x80072F88, text = "ctx->r3 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r5, (unsigned)ctx->r3);" },
+    { func = "func_80072E74", before_vram = 0x80072F98, text = "ctx->r3 = (int32_t)rr64_campaign_qualification_store(rdram, (unsigned)ctx->r5, (unsigned)ctx->r3);" },
+    { func = "func_80072E74", before_vram = 0x80072FAC, text = "ctx->r2 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r4, (unsigned)ctx->r2);" },
+    # Before the branch, so both copies of its native delay-slot store agree.
+    { func = "func_80072E74", before_vram = 0x80072FB4, text = "ctx->r2 = (int32_t)rr64_campaign_qualification_store(rdram, (unsigned)ctx->r4, (unsigned)ctx->r2);" },
+    { func = "func_80073054", before_vram = 0x8007324C, text = "ctx->r6 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r2 + 0x40u, (unsigned)ctx->r6);" },
+    { func = "func_80073658", before_vram = 0x8007369C, text = "ctx->r6 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r4 + 0x40u, (unsigned)ctx->r6);" },
+    { func = "func_80073728", before_vram = 0x80073794, text = "ctx->r4 = (int32_t)rr64_campaign_qualification_word(rdram, (unsigned)ctx->r2 + 0x40u, (unsigned)ctx->r4);" },
+    { func = "func_8005F480", text = "rr64_campaign_bonus_new_profile(rdram, (unsigned)ctx->r4);" },
+    { func = "func_800207DC", text = "rr64_campaign_bonus_scan(rdram);" },
+    { func = "func_800207DC", before_vram = 0x80020AA4, text = "rr64_campaign_bonus_capture(rdram, (unsigned)ctx->r16);" },
+    { func = "func_80020ECC", before_vram = 0x80020F48, text = "rr64_campaign_bonus_load(rdram, (unsigned)ctx->r17, (unsigned)ctx->r18);" },
+    { func = "func_80020BE8", before_vram = 0x80020E44, text = "rr64_campaign_bonus_save(rdram, (unsigned)MEM_W(0x74, ctx->r29), (unsigned)ctx->r16);" },
+
     # Preserve the original ending/reward/credits, then retain the completed
     # profile at Save Game instead of discarding it on return to the main menu.
     { func = "func_80022C90", before_vram = 0x80023810, text = "ctx->r4 = rr64_campaign_ending_exit(rdram, ctx->r4);" },
@@ -489,7 +598,14 @@ hook = [
     # accepts an impact. Pulse every involved local port at that boundary so
     # weapon hits feel immediate for both the attacker and victim; the game's
     # original wheelie/crash Rumble Pak events remain intact.
-    { func = "func_800616BC", text = "if (rr64_online_hit(rdram,ctx,1)) return;" },
+    # Item immunity skips only impact-triggered ejection. Health exhaustion,
+    # manual ejection, falling and the complete native detach/recovery stay intact.
+    { func = "func_80036B78", before_vram = 0x80036C30, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif (rr64_mk64_items_immune(rdram,(unsigned)ctx->r21)) goto L_80036C84;\n#endif\n" },
+    { func = "func_8005F7A4", text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif (rr64_mk64_items_ghost(rdram,(unsigned)ctx->r4) || rr64_mk64_items_ghost(rdram,(unsigned)ctx->r5)) return;\n#endif\n" },
+    { func = "func_8005F7A4", before_vram = 0x8005F8CC, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_mk64_items_bike_contact(rdram,(unsigned)ctx->r22,(unsigned)ctx->r23);\n#endif\n" },
+    { func = "func_8005FA18", text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif (rr64_mk64_items_ghost(rdram,(unsigned)ctx->r4) || rr64_mk64_items_ghost(rdram,(unsigned)ctx->r5)) return;\n#endif\n" },
+    { func = "func_80060370", text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif (rr64_mk64_items_ghost(rdram,(unsigned)ctx->r4) || rr64_mk64_items_ghost(rdram,(unsigned)ctx->r5)) return;\n#endif\n" },
+    { func = "func_800616BC", text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif (rr64_mk64_items_immune(rdram,(unsigned)ctx->r5)) return;\n#endif\nif (rr64_online_hit(rdram,ctx,1)) return;" },
     # Skip only stale previous-attacker assist credit. The original damage,
     # knockdown, attribution update and notifications still run. Candidate23
     # faulted inside 63B50 from 617A4 while incrementing that invalid record.
@@ -500,7 +616,7 @@ hook = [
     # Candidate04 faulted at 63B60 through 5FD80 after a manual eject.
     { func = "func_8005FD80", before_vram = 0x8005FDB0, text = "if (!rr64_valid_combat_statistics((unsigned)ctx->r16 + 0x2Cu)) goto rr64_scenery_destroyed;" },
     { func = "func_8005FD80", before_vram = 0x8005FDCC, text = "rr64_scenery_destroyed:;" },
-    { func = "func_80061224", text = "if (rr64_online_hit(rdram,ctx,0)) return; rr64_combat_impact_rumble(rdram, ctx->r4, ctx->r5, 100);" },
+    { func = "func_80061224", text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif (rr64_mk64_items_immune(rdram,(unsigned)ctx->r5)) return;\n#endif\nif (rr64_online_hit(rdram,ctx,0)) return; rr64_combat_impact_rumble(rdram, ctx->r4, ctx->r5, 100);" },
 
     # The game preallocates fourteen bike records (0x868 bytes each) and
     # fourteen rider records (0x5F0 bytes each). When a replicated online
@@ -513,7 +629,7 @@ hook = [
     { func = "func_80058DBC", before_vram = 0x80058F60, text = "ctx->r17 = rr64_music_volume_update(ctx->r17, ctx->r16);" },
     { func = "func_80058DBC", before_vram = 0x80058F80, text = "ctx->r5 = rr64_music_stock_volume(ctx->r5);" },
     { func = "func_8005AEE0", before_vram = 0x8005B290, text = "if (ctx->f2.fl >= ctx->f0.fl) rr64_lod_shadow_finish_hold(rdram, ctx);" },
-    { func = "func_80027A90", text = "rr64_online_game_setup_before_update(rdram); rr64_local_options_menu_begin(rdram); rr64_race_pack_menu_begin(rdram);" },
+    { func = "func_80027A90", text = "if (rr64_online_postrace_wait_for_setup()) return; rr64_online_game_setup_before_update(rdram); rr64_local_options_menu_begin(rdram); rr64_race_pack_menu_begin(rdram);" },
     # Local race options use the original menu records and renderer. A private
     # nine-row table adds Bike Level without overwriting the stock sentinel.
     # Navigation skips each mode's hidden rows; online retains the stock path.

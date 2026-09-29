@@ -682,6 +682,12 @@ bool host_controls_game_setup() {
 
 } // namespace rr64::online_menu
 
+extern "C" void rr64_online_game_setup_restart() {
+    // Preserve host preferences (including course music) across rounds. Only
+    // the private selector's ownership latch belongs to the completed menu.
+    rr64::online_menu::g_guest_character_select_active.store(false,std::memory_order_release);
+}
+
 extern "C" void rr64_online_menu_mode_changed(unsigned int requested_mode) {
     if (requested_mode != 0x20u)
         return;

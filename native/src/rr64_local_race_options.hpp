@@ -38,8 +38,15 @@ constexpr unsigned course_music_bit(std::string_view course) {
     return 0;
 }
 constexpr bool valid_online_options(unsigned bits) {
-    return bits <= 0x07FFFFFFu && (bits & 15u) <= 10u;
+    return bits <= 0x0FFFFFFFu && (bits & 15u) <= 10u;
 }
+// An unset bit preserves ON for existing presets and setup snapshots.
+inline constexpr unsigned mk64_items_disabled_bit = 1u << 27;
+// Live UI/gameplay only. Private physics uses its bound historical item state.
+bool mk64_items_enabled();
+void toggle_mk64_items(std::string_view course);
+// Scoped to the current imported-course menu frame; stock row visibility stays native.
+void show_mk64_items_row(bool visible);
 bool course_music_enabled(std::string_view course);
 void toggle_course_music(std::string_view course);
 // Candidate roster ceiling, not the size of the engine's actor allocation.

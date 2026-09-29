@@ -47,6 +47,10 @@ void rr64_course_items_draw(unsigned char *memory);
 // the weapon box; each native viewport keeps its layout.
 void rr64_course_items_hud_begin(void);
 void rr64_course_items_hud_end(void);
+// A completed native weapon cycle changes only which inventory the HUD shows.
+void rr64_course_items_weapon_switched(unsigned char *, unsigned rider);
+void rr64_course_items_weapon_wrapped(unsigned char *, unsigned rider);
+void rr64_course_items_cycle_publish(unsigned char *);
 // Native three/four-player HUD omits weapon icons. Add only the short item
 // roulette/reward indication, using the native sprite producer per quadrant.
 void rr64_course_items_hud_quadrants(unsigned char *, void *context);

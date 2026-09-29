@@ -1,10 +1,10 @@
-# Multiplayer and course ownership in 1.4
+# Multiplayer and course ownership in 1.4.2
 
 Online remains experimental. Preserve original local multiplayer behavior unless
 a change explicitly requires altering it. The active implementation is the
 host-authoritative runtime in native/src/rr64_netplay.cpp and the authoritative
 step/prediction helpers. Earlier relay/lobby prototypes are not foundations for
-new work. Match the protocol constants in source; 1.4.1 uses protocol 58.
+new work. Match the protocol constants in source; 1.4.2 uses protocol 65.
 
 - The host owns shared game settings, race state and pause. Each participant
   selects their own rider/bike and uses their own full-screen presentation.
@@ -27,3 +27,8 @@ new work. Match the protocol constants in source; 1.4.1 uses protocol 58.
 See RELEASE_CANDIDATE_EDITING_GUIDE.md for feature ownership. Offline tests do
 not establish WAN smoothness, every race mode or the full larger-player-count
 matrix. Keep packet/session evidence private and separate from source exports.
+
+MK64 item awards/hits are host-authoritative; local weapon HUD focus does not mutate inventory.
+Private prediction must omit live rendering/audio callbacks. See mk64-items.md
+for the cycle input boundary, effect snapshots and per-view rendering contracts.
+Recent movement/audio/highlight/menu corrections remain experimental.

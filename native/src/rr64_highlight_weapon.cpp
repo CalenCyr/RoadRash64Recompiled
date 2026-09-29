@@ -29,6 +29,9 @@ unsigned char *scratch_allocation = nullptr;
 unsigned scratch_address = 0;
 thread_local unsigned char *normalized_mapping = nullptr;
 thread_local unsigned normalized_record = 0;
+thread_local float weapon_scale = 1.f;
+thread_local Vec3 weapon_shift{};
+thread_local bool weapon_normalized = false;
 unsigned word(unsigned char *m, unsigned p) { unsigned v = 0; read_u32(m,p,v); return v; }
 unsigned half(unsigned char *m, unsigned p) { std::uint16_t v = 0; read_u16(m,p,v); return v; }
 void hash(Template &t, unsigned v) {
@@ -123,9 +126,10 @@ bool capture_weapon(unsigned char *m, unsigned rider, WeaponPose &out) noexcept 
 
 bool draw_weapon(unsigned char *m, void *context, const WeaponPose &p,
                  const Vec3 &anchor, const Quaternion &rotation, const Vec3 &camera,
-                 unsigned bank) noexcept {
+                 unsigned bank, float model_scale, const Vec3 &pivot) noexcept {
     auto *rdram=m; // Native MEM_* macros name the mapping explicitly.
-    if(!m || !context || !p.valid || !valid_weapon_pose(p) || bank<1 || bank>2) return false;
+    if(!m || !context || !p.valid || !valid_weapon_pose(p) || bank<1 || bank>2 ||
+       !std::isfinite(model_scale) || model_scale <= 0 || model_scale > 1) return false;
     Template source;
     if(!describe(m,p.model,source) || source.count!=p.count || source.identity!=p.topology) return false;
     const auto *caller=static_cast<recomp_context *>(context);
@@ -169,10 +173,21 @@ bool draw_weapon(unsigned char *m, void *context, const WeaponPose &p,
     // F9E8 consumes this CPU-only graph synchronously into ordinary native
     // matrix/display-list buffers. No scratch address is sent to the RSP.
     struct MatrixScope {
-        ~MatrixScope() { normalized_mapping=nullptr; normalized_record=0; }
+        ~MatrixScope() {
+            normalized_mapping=nullptr; normalized_record=0;
+            weapon_scale=1; weapon_shift={}; weapon_normalized=false;
+        }
     } scope;
-    normalized_mapping=normalized ? m : nullptr;
-    normalized_record=normalized ? scratch_address : 0;
+    normalized_mapping=m;
+    normalized_record=scratch_address;
+    weapon_scale=model_scale;
+    weapon_normalized=normalized;
+    for(unsigned i=0;i<3;++i) {
+        weapon_shift[i]=(pivot[i]-anchor[i])*(1-model_scale)*scale;
+        if(!std::isfinite(weapon_shift[i])) return false;
+    }
+    // Record normalization separately from shrink: bank2 still needs its
+    // owned root scaled, and skeletal child matrices must remain untouched.
     func_8000F9E8(m,&c);
     return true;
 }
@@ -186,9 +201,13 @@ void normalize_weapon_matrix(unsigned char *m, unsigned record, unsigned address
     std::array<float,16> matrix{};
     for(unsigned i=0;i<16;++i)
         if(!read_float(m,address+i*4,matrix[i]) || !std::isfinite(matrix[i])) return;
+    for(unsigned row=0;row<3;++row)
+        for(unsigned col=0;col<3;++col) matrix[row*4+col]*=weapon_scale;
+    for(unsigned axis=0;axis<3;++axis) matrix[12+axis]+=weapon_shift[axis];
     for(unsigned row=0;row<4;++row)
         for(unsigned col=0;col<3;++col) {
-            auto &value=matrix[row*4+col]; value*=0.1f;
+            auto &value=matrix[row*4+col];
+            if(weapon_normalized) value*=0.1f;
             if(!std::isfinite(value) || std::abs(value)>=32768) return;
         }
     for(unsigned row=0;row<4;++row)

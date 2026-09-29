@@ -63,10 +63,31 @@ int main(int argc,char**){
     c.after_live.assign(rr64::engine::kRdramSize,7);
     recomp_context context{};context.f_odd=&context.f0.u32h;context.r4=123;
     check(c.input.entry.capture(context));
+    // Item effects, exact partial duration, and unscaled collision geometry
+    // belong to the same diagnostic ABI as the historical native context.
+    c.input.replay_duration_us=8333;
+    auto &items=c.input.items;
+    items.state.enabled=1;items.state.clock=30;items.state.random=17;
+    items.state.riders[13].shrink_until=50;items.elapsed_us=1000000;
+    auto &actor=items.actors[13];
+    actor.owner={0x800d8570,0x80200000,0x80300000,0x80400000,25,3};
+    actor.bike_geometry.body=actor.owner.bike+0x108;
+    actor.bike_geometry.count=3;actor.bike_geometry.active=true;
+    for(unsigned i=0;i<12;++i){
+        actor.bike_geometry.original[i]=std::bit_cast<unsigned>(float(i+1));
+        actor.bike_geometry.written[i]=std::bit_cast<unsigned>(float(i+1)*.5f);
+    }
+    c.expected_native.items=items;c.expected_native.items.elapsed_us+=8333;
     check(write_case(path,c));check(!write_case(path,c));
     ReplayCase read;check(read_case(path,read));
     check(read.header.attempt==42 && read.before_live==c.before_live && read.before_private==c.before_private && read.after_live==c.after_live);
+    check(read.input.replay_duration_us==8333 && read.input.items==c.input.items &&
+          read.expected_native.items==c.expected_native.items);
     recomp_context restored{};check(read.input.entry.restore(restored));check(restored.r4==123 && restored.f_odd==&restored.f0.u32h);
+    {std::fstream file(path,std::ios::binary|std::ios::in|std::ios::out);
+     const std::uint32_t old_version=5;file.seekp(offsetof(ReplayCase::Header,version));
+     file.write(reinterpret_cast<const char*>(&old_version),sizeof(old_version));}
+    check(!read_case(path,read) && read.input.items==c.input.items);
     // Corrupt ABI metadata and truncated images must leave output untouched.
     {std::fstream file(path,std::ios::binary|std::ios::in|std::ios::out);char bad=0;file.write(&bad,1);}
     check(!read_case(path,read) && read.header.attempt==42 && read.before_private==c.before_private);

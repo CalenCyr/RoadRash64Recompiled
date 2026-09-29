@@ -28,37 +28,77 @@ struct Scope {
 };
 thread_local Scope scope;
 
+void hash_identity_word(std::uint64_t &hash, unsigned value) noexcept {
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+        hash ^= static_cast<std::uint8_t>(value >> shift);
+        hash *= 1099511628211ull;
+    }
+}
+
 bool overlap(std::uint32_t a, unsigned as, std::uint32_t b, unsigned bs) noexcept {
     return std::uint64_t(a) < std::uint64_t(b) + bs && std::uint64_t(b) < std::uint64_t(a) + as;
 }
-bool inspect(unsigned char *m, std::uint32_t node, unsigned tier, Binding &out, bool pose_values = true) noexcept {
+bool inspect(unsigned char *m, std::uint32_t node, unsigned tier, Binding &out, bool pose_values = true,
+             BindReport *report = nullptr) noexcept {
+    const auto fail = [&](BindFailure reason) {
+        if (report)
+            report->failure = reason;
+        return false;
+    };
     if (!m || tier > 2 || (node & 3) || !valid_guest_range(node, actor_scene::node_minimum_size) ||
         !read_u32(m, node, out.type) || (out.type != 1 && out.type != 2) ||
         !read_u32(m, node + actor_scene::entity, out.entity) ||
         !valid_guest_range(out.entity, out.type == 1 ? bike::stride : rider::stride))
-        return false;
+        return fail(BindFailure::Node);
     std::uint32_t first = 0;
     if (!read_u32(m, node + actor_scene::lod_models + tier * 4, first) ||
         !capture_model_graph_topology(m, first, out.graph) ||
         out.graph.records[0].type != actor_scene::model_record_triple_transform)
-        return false;
+        return fail(BindFailure::Graph);
     auto &p = out.pose;
     p.valid = true;
     p.record_count = out.graph.record_count;
     p.lod = std::uint16_t(tier);
-    p.topology = out.graph.topology_hash;
+    // Native 1AD24 allocates a linked renderer record for each source node.
+    // Its next_delta is heap spacing: another peer or an earlier local race
+    // can allocate the same model differently. Bind by ordered source-template
+    // identity and native push/pop flags, never those runtime link distances.
+    // The strict engine graph hash remains unchanged for local cache checks.
+    std::uint64_t portable = 14695981039346656037ull;
+    hash_identity_word(portable, 0x33534f50); // POS3 identity contract.
+    hash_identity_word(portable, p.record_count);
+    unsigned root_source = 0;
+    if (!read_u32(m, first + 0x14, root_source) || !valid_guest_range(root_source, 0x14))
+        return fail(BindFailure::PosePointer);
+    if (report) {
+        report->graph = first;
+        report->records = p.record_count;
+        report->lod = p.lod;
+    }
     for (unsigned i = 0; i < out.graph.record_count; ++i) {
         const auto &record = out.graph.records[i];
+        unsigned source = 0;
+        std::uint16_t flags = 0;
+        if (!read_u32(m, record.address + 0x14, source) || !valid_guest_range(source, 4) ||
+            !read_u16(m, record.address + 0xa, flags))
+            return fail(BindFailure::PosePointer);
+        hash_identity_word(portable, record.type);
+        hash_identity_word(portable, flags & 0x7000); // Native root/push/pop, excluding visibility.
+        hash_identity_word(portable, source - root_source);
+        hash_identity_word(portable, record.first_transform);
+        hash_identity_word(portable, record.transform_count);
         if (!record.transform_count)
             continue;
         if (!read_u32(m, record.address + 0xc, out.addresses[i]) || (out.addresses[i] & 3) ||
             !valid_guest_range(out.addresses[i], pose_bytes) ||
             !read_u32(m, record.address + 0x14, out.sources[i]) ||
             !valid_guest_range(out.sources[i], record.type == 0x13 ? 0x14 : 0x44))
-            return false;
+            return fail(BindFailure::PosePointer);
         if (i == 0) {
             if (!read_u16(m, out.sources[i] + 0x12, p.source_bank) || p.source_bank > 2)
-                return false;
+                return fail(BindFailure::SourceBank);
+            if (report)
+                report->bank = p.source_bank;
             continue;
         }
         auto &bone = p.bones[p.count++];
@@ -67,15 +107,20 @@ bool inspect(unsigned char *m, std::uint32_t node, unsigned tier, Binding &out, 
         if (pose_values) {
             for (unsigned j = 0; j < 7; ++j)
                 if (!read_float(m, out.addresses[i] + j * 4, bone.values[j]))
-                    return false;
+                    return fail(BindFailure::PoseValues);
         } else {
             // Only describe the destination layout. Its dormant tier-zero
             // children may never have been animated in the live mapping.
             bone.values[6] = 1;
         }
     }
+    p.topology = portable;
+    if (report) {
+        report->bones = p.count;
+        report->topology = p.topology;
+    }
     if (!valid_pose(p))
-        return false;
+        return fail(BindFailure::PoseValues);
     // A corrupt pointer must not turn a visual override into physics, graph,
     // resource or another pose writes. Preflight the complete write set before
     // either capture admission or the first guest-memory mutation.
@@ -88,13 +133,13 @@ bool inspect(unsigned char *m, std::uint32_t node, unsigned tier, Binding &out, 
         if (overlap(address, pose_bytes, node, actor_scene::node_minimum_size) ||
             overlap(address, pose_bytes, out.entity, out.type == 1 ? bike::stride : rider::stride) ||
             (valid_guest_range(owner, 0xe8) && overlap(address, pose_bytes, owner, 0xe8)))
-            return false;
+            return fail(BindFailure::PoseOverlap);
         for (unsigned j = 0; j < out.graph.record_count; ++j) {
             if (overlap(address, pose_bytes, out.graph.records[j].address, actor_scene::model_record_minimum_size) ||
                 (out.sources[j] && overlap(address, pose_bytes, out.sources[j],
                                           out.graph.records[j].type == 0x13 ? 0x14 : 0x44)) ||
                 (i != j && out.addresses[j] && overlap(address, pose_bytes, out.addresses[j], pose_bytes)))
-                return false;
+                return fail(BindFailure::PoseOverlap);
         }
     }
     return true;
@@ -196,25 +241,45 @@ bool capture_prepared_node(unsigned char *live, unsigned char *prepared,
     return true;
 }
 bool begin_actor(unsigned char *m, std::uint32_t node, unsigned tier, const Pose &recorded,
-                 const Vec3 &anchor, const Quaternion &rotation, const Vec3 &camera) noexcept {
-    if (scope.memory || !finite_vector(anchor) || !finite_vector(camera) || !valid_rotation(rotation))
+                 const Vec3 &anchor, const Quaternion &rotation, const Vec3 &camera,
+                 BindReport *report) noexcept {
+    if (report)
+        *report = {};
+    const auto fail = [&](BindFailure reason) {
+        if (report)
+            report->failure = reason;
         return false;
+    };
+    if (scope.memory)
+        return fail(BindFailure::ActiveScope);
+    if (!finite_vector(anchor) || !finite_vector(camera))
+        return fail(BindFailure::WorldPosition);
+    if (!valid_rotation(rotation))
+        return fail(BindFailure::WorldRotation);
     Binding current{};
-    if (!inspect(m, node, tier, current, false) || !compatible_pose(recorded, current.pose))
+    if (!inspect(m, node, tier, current, false, report))
         return false;
+    if (!compatible_pose(recorded, current.pose))
+        return fail(BindFailure::Compatibility);
     float scale = 0;
     if (!read_float(m, 0x8009dbacu + recorded.source_bank * 4, scale) ||
         !std::isfinite(scale) || scale <= 0 || scale > 1000)
-        return false;
+        return fail(BindFailure::Scale);
     std::array<float, 7> root{};
     const bool single_root = std::none_of(current.graph.records.begin() + 1,
                                          current.graph.records.begin() + current.graph.record_count,
                                          [](const auto &record) { return record.type == 0x13; });
     const bool normalized = recorded.source_bank == 1 && single_root && detailed_bank_ready(m);
+    if (report) {
+        report->scale = scale;
+        report->normalized = normalized;
+        for (unsigned i = 0; i < 3; ++i)
+            report->root[i] = (anchor[i] - camera[i]) * scale;
+    }
     for (unsigned i = 0; i < 3; ++i) {
         root[i] = (anchor[i] - camera[i]) * scale;
         if (!std::isfinite(root[i]) || std::abs(root[i] * (normalized ? 0.1f : 1.0f)) > 32760)
-            return false; // Native matrices ultimately convert to 16.16.
+            return fail(BindFailure::RootRange); // Native matrices ultimately convert to 16.16.
     }
     std::copy(rotation.begin(), rotation.end(), root.begin() + 3);
     unsigned count = 0;
@@ -225,7 +290,7 @@ bool begin_actor(unsigned char *m, std::uint32_t node, unsigned tier, const Pose
         saved.address = current.addresses[i];
         for (unsigned j = 0; j < 7; ++j)
             if (!read_u32(m, saved.address + j * 4, saved.words[j]))
-                return false;
+                return fail(BindFailure::PoseRead);
     }
     // Everything that can fail has completed. These checked low-RDRAM spans
     // cannot become invalid during this single-thread-owned draw scope.
@@ -287,4 +352,11 @@ void end_actor() noexcept {
 }
 bool actor_bound() noexcept { return scope.memory != nullptr; }
 bool detailed_projection_ready(unsigned char *m) noexcept { return detailed_bank_ready(m); }
+const char *bind_failure_name(BindFailure reason) noexcept {
+    constexpr std::array names{"none", "active-scope", "world-position", "world-rotation", "node",
+        "graph", "pose-pointer", "source-bank", "pose-values", "pose-overlap", "compatibility",
+        "scale", "root-range", "pose-read"};
+    const auto index = static_cast<unsigned>(reason);
+    return index < names.size() ? names[index] : "unknown";
+}
 } // namespace rr64::highlights

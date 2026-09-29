@@ -251,7 +251,13 @@ def convert(mk64_rom, rr64_rom, output, helper, motion_helper, progress):
         writer.add_json(course["surfaces"], prepared["surfaces"][slug])
 
     from .audio_banks import effects, songs
+    from .item_assets import extract as extract_item_assets
+    from .item_audio import extract as extract_item_audio
 
+    item_bank, item_art_proof = extract_item_assets(donor)
+    item_audio, item_audio_proof = extract_item_audio(mk64, progress)
+    writer.add("items/original-items.bin", item_bank)
+    writer.add("audio/original-items.bin", item_audio)
     writer.add("audio/course-audio.bin", effects(mk64, progress))
     writer.add("audio/course-music.bin", songs(mk64, progress))
     writer.add_json(
@@ -266,6 +272,8 @@ def convert(mk64_rom, rr64_rom, output, helper, motion_helper, progress):
             "base_rom_sha256": RR64_SHA256,
             "stock_assets_serialized": False,
             "game_launched": False,
+            "item_art": item_art_proof,
+            "item_audio": item_audio_proof,
         },
     )
     catalogue = {
@@ -286,6 +294,9 @@ def convert(mk64_rom, rr64_rom, output, helper, motion_helper, progress):
         "stock_assets_serialized": False,
         "live_acceptance": False,
         "item_box_asset": "items/item-box.bin",
+        "mk64_items_version": 1,
+        "mk64_items_asset": "items/original-items.bin",
+        "mk64_items_audio_asset": "audio/original-items.bin",
         "hazard_asset": "hazards/hazard-models.bin",
         "course_audio_asset": "audio/course-audio.bin",
         "course_music_asset": "audio/course-music.bin",

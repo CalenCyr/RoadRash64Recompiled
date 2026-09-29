@@ -1,8 +1,8 @@
-# Road Rash 64 Recompiled — 1.4.1
+# Road Rash 64 Recompiled — 1.4.2
 
 An unofficial PC recompilation for Windows and experimental native Linux of **Road Rash 64**, built with N64Recomp, N64ModernRuntime, RT64, and RecompFrontend.
 
-**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** This is **1.4.1**, Hotfix. Online multiplayer remains experimental.
+**You must supply your own legally obtained Road Rash 64 USA v1.0 ROM. No ROM or soundtrack is provided.** This is **1.4.2**, Hotfix. Online multiplayer remains experimental.
 
 ## Why this exists, credits, and AI disclosure
 
@@ -14,7 +14,7 @@ I do not want to take credit for creating Road Rash 64, the recompilation techno
 
 ## Getting started
 
-1. Use **RoadRash64Recompiled-v1.4.1-Win64.zip** from the 1.4.1 release. Players do not need the source-code download or a compiler.
+1. Use **RoadRash64Recompiled-v1.4.2-Win64.zip** from the 1.4.2 release. Players do not need the source-code download or a compiler.
 2. Extract the entire ZIP to a writable folder. Do not run it inside the archive.
 3. Open **RoadRash64Recompiled.exe**. Choose **Select Game ROM** and select your supported `.z64`, `.n64`, or `.v64` dump.
 4. After validation, choose **Start Game**. Use **Settings** to configure your controller, graphics, and sound.
@@ -46,7 +46,7 @@ This is the same broad static-recompilation/user-ROM architecture described by [
 
 Draw Distance adjusts terrain and scenery range together. MAX LOD controls rider/bike detail separately. The Music Volume slider covers original and custom music. Local player controls support controller assignment and per-player names. Existing mods targeting the internal 1.0.6 interface remain compatible.
 
-This 1.4.1 release supplies Windows x64, an experimental Linux x86-64 AppImage, and corresponding source. Both platform downloads include a native MK64 importer. The optional texture mod is a separate release download. Linux gameplay and hardware coverage remain limited; offline build and import checks do not replace community testing.
+This 1.4.2 release supplies Windows x64, an experimental Linux x86-64 AppImage, and corresponding source. Both platform downloads include a native MK64 importer. The optional texture mod is a separate release download. Linux gameplay and hardware coverage remain limited; offline build and import checks do not replace community testing.
 
 ## Requirements
 
@@ -66,7 +66,7 @@ Please include host/client roles, player count, exact map/game type, and both ma
 
 ## Known limitations and testing status
 
-- The owner authorized publication after candidate testing. The final version label and behavior-preserving cleanup passed offline checks; the final executable was not launched again. Broader hardware, map and online coverage remains limited.
+- The owner authorized publication with MK64 items still under testing. The latest item-cycle and Lightning fixes passed offline checks but have not received final live visual acceptance. Broader hardware, map and online coverage remains limited.
 - High detail/distance settings can expose performance or visibility problems on particular maps, cameras, and hardware.
 - Mods may affect stability. Reproduce issues with mods disabled where practical.
 - Routine performance logs are disabled. Fatal failures can write `RoadRash64Recompiled-runtime.log` beside the EXE; writing can fail in a protected folder. A normal run need not create a log.
@@ -136,6 +136,6 @@ multiplayer. **50–60% is the recommended starting point** for balanced perform
 See [release notes](RELEASE_NOTES.md) and the
 [contributor feature map](docs/RELEASE_CANDIDATE_EDITING_GUIDE.md).
 
-## 1.4.1 Hotfix
+## 1.4.2
 
-See [release notes](RELEASE_NOTES.md) for profile names, keyboard multiplayer entry, ultrawide framing, imported-course standings and completed Big Game saves. Online peers must all use 1.4.1 (protocol 58).
+See [release notes](RELEASE_NOTES.md) for experimental MK64 items, positional rival engines, optional Insanity bonus races and online corrections. Online peers must all use 1.4.2 (protocol 65).

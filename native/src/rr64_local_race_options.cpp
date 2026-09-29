@@ -21,17 +21,26 @@ std::atomic<unsigned> saved{0}, revision{0};
 std::atomic<unsigned> online_saved{0};
 std::atomic<unsigned> solo_saved{10}, solo_revision{0};
 std::atomic<unsigned> solo_stock{rr64::local_race_options::unknown_thrash_stock};
+std::atomic<bool> items_enabled{true};
+std::atomic<unsigned> items_revision{0};
+unsigned items_written_revision = 0;
+std::filesystem::path items_settings_path;
+unsigned item_preference(unsigned bits) {
+    constexpr unsigned disabled = rr64::local_race_options::mk64_items_disabled_bit;
+    return (bits & ~disabled) | (items_enabled.load(std::memory_order_acquire) ? 0u : disabled);
+}
 unsigned choices() {
     if (rr64::netplay::get_status().active)
         return online_saved.load(std::memory_order_acquire);
-    return rr64_thrash_options_active() ? solo_saved.load(std::memory_order_acquire)
-                                       : saved.load(std::memory_order_acquire);
+    return item_preference(rr64_thrash_options_active() ? solo_saved.load(std::memory_order_acquire)
+                                                       : saved.load(std::memory_order_acquire));
 }
 unsigned written_revision = 0;
 unsigned solo_written_revision = 0;
 std::filesystem::path settings_path;
 std::filesystem::path solo_settings_path;
 bool initialized = false, menu_active = false, restore_choices = true;
+bool mk64_items_row = false;
 // Packed preferences: AI count [0:3], pedestrian density [4:5], bike choice
 // [6:8], Custom Cop Mode [9], allow AI cops [10] (off for old presets). Bike choice 0 follows the
 // track; 1..5 are normal tiers, 6 is Scooter and 7 is Insanity.
@@ -43,6 +52,8 @@ void save(unsigned bits) {
         online_saved.store(bits, std::memory_order_release);
         return;
     }
+    // This preference has its own file; legacy presets retain their format.
+    bits &= ~rr64::local_race_options::mk64_items_disabled_bit;
     if (rr64_thrash_options_active()) {
         rr64::local_race_options::set_thrash_options(bits);
         return;
@@ -124,6 +135,32 @@ bool make_table(unsigned char *rdram) {
 } // namespace
 
 namespace rr64::local_race_options {
+void show_mk64_items_row(bool visible) { mk64_items_row = visible; }
+bool mk64_items_enabled() {
+    if (prediction::active())
+        return false; // Historical effects are supplied by the replay binding.
+    if (netplay::get_physics_rules().active)
+        return (online_saved.load(std::memory_order_acquire) & mk64_items_disabled_bit) == 0;
+    return items_enabled.load(std::memory_order_acquire);
+}
+void toggle_mk64_items(std::string_view course) {
+    if (prediction::active() || !course_music_bit(course))
+        return;
+    const auto status = netplay::get_status();
+    if (status.active && !status.is_host)
+        return;
+    const bool enabled = status.active
+        ? (online_saved.load(std::memory_order_acquire) & mk64_items_disabled_bit) != 0
+        : !items_enabled.load(std::memory_order_acquire);
+    if (items_enabled.exchange(enabled, std::memory_order_acq_rel) != enabled)
+        items_revision.fetch_add(1, std::memory_order_release);
+    if (status.active) {
+        const unsigned bits = online_saved.load(std::memory_order_acquire);
+        online_saved.store(enabled ? bits & ~mk64_items_disabled_bit
+                                   : bits | mk64_items_disabled_bit,
+                           std::memory_order_release);
+    }
+}
 bool course_music_enabled(std::string_view course) {
     return course_music_bit(course) != 0 && (choices() & course_music_mask) != 0;
 }
@@ -138,6 +175,7 @@ void toggle_course_music(std::string_view course) {
 }
 unsigned thrash_options() { return solo_saved.load(std::memory_order_acquire); }
 void set_thrash_options(unsigned bits) {
+    bits &= ~mk64_items_disabled_bit;
     if (valid_online_options(bits) && solo_saved.exchange(bits, std::memory_order_acq_rel) != bits)
         solo_revision.fetch_add(1, std::memory_order_release);
 }
@@ -147,7 +185,8 @@ void set_thrash_stock_options(unsigned bits) {
         solo_revision.fetch_add(1, std::memory_order_release);
 }
 void reset_online() {
-    online_saved.store(saved.load(std::memory_order_acquire), std::memory_order_release);
+    online_saved.store(item_preference(saved.load(std::memory_order_acquire)),
+                       std::memory_order_release);
     restore_choices = true;
 }
 unsigned online_options() { return online_saved.load(std::memory_order_acquire); }
@@ -161,11 +200,21 @@ void initialize(const std::filesystem::path &directory) {
     initialized = true;
     settings_path = directory / "local-race-options.cfg";
     solo_settings_path = directory / "thrash-race-options.cfg";
+    items_settings_path = directory / "mk64-item-options.cfg";
+    {
+        unsigned version = 0, enabled = 0;
+        std::ifstream items_file(items_settings_path);
+        if (items_file >> version >> enabled && version == 1 && enabled <= 1 &&
+            (items_file >> std::ws).eof())
+            items_enabled.store(enabled != 0, std::memory_order_release);
+        online_saved.store(item_preference(online_saved.load(std::memory_order_acquire)),
+                           std::memory_order_release);
+    }
     {
         unsigned version = 0, bits = 0, stock = unknown_thrash_stock;
         std::ifstream solo_file(solo_settings_path);
         if (solo_file >> version >> bits >> stock && (version == 1 || version == 2) &&
-            (version != 1 || bits <= 2047u) && valid_online_options(bits) &&
+            bits <= (version == 1 ? 2047u : 0x07FFFFFFu) && valid_online_options(bits) &&
             (valid_thrash_stock(stock) || stock == unknown_thrash_stock)) {
             solo_saved.store(bits, std::memory_order_release);
             solo_stock.store(stock, std::memory_order_release);
@@ -190,6 +239,14 @@ void initialize(const std::filesystem::path &directory) {
 void flush() {
     if (!initialized)
         return;
+    const unsigned items_current = items_revision.load(std::memory_order_acquire);
+    if (items_current != items_written_revision) {
+        std::ofstream file(items_settings_path, std::ios::trunc);
+        file << "1 " << unsigned(items_enabled.load(std::memory_order_acquire)) << '\n';
+        file.close();
+        if (file)
+            items_written_revision = items_current;
+    }
     const unsigned solo_current = solo_revision.load(std::memory_order_acquire);
     if (solo_current != solo_written_revision) {
         std::ofstream file(solo_settings_path, std::ios::trunc);
@@ -252,6 +309,7 @@ extern "C" int rr64_local_player_roaming(unsigned char *rdram, unsigned actor) {
 
 extern "C" void rr64_local_options_menu_begin(unsigned char *rdram) {
     menu_active = false;
+    mk64_items_row = false;
     if (read(rdram, globals::multiplayer_stage) != 1)
         restore_choices = true;
 }
@@ -338,6 +396,8 @@ extern "C" int rr64_local_options_navigation(unsigned char *rdram) {
     if (!menu_active)
         return -1;
     unsigned mask = 3u | (1u << 4) | (1u << 7) | (1u << 8) | (1u << 9);
+    if (mk64_items_row)
+        mask |= 1u << 6;
     if (choices() & 512u)
         mask |= 1u << 10;
     for (unsigned row = 2; row < 8; ++row)
@@ -359,7 +419,8 @@ extern "C" unsigned rr64_local_options_table(unsigned stock) {
 extern "C" unsigned rr64_local_options_visible(unsigned row, unsigned stock) {
     if (menu_active && row == 10)
         return (choices() & 512u) ? 1u : 0u;
-    return menu_active && (row == 4 || row == 7 || row == 8 || row == 9) ? 1u : stock;
+    return menu_active && (row == 4 || (row == 6 && mk64_items_row) ||
+                           row == 7 || row == 8 || row == 9) ? 1u : stock;
 }
 extern "C" void rr64_local_options_text(unsigned char *rdram, unsigned row, unsigned buffer) {
     if (!menu_active || !valid_guest_range(buffer, 24))
@@ -444,7 +505,18 @@ extern "C" unsigned rr64_local_bike_menu_level(unsigned original) {
 }
 
 extern "C" void rr64_local_bike_ai_pool(unsigned char *rdram, void *context) {
-    if (!context || !local() || (!race_bike_choice && !rr64_custom_cop_active()))
+    if (!rdram || !context)
+        return;
+    // Mode 18's native initializer is 73728 (Big Game). The optional Insanity
+    // chapter borrows Level 5's population requests, but its actual donor
+    // pool lacks some requested families. Normalize those requests here too,
+    // without changing Thrash, local multiplayer, or online ownership rules.
+    const bool campaign_bonus = read(rdram, 0x800D6A7C) == 5 &&
+        read(rdram, 0x800D8548) == 7 &&
+        (read(rdram, globals::main_mode) == 0x18 ||
+         read(rdram, globals::pending_mode) == 0x18) &&
+        !rr64::netplay::get_status().active;
+    if (!campaign_bonus && (!local() || (!race_bike_choice && !rr64_custom_cop_active())))
         return;
     auto &c = *static_cast<recomp_context *>(context);
     const unsigned stack = static_cast<unsigned>(c.r29);

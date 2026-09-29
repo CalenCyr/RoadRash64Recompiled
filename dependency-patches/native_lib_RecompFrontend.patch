@@ -67,10 +67,9 @@ index 1961e29..7796c1d 100644
      SDL_GameController *get_controller_from_joystick_id(SDL_JoystickID joystick_id);
      void add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller);
 diff --git a/recompinput/include/recompinput/input_types.h b/recompinput/include/recompinput/input_types.h
-index f5ed6c0..19cb3ba 100644
 --- a/recompinput/include/recompinput/input_types.h
 +++ b/recompinput/include/recompinput/input_types.h
-@@ -37,10 +37,14 @@ namespace recompinput {
+@@ -37,10 +37,15 @@
          DEFINE_INPUT(TAB_LEFT_MENU, 0, "Tab Left (Menu)") \
          DEFINE_INPUT(TAB_RIGHT_MENU, 0, "Tab Right (Menu)")
  
@@ -82,7 +81,8 @@ index f5ed6c0..19cb3ba 100644
 +        DEFINE_RECOMP_UI_INPUTS() \
 +        DEFINE_INPUT(RR64_EJECT, 0, "Eject from Bike") \
 +        DEFINE_INPUT(RR64_SPOKE_JAM, 0, "Spoke Jam Attack") \
-+        DEFINE_INPUT(RR64_WEAPON_TRICK, 0, "Weapon Trick")
++        DEFINE_INPUT(RR64_WEAPON_TRICK, 0, "Weapon Trick") \
++        DEFINE_INPUT(RR64_MK64_USE_ITEM, 0, "Use MK64 Item")
  
      #define DEFINE_INPUT(name, value, readable) name,
      // - Enum containing every recomp input.
@@ -410,20 +410,28 @@ index c76a1dc..867bb00 100644
          started = true;
          recompui::process_game_started();
 diff --git a/recompinput/src/input_mapping.cpp b/recompinput/src/input_mapping.cpp
-index bfcfef4..e77566e 100644
 --- a/recompinput/src/input_mapping.cpp
 +++ b/recompinput/src/input_mapping.cpp
-@@ -35,6 +35,9 @@ namespace recompinput {
+@@ -6,6 +6,7 @@
+     using default_game_input_device_mapping = std::unordered_map<GameInput, std::vector<InputField>>;
+ 
+     default_game_input_device_mapping default_n64_mappings_keyboard = {
++        { GameInput::RR64_MK64_USE_ITEM, { InputField::keyboard(SDL_SCANCODE_X) } },
+         { GameInput::A,              { InputField::keyboard(SDL_SCANCODE_SPACE) } },
+         { GameInput::B,              { InputField::keyboard(SDL_SCANCODE_LSHIFT) } },
+         { GameInput::L,              { InputField::keyboard(SDL_SCANCODE_E) } },
+@@ -35,6 +36,10 @@
      };
  
      default_game_input_device_mapping default_n64_mappings_controller = {
++        { GameInput::RR64_MK64_USE_ITEM, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_DOWN) } },
 +        { GameInput::RR64_WEAPON_TRICK, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) } },
 +        { GameInput::RR64_EJECT, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSTICK) } },
 +        { GameInput::RR64_SPOKE_JAM, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK) } },
          { GameInput::A,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_SOUTH) } },
          { GameInput::B,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_WEST) } },
          { GameInput::L,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) } },
-@@ -44,7 +47,7 @@ namespace recompinput {
+@@ -44,7 +49,7 @@
          { GameInput::C_LEFT,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_NORTH) } },
          { GameInput::C_RIGHT,        { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, true),  InputField::controller_digital(SDL_CONTROLLER_BUTTON_EAST) } },
          { GameInput::C_UP,           { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK) } },
@@ -879,10 +887,9 @@ index 03ed871..5bbce2f 100644
  
  void recompinput::add_rotation_deltas(SDL_JoystickID joystick_id, float rot_x, float rot_y) {
 diff --git a/recompinput/src/input_types.cpp b/recompinput/src/input_types.cpp
-index c6786e6..b4848fa 100644
 --- a/recompinput/src/input_types.cpp
 +++ b/recompinput/src/input_types.cpp
-@@ -12,11 +12,35 @@ static std::array<std::string, num_game_inputs> game_input_names = {
+@@ -12,11 +12,36 @@
  };
  #undef DEFINE_INPUT
  
@@ -914,6 +921,7 @@ index c6786e6..b4848fa 100644
 +    descriptions[static_cast<size_t>(GameInput::DPAD_LEFT)] = "Move left or change a game-menu option.";
 +    descriptions[static_cast<size_t>(GameInput::DPAD_RIGHT)] = "Move right or change a game-menu option.";
 +    descriptions[static_cast<size_t>(GameInput::RR64_WEAPON_TRICK)] = "Perform a weapon flourish, including when playing as a cop.";
++    descriptions[static_cast<size_t>(GameInput::RR64_MK64_USE_ITEM)] = "Use your held Mario Kart item on imported tracks. Default: D-pad Down or X.";
 +    descriptions[static_cast<size_t>(GameInput::RR64_EJECT)] = "Jump off your bike. Voluntary eject alone does not damage the bike or count as a bust.";
 +    descriptions[static_cast<size_t>(GameInput::RR64_SPOKE_JAM)] = "Hold to attempt a spoke jam with a weapon. With fists selected, press to punch or steal a weapon. Default: right-stick click. Opponent range and timing rules still apply.";
      descriptions[static_cast<size_t>(GameInput::TOGGLE_MENU)] = "Open or close this configuration menu from in game.";

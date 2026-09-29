@@ -160,6 +160,7 @@ unsigned preview_data(unsigned char *rdram, std::size_t index,
 #endif
 
 extern "C" void rr64_race_pack_menu_reset_session(void) {
+    rr64::local_race_options::show_mk64_items_row(false);
 #ifdef RR64_EXPERIMENTAL_COURSE
     frame = {};
     images = {};
@@ -167,6 +168,7 @@ extern "C" void rr64_race_pack_menu_reset_session(void) {
 }
 
 extern "C" void rr64_race_pack_menu_begin(unsigned char *rdram) {
+    rr64::local_race_options::show_mk64_items_row(false);
 #ifdef RR64_EXPERIMENTAL_COURSE
     frame = {rdram, false, {}};
 #endif
@@ -240,6 +242,9 @@ extern "C" int rr64_race_pack_menu_options_input(unsigned char *rdram, unsigned 
 #ifdef RR64_EXPERIMENTAL_COURSE
     const unsigned buttons = word(rdram,menu::menu_buttons);
     const unsigned row = word(rdram,menu::menu_cursor);
+    rr64::local_race_options::show_mk64_items_row(
+        frame.owner == rdram && frame.active && selected() &&
+        rr64::local_race_options::course_music_bit(selected()->course_id));
     const bool blocked = frame.owner==rdram && frame.active && selected() &&
                          (row==5 || row==6 || row==7 || row==10);
     if (blocked && row == 7 && (buttons & 0x60u)) {
@@ -247,6 +252,11 @@ extern "C" int rr64_race_pack_menu_options_input(unsigned char *rdram, unsigned 
         // row for the course's music choice, without extending the menu into
         // the footer or changing any stock-course option.
         rr64::local_race_options::toggle_course_music(selected()->course_id);
+        word(rdram, menu::menu_dirty, 1);
+    }
+    if (blocked && row == 6 && (buttons & 0x60u) &&
+        rr64::local_race_options::course_music_bit(selected()->course_id)) {
+        rr64::local_race_options::toggle_mk64_items(selected()->course_id);
         word(rdram, menu::menu_dirty, 1);
     }
     // Imported courses lack the native traffic/pedestrian/police road graph.
@@ -273,7 +283,11 @@ extern "C" void rr64_race_pack_menu_text(unsigned char *rdram, unsigned row, uns
         // footer that could overlap the online Ready or Custom Cop reminder.
         else if(row==2)label(rdram,buffer,"Forward only");
         else if(row==5 || row==10)label(rdram,buffer,"AI Cops: Unavailable");
-        else if(row==6)label(rdram,buffer,"Traffic: Unavailable");
+        else if(row==6)label(rdram,buffer,
+            rr64::local_race_options::course_music_bit(entry->course_id)
+                ? (rr64::local_race_options::mk64_items_enabled()
+                    ? "MK64 Items: On" : "MK64 Items: Off")
+                : "Traffic: Unavailable");
         else if(row==7)label(rdram,buffer,
             rr64::local_race_options::course_music_enabled(entry->course_id)
                 ? "MK64 Music: On" : "MK64 Music: Off");
@@ -282,7 +296,10 @@ extern "C" void rr64_race_pack_menu_text(unsigned char *rdram, unsigned row, uns
 }
 extern "C" void rr64_race_pack_menu_end(unsigned char *rdram) {
 #ifdef RR64_EXPERIMENTAL_COURSE
-    if (frame.owner == rdram) frame.active = false;
+    if (frame.owner == rdram) {
+        frame.active = false;
+        rr64::local_race_options::show_mk64_items_row(false);
+    }
 #endif
 }
 extern "C" int rr64_race_pack_menu_preview(unsigned char *rdram) {

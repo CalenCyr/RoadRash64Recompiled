@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $result = "#include `"recomp.h`"`n#include `"rr64_native.hpp`"`n#include `"funcs.h`"`n"
 foreach ($entry in @(@('funcs_18.c','func_800728B8'), @('funcs_18.c','func_80073658'),
                     @('funcs_15.c','func_8005F420'), @('funcs_4.c','func_8001A288'),
-                    @('funcs_4.c','func_8001A2E8'))) {
+                    @('funcs_4.c','func_8001A2E8'), @('funcs_10.c','func_80048544'))) {
  $source = Get-Content (Join-Path $GeneratedDirectory $entry[0]) -Raw
  $match = [regex]::Match($source, '(?ms)^RECOMP_FUNC void ' + $entry[1] + '\([^\n]+\) \{.*?(?=^RECOMP_FUNC|\z)')
  if (-not $match.Success) { throw "Missing original helper $($entry[1])" }
@@ -22,5 +22,11 @@ function Slice($file, $name, $start, $end, $required, $tail) {
 $result += Slice 'funcs_7.c' 'test_thrash_bike_selection' '80026C18' '80026EC0' 'rr64_local_bike_menu_level' ''
 $result += Slice 'funcs_7.c' 'test_campaign_ending_exit' '80023800' '80023818' 'rr64_campaign_ending_exit' ''
 $result += Slice 'funcs_6.c' 'test_validated_campaign_save' '80020AA4' '80020ABC' 'rr64_campaign_restore_unlocks' 'L_80020AC0:; L_80020B14:;'
+$result += Slice 'funcs_7.c' 'test_campaign_buy' '8002D374' '8002D480' 'rr64_character_remember' 'L_8002D484:;'
+$result += Slice 'funcs_7.c' 'test_campaign_join' '8002DA84' '8002DBF4' 'rr64_campaign_shop_promotion' 'L_8002DBF8:;'
+$source = Get-Content (Join-Path $GeneratedDirectory 'funcs_7.c') -Raw
+$nativeBikeKind = [regex]::Match($source, '(?ms)^RECOMP_FUNC void func_8002CD4C\([^\n]+\) \{.*?(?=^RECOMP_FUNC|\z)')
+if (-not $nativeBikeKind.Success) { throw 'Missing original shop bike-kind helper' }
+$result += $nativeBikeKind.Value
 [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($OutputPath)) | Out-Null
 [System.IO.File]::WriteAllText($OutputPath,$result,[System.Text.UTF8Encoding]::new($false))

@@ -44,4 +44,19 @@ inline bool restore_timing(unsigned char *m,const authority::NativeTiming &value
     engine::write_u16(m,0x800a659a,value.substeps==2?1:0);
     return true;
 }
+// A host state can land inside a guest input interval. Replay only its tail;
+// the already simulated prefix must not accelerate the rider a second time.
+// Preserve full-step bits exactly. Partial steps retain historical end clocks
+// and native pass count; the four delta-derived quantities have distinct units.
+inline bool slice_timing(authority::NativeTiming &value,unsigned full_us,unsigned remaining_us){
+    if(!authority::valid_timing(value) || !full_us || !remaining_us || remaining_us>full_us)return false;
+    if(remaining_us==full_us)return true;
+    const float ratio=float(remaining_us)/float(full_us);
+    const std::array<float,4> scales{ratio,ratio*ratio,ratio,1.f/ratio};
+    auto candidate=value;
+    for(unsigned i=0;i<scales.size();++i)
+        candidate.bits[i]=std::bit_cast<unsigned>(std::bit_cast<float>(value.bits[i])*scales[i]);
+    if(!authority::valid_timing(candidate))return false;
+    value=candidate;return true;
+}
 }

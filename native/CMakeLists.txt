@@ -299,6 +299,7 @@ add_executable(RoadRash64Recompiled
     src/rr64_local_race_options.cpp
     src/rr64_thrash_options.cpp
     src/rr64_campaign_completion.cpp
+    src/rr64_campaign_bonus_save.cpp
     src/rr64_character_preferences.cpp
     src/rr64_character_menu.cpp
     src/rr64_race_end_trace.cpp
@@ -318,6 +319,9 @@ add_executable(RoadRash64Recompiled
     src/rr64_netplay.cpp
     src/rr64_online_menu.cpp
     src/rr64_online_race_sync.cpp
+    src/rr64_online_audio.cpp
+    src/rr64_rival_engine.cpp
+    src/rr64_rival_engine_config.cpp
     src/rr64_online_terrain.cpp
     src/rr64_highlights.cpp
     src/rr64_highlight_audio.cpp
@@ -359,6 +363,10 @@ if(RR64_EXPERIMENTAL_COURSE)
         src/rr64_experimental_course.cpp src/rr64_experimental_course_route.cpp
         src/rr64_experimental_course_policy.cpp src/rr64_course_material.cpp
         src/rr64_course_items.cpp src/rr64_course_item_render.cpp src/rr64_course_sky.cpp
+        src/rr64_mk64_items.cpp src/rr64_mk64_item_kernel.cpp
+        src/rr64_mk64_item_render.cpp src/rr64_mk64_item_hud.cpp src/rr64_mk64_item_audio.cpp
+        src/rr64_mk64_item_assets.cpp src/rr64_mk64_item_audio_runtime.cpp
+        src/rr64_mk64_item_material.cpp
         src/rr64_course_audio.cpp src/rr64_course_audio_world.cpp
         src/rr64_course_music.cpp
         src/rr64_course_pickups.cpp
@@ -376,7 +384,7 @@ endif()
 # Config::load_config exposes the runtime's JSON type in its callback ABI.
 # RT64 ships a different JSON version; use librecomp's header for this caller
 # in both course-enabled and ordinary builds, without changing RT64's headers.
-set_property(SOURCE src/rr64_race_pack_mod_ui.cpp src/rr64_mk64_import.cpp
+set_property(SOURCE src/rr64_rival_engine_config.cpp src/rr64_race_pack_mod_ui.cpp src/rr64_mk64_import.cpp
     src/rr64_import_install.cpp APPEND PROPERTY
     INCLUDE_DIRECTORIES "${N64MODERN_RUNTIME_ROOT}/thirdparty")
 
@@ -471,6 +479,79 @@ add_executable(RR64NetplaySmoke EXCLUDE_FROM_ALL
     src/rr64_highlight_recording.cpp
 )
 target_link_libraries(RR64NetplaySmoke PRIVATE libzstd_static)
+add_executable(RR64HighlightPoseSmoke EXCLUDE_FROM_ALL
+    tests/rr64_highlight_pose_smoke.cpp src/rr64_highlight_pose.cpp
+    src/rr64_actor_pose.cpp src/rr64_highlight_recording.cpp src/rr64_highlight_network.cpp)
+target_link_libraries(RR64HighlightPoseSmoke PRIVATE libzstd_static)
+target_include_directories(RR64HighlightPoseSmoke PRIVATE $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES>)
+target_compile_features(RR64HighlightPoseSmoke PRIVATE cxx_std_20)
+add_executable(RR64HighlightRecordingSmoke EXCLUDE_FROM_ALL
+    tests/rr64_highlight_recording_smoke.cpp src/rr64_highlight_recording.cpp)
+target_include_directories(RR64HighlightRecordingSmoke PRIVATE
+    $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES>)
+target_compile_features(RR64HighlightRecordingSmoke PRIVATE cxx_std_20)
+add_executable(RR64PostraceChannelSmoke EXCLUDE_FROM_ALL
+    tests/rr64_authoritative_channel_smoke.cpp
+    src/rr64_highlight_network.cpp src/rr64_highlight_recording.cpp)
+add_executable(RR64Mk64ItemKernelSmoke EXCLUDE_FROM_ALL
+    tests/rr64_mk64_item_kernel_smoke.cpp src/rr64_mk64_item_kernel.cpp)
+target_include_directories(RR64Mk64ItemKernelSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_features(RR64Mk64ItemKernelSmoke PRIVATE cxx_std_20)
+add_executable(RR64Mk64ItemReviewSmoke EXCLUDE_FROM_ALL
+    tests/rr64_mk64_item_review_smoke.cpp src/rr64_mk64_item_kernel.cpp)
+target_include_directories(RR64Mk64ItemReviewSmoke PRIVATE src)
+target_compile_features(RR64Mk64ItemReviewSmoke PRIVATE cxx_std_20)
+include(tests/rr64_mk64_item_input_fixture.cmake)
+include(tests/rr64_mk64_item_presentation_fixture.cmake)
+include(tests/rr64_mk64_item_hud_fixture.cmake)
+add_executable(RR64Mk64ItemMaterialSmoke EXCLUDE_FROM_ALL
+    tests/rr64_mk64_item_material_smoke.cpp src/rr64_mk64_item_material.cpp)
+target_include_directories(RR64Mk64ItemMaterialSmoke PRIVATE
+    $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES>)
+target_compile_features(RR64Mk64ItemMaterialSmoke PRIVATE cxx_std_20)
+add_executable(RR64Mk64ItemChannelSmoke EXCLUDE_FROM_ALL
+    tests/rr64_mk64_item_channel_smoke.cpp
+    src/rr64_highlight_network.cpp src/rr64_highlight_recording.cpp)
+target_include_directories(RR64Mk64ItemChannelSmoke PRIVATE
+    $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES>)
+target_compile_features(RR64Mk64ItemChannelSmoke PRIVATE cxx_std_20)
+target_link_libraries(RR64Mk64ItemChannelSmoke PRIVATE libzstd_static)
+if(WIN32)
+    target_link_libraries(RR64Mk64ItemChannelSmoke PRIVATE Ws2_32.lib)
+    target_link_options(RR64Mk64ItemChannelSmoke PRIVATE "/STACK:8388608")
+endif()
+add_executable(RR64OnlineGuestFlowSmoke EXCLUDE_FROM_ALL tests/rr64_online_guest_flow_smoke.cpp)
+add_executable(RR64OnlineRaceMemorySmoke EXCLUDE_FROM_ALL tests/rr64_online_race_memory_smoke.cpp)
+add_executable(RR64PredictionPresentationSmoke EXCLUDE_FROM_ALL tests/rr64_prediction_presentation_smoke.cpp)
+add_executable(RR64PredictionReconcileSmoke EXCLUDE_FROM_ALL tests/rr64_prediction_reconcile_smoke.cpp)
+add_executable(RR64PredictionCameraSmoke EXCLUDE_FROM_ALL tests/rr64_prediction_camera_smoke.cpp)
+add_executable(RR64PredictionCaptureSmoke EXCLUDE_FROM_ALL tests/rr64_prediction_capture_smoke.cpp)
+add_executable(RR64PredictionCaseSmoke EXCLUDE_FROM_ALL tests/rr64_prediction_case_smoke.cpp)
+add_executable(RR64AuthoritativeResamplingSmoke EXCLUDE_FROM_ALL tests/rr64_authoritative_resampling_smoke.cpp)
+add_executable(RR64AuthoritativeRoundSmoke EXCLUDE_FROM_ALL tests/rr64_authoritative_round_smoke.cpp)
+foreach(RR64_PREDICTION_CHECK RR64PredictionPresentationSmoke RR64PredictionReconcileSmoke RR64PredictionCaptureSmoke RR64PredictionCaseSmoke RR64PredictionCameraSmoke RR64AuthoritativeResamplingSmoke RR64AuthoritativeRoundSmoke)
+    target_include_directories(${RR64_PREDICTION_CHECK} PRIVATE $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES>)
+    target_compile_features(${RR64_PREDICTION_CHECK} PRIVATE cxx_std_20)
+endforeach()
+set(RR64_POSTRACE_FIXTURE "${CMAKE_CURRENT_BINARY_DIR}/rr64_online_postrace_fixture.cpp")
+add_custom_command(OUTPUT "${RR64_POSTRACE_FIXTURE}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_online_postrace_fixture.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_10.c" "${RR64_POSTRACE_FIXTURE}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_10.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_7.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_online_postrace_fixture.py"
+    VERBATIM)
+target_sources(RR64OnlineGuestFlowSmoke PRIVATE "${RR64_POSTRACE_FIXTURE}")
+target_compile_definitions(RR64OnlineGuestFlowSmoke PRIVATE RR64_POSTRACE_NATIVE_SETTERS=1)
+foreach(RR64_POSTRACE_CHECK RR64PostraceChannelSmoke RR64OnlineGuestFlowSmoke RR64OnlineRaceMemorySmoke)
+    target_include_directories(${RR64_POSTRACE_CHECK} PRIVATE $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES>)
+    target_compile_features(${RR64_POSTRACE_CHECK} PRIVATE cxx_std_20)
+endforeach()
+target_link_libraries(RR64PostraceChannelSmoke PRIVATE libzstd_static)
+if(WIN32)
+    target_link_libraries(RR64PostraceChannelSmoke PRIVATE Ws2_32.lib)
+    target_link_options(RR64PostraceChannelSmoke PRIVATE "/STACK:8388608")
+endif()
 target_include_directories(RR64NetplaySmoke PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/rt64/src/contrib/zstd/lib"
@@ -567,6 +648,7 @@ target_include_directories(RR64ControllerSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_link_directories(RR64ControllerSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
 target_link_libraries(RR64ControllerSmoke PRIVATE ${RR64_SDL2_TARGET})
 add_executable(RR64LocalRaceOptionsSmoke EXCLUDE_FROM_ALL tests/rr64_local_race_options_smoke.cpp src/rr64_local_race_options.cpp src/rr64_thrash_options.cpp src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp)
+include(tests/rr64_mk64_item_options_fixture.cmake)
 target_compile_features(RR64LocalRaceOptionsSmoke PRIVATE cxx_std_20)
 target_include_directories(RR64LocalRaceOptionsSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
@@ -850,7 +932,7 @@ if(RR64_TEST_POWERSHELL)
     rr64_generated_world_test(RR64ProfileNamesSmoke generate_profile_names_fixture.ps1
         rr64_profile_names_smoke.cpp src/rr64_profile_names.cpp src/rr64_name_entry.cpp)
     rr64_generated_world_test(RR64CampaignBikeSmoke generate_campaign_bike_fixture.ps1
-        rr64_campaign_bike_smoke.cpp src/rr64_campaign_completion.cpp
+        rr64_campaign_bike_smoke.cpp src/rr64_campaign_completion.cpp src/rr64_campaign_bonus_save.cpp
         src/rr64_local_race_options.cpp src/rr64_thrash_options.cpp
         src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp
         src/rr64_character_menu.cpp src/rr64_character_preferences.cpp)
@@ -944,6 +1026,12 @@ target_include_directories(RR64NameEntryNavigationSmoke PRIVATE
 # ROM-free validation for the shared stock-menu edge/repeat filter. Gameplay
 # steering bypasses this filter and is covered by the runtime mode gate.
 include(tests/rr64_online_menu_refresh_fixture.cmake)
+include(tests/rr64_online_audio_fixture.cmake)
+include(tests/rr64_rival_engine_fixture.cmake)
+include(tests/rr64_rival_engine_config_fixture.cmake)
+include(tests/rr64_campaign_bonus_fixture.cmake)
+include(tests/rr64_mk64_item_native_fixture.cmake)
+include(tests/rr64_campaign_bonus_save_fixture.cmake)
 add_executable(RR64MenuNavigationSmoke EXCLUDE_FROM_ALL
     tests/rr64_menu_navigation_smoke.cpp
     src/rr64_menu_navigation.cpp
@@ -1057,6 +1145,10 @@ add_executable(RR64CharacterPreferencesSmoke EXCLUDE_FROM_ALL
 target_include_directories(RR64CharacterPreferencesSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(RR64CharacterPreferencesSmoke PRIVATE cxx_std_20)
 find_package(Threads REQUIRED)
+add_executable(RR64SyncLogSmoke EXCLUDE_FROM_ALL tests/rr64_sync_log_smoke.cpp)
+target_include_directories(RR64SyncLogSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_features(RR64SyncLogSmoke PRIVATE cxx_std_20)
+target_link_libraries(RR64SyncLogSmoke PRIVATE Threads::Threads)
 target_link_libraries(RR64CharacterPreferencesSmoke PRIVATE Threads::Threads)
 
 add_executable(RR64CharacterMenuSmoke EXCLUDE_FROM_ALL
@@ -1140,3 +1232,4 @@ if(NOT WIN32)
         target_compile_options(${RR64_CHECK} PRIVATE -UNDEBUG)
     endforeach()
 endif()
+include(tests/rr64_mk64_item_material_call_fixture.cmake)

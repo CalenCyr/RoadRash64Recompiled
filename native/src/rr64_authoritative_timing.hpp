@@ -23,4 +23,12 @@ inline bool valid_timing(const NativeTiming &timing){
     }
     return true;
 }
+// Duration belongs to native simulation, not renderer FPS or packet arrival.
+// Round once per input; host and guest then share the same integer timeline.
+inline std::uint32_t duration_us(const NativeTiming &timing){
+    if(!valid_timing(timing))return 0;
+    const double us=double(std::bit_cast<float>(timing.bits[0]))*1000000.0;
+    if(us<1.0 || us>250000.0)return 0;
+    return static_cast<std::uint32_t>(std::llround(us));
+}
 }

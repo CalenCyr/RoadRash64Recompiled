@@ -5,7 +5,7 @@ Private September 26 follow-up. No game was launched for these changes.
 ## Completion save
 
 The original `73054` terminal branch sends Level 5 completion to mode `38`.
-That mode runs `22C90`: the completion summary, difficulty reward and credits.
+That mode runs `22C90`: the completion summary, original-gang reward and credits.
 Its final exit at `23810` previously requested main-menu mode `1`, leaving no
 opportunity to save the newly completed campaign.
 
@@ -14,14 +14,15 @@ with Save Game highlighted. The original `73658` initializer remains intact:
 it selects track zero when all eight Level 5 tracks are qualified and leaves the
 campaign at valid level index four. It does not charge a race fee or alter the
 profile. The user still chooses a native save slot and confirms any overwrite.
-The original ending, credits, difficulty rewards and achievement hooks remain.
+The original ending, credits, gang rewards and achievement hooks remain.
 
 When native Pak scanning accepts a completed saved profile, the new helper
 restores the same normal and special tier flags that the original ending grants.
 It also verifies the copied profile's version and checksum without changing the
 record. Completion follows the native rule: level index four and all eight final
-qualification nibbles nonzero. The native reward is Insanity for difficulty
-values one/two, Scooter for three/four, and the cop tier for zero. No new save
+qualification nibbles nonzero. The native reward is Insanity for original-gang
+values one/two, Scooter for three/four, and the cop tier for zero. Profile +20 is
+assigned when joining the original gang; it is not the difficulty setting. No new save
 format, sidecar unlock file, achievement dependency or automatic overwrite is
 introduced. After restarting, open/load the completed Big Game save through the
 native Load Game menu before using its earned tier in Thrash or local multiplayer.
@@ -35,7 +36,7 @@ Its private-ROM test passed:
 - Ending exit reaches the native Save menu; profile bytes, money, stack and
   return address stay intact. Later ordinary entries retain their original
   behavior, and a completed record chooses a valid replay track.
-- Thirty saved rewards (six slots, five difficulty values) match the original
+- Thirty saved rewards (six slots, five original-gang values) match the original
   `5F420` unlock helper. Incomplete levels/tracks, invalid versions, corrupt
   checksums and the native rejected-checksum branch do not grant rewards.
 - Ninety solo Insanity selections (fifteen map tiers, Custom Cop off/on, bike
@@ -69,3 +70,12 @@ reproduced. Keep the working implementation; no further selection-only run is
 required. Evidence is in root
 `analysis/race-rank-20260926/session-20260926-110922-325/`.
 This acceptance does not establish live campaign-save or race-ranking behavior.
+
+## September 27 optional bonus extension
+
+The owner subsequently requested optional Insanity races after the original
+ending. [The bonus campaign contract](insanity-campaign.md) extends completed
+Level 5's purchase/Join path into eight replayable bonus races. It preserves this
+original ending and Save return. Its versioned Pak tail stores the additional
+qualification word; the 248-byte original profile remains backward compatible.
+The earlier no-save-format-change statement describes the September 26 fix.

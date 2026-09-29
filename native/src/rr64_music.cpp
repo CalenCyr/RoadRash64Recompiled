@@ -3,6 +3,7 @@
 #include "rr64_music_media.hpp"
 #ifdef RR64_EXPERIMENTAL_COURSE
 #include "rr64_course_music.hpp"
+#include "rr64_mk64_item_audio.hpp"
 #include "rr64_experimental_course.hpp"
 #endif
 #ifndef RR64_MUSIC_HEADLESS
@@ -237,6 +238,7 @@ void mix(std::span<std::int16_t> output, std::uint32_t rate) {
     // Only the music bed is ducked. Voice, impact and other game effects are
     // mixed independently and retain their configured volume.
     gain *= 1.0f - course_music::replacement_gain();
+    gain *= mk64_items::item_music_gain();
 #endif
     for (std::size_t i = 0; i + 1 < output.size(); i += 2) {
         auto a = std::size_t(cursor) % frames, b = (a + 1) % frames;
@@ -274,6 +276,7 @@ extern "C" unsigned int rr64_music_volume_update(unsigned int original, unsigned
     float gain = rr64::music::volume.load();
 #ifdef RR64_EXPERIMENTAL_COURSE
     gain *= 1.0f - rr64::course_music::replacement_gain();
+    gain *= rr64::mk64_items::item_music_gain();
 #endif
     const bool changed =
         !state->valid || state->key != sequence || state->muted != now || state->gain != gain;
@@ -284,6 +287,7 @@ extern "C" unsigned int rr64_music_stock_volume(unsigned int original) {
     float gain = rr64::music::volume_gain();
 #ifdef RR64_EXPERIMENTAL_COURSE
     gain *= 1.0f - rr64::course_music::replacement_gain();
+    gain *= rr64::mk64_items::item_music_gain();
 #endif
     return rr64::music::playing.load() ? 0u : unsigned(double(original) * gain);
 }

@@ -269,20 +269,53 @@ class Donor:
         return notes
 
     def effect(self, group, id, seconds):
-        table = {0: 0x12F, 1: 0x6B3}[group]
+        table = {0: 0x12F, 1: 0x6B3, 2: 0x1199, 3: 0x1715, 4: 0x17BD, 5: 0x26A1}[group]
         pc = u16(self.seq, table + id * 2)
         entry = pc
         inst = 0
         volume = 127
-        large = group == 1
+        large = group in (1, 2, 4)
         notes = []
         tick = 0
-        for _ in range(100):
+        stack = []
+        for _ in range(12000):
+            if tick >= seconds * TICKS:
+                break
             cmd = self.seq[pc]
             pc += 1
             if cmd == 0xFF:
-                break
-            if cmd == 0xC1:
+                if not stack:
+                    break
+                pc = stack.pop()[0]
+            elif cmd in (0xFB, 0xFC):
+                target = u16(self.seq, pc)
+                pc += 2
+                if cmd == 0xFC:
+                    if len(stack) >= 8:
+                        raise ValueError("Item sound channel call depth")
+                    stack.append((pc, 0))
+                pc = target
+            elif cmd in (0xFD, 0xFE):
+                delay = 1
+                if cmd == 0xFD:
+                    delay = self.seq[pc]
+                    pc += 1
+                    if delay & 128:
+                        delay = ((delay & 127) << 8) | self.seq[pc]
+                        pc += 1
+                tick += delay
+            elif cmd == 0xF8:
+                count = self.seq[pc] or 256
+                pc += 1
+                if len(stack) >= 8:
+                    raise ValueError("Item sound channel loop depth")
+                stack.append((pc, count))
+            elif cmd == 0xF7:
+                target, count = stack.pop()
+                if count > 1:
+                    stack.append((target, count - 1))
+                    pc = target
+            elif cmd == 0xC1:
                 inst = self.seq[pc]
                 pc += 1
             elif cmd == 0xDF:
@@ -304,6 +337,8 @@ class Donor:
                 tick += cmd & 15
             else:
                 raise ValueError(f"Unsupported channel {cmd:x}@{pc-1:x}")
+        else:
+            raise ValueError("Item sound channel command budget")
         if not notes:
             raise ValueError("No effect notes")
         signal = np.zeros(math.ceil(seconds * RATE), np.float64)

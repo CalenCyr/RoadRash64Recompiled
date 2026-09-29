@@ -1,5 +1,6 @@
 #pragma once
 #include "rr64_campaign_completion.hpp"
+#include "rr64_campaign_bonus_save.hpp"
 #include "rr64_roaming_route.hpp"
 #include "rr64_race_end_trace.hpp"
 #include "rr64_custom_cop.hpp"
@@ -7,6 +8,7 @@
 #include "rr64_race_pack_menu.hpp"
 #include "rr64_online_terrain.hpp"
 #include "rr64_highlights.hpp"
+#include "rr64_rival_engine.hpp"
 #include "rr64_highlight_camera.hpp"
 #include "rr64_offline_modifiers.hpp"
 #include "rr64_offline_modifiers_bikes.hpp"
@@ -14,6 +16,9 @@
 #include "rr64_experimental_course.hpp"
 #include "rr64_course_material.hpp"
 #include "rr64_course_items.hpp"
+#include "rr64_mk64_items.hpp"
+#include "rr64_mk64_item_hud.hpp"
+#include "rr64_mk64_item_material.hpp"
 #include "rr64_course_pickups.hpp"
 #include "rr64_course_walls.hpp"
 #include "rr64_course_hazards.hpp"
@@ -186,6 +191,9 @@ void rr64_trace_terrain_scene(unsigned char *rdram);
 void rr64_trace_lod_node(unsigned char *rdram, unsigned int kind, unsigned int node);
 unsigned int rr64_online_menu_route_mode(unsigned int requested_mode);
 void rr64_online_menu_mode_changed(unsigned int requested_mode);
+unsigned rr64_online_postrace_route_mode(unsigned char *rdram,unsigned requested_mode);
+int rr64_online_postrace_update(unsigned char *rdram,unsigned mode);
+int rr64_online_postrace_wait_for_setup();
 unsigned int rr64_online_bike_profile(unsigned char* rdram, unsigned int racer, unsigned int profile);
 void rr64_online_bike_profiles_reset();
 void rr64_online_main_menu_draw(unsigned char *memory, void *context);
@@ -263,9 +271,16 @@ void rr64_achievement_campaign_completed(unsigned char *rdram);
 void rr64_register_overlays();
 
 #ifdef __cplusplus
-extern "C"
+extern "C" {
 #endif
 void rr64_online_sync_before_pose(unsigned char *rdram);
+void rr64_online_audio_owner(unsigned char *rdram, void *context);
+void rr64_online_audio_listener(unsigned char *rdram, void *context);
+void rr64_online_audio_weapon_source(unsigned char *rdram, void *context, unsigned source_body);
+void rr64_online_audio_weapon_gain(unsigned char *rdram, void *context);
+#ifdef __cplusplus
+}
+#endif
 
 #ifdef __cplusplus
 extern "C" {

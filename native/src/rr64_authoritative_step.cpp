@@ -3,7 +3,11 @@
 #include "rr64_authoritative_native.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_netplay.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_mk64_items.hpp"
+#endif
 #include "rr64_online_terrain.hpp"
+#include "rr64_prediction_timing.hpp"
 
 extern "C" int rr64_online_authority_capture(unsigned char*,const void*);
 extern "C" void rr64_prediction_capture_reset();
@@ -81,8 +85,13 @@ extern "C" int rr64_authority_step_begin(unsigned char *m,void *context) {
        !engine::read_u8(m,engine::globals::controller_stick_x+controller,x) ||
        !engine::read_u8(m,engine::globals::controller_stick_y+controller,y))return 1;
     authority::Command accepted{};
+    authority::NativeTiming timing{};
+    if(!prediction::capture_timing(m,timing) || !authority::duration_us(timing)){
+        netplay::authority_fail("native input duration unavailable");return 0;
+    }
+    const unsigned duration_us=authority::duration_us(timing);
     const auto actions=static_cast<std::uint8_t>(rr64_authority_take_actions(controller));
-    if(!netplay::authority_queue_input_recorded(buttons,static_cast<std::int8_t>(x),static_cast<std::int8_t>(y),accepted,actions)){netplay::authority_fail("input admission failed");return 1;}
+    if(!netplay::authority_queue_input_recorded(buttons,static_cast<std::int8_t>(x),static_cast<std::int8_t>(y),accepted,actions,duration_us)){netplay::authority_fail("input admission failed");return 1;}
     if(!status.is_host){
         client_pending=rr64_prediction_capture_before(m,&accepted,context)!=0;
         if(!client_pending)netplay::authority_fail("prediction baseline capture failed");
@@ -91,12 +100,21 @@ extern "C" int rr64_authority_step_begin(unsigned char *m,void *context) {
         }
     }
     if(status.is_host){
-        running=netplay::authority_begin_step(staged);
+        running=netplay::authority_begin_step(staged,duration_us);
         if(!running)netplay::authority_fail("native step could not begin");
-        else for(unsigned slot=0;slot<14;++slot)if(required&(1u<<slot))
-            if(!rr64_authority_eject_step(m,context,slot,staged.inputs[slot].actions)){
-                failed=true;netplay::authority_fail("host eject state invalid");break;
-            }
+        else {
+            for(unsigned slot=0;slot<14;++slot)if(required&(1u<<slot))
+                if(!rr64_authority_eject_step(m,context,slot,staged.inputs[slot].actions)){
+                    failed=true;netplay::authority_fail("host eject state invalid");break;
+                }
+#ifdef RR64_EXPERIMENTAL_COURSE
+            // Only the authenticated host command stages gameplay. Guest live
+            // prediction and private replay must never launch or consume items.
+            if(!failed)for(unsigned slot=0;slot<14;++slot)if((required&(1u<<slot)) &&
+                (staged.inputs[slot].actions&authority::action_mk64_item))
+                mk64_items::stage_use(slot,staged.inputs[slot].y);
+#endif
+        }
     }
     return !failed;
 }

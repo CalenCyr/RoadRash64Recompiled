@@ -1,10 +1,16 @@
 #pragma once
 #ifdef __cplusplus
 #include "rr64_course_hazard_state.hpp"
+#include "rr64_mk64_item_state.hpp"
 namespace rr64::highlights {
 void reset() noexcept;
 // Read-only render override, never installed in the live hazard simulation.
 const netplay::CourseHazardState *render_hazards() noexcept;
+const mk64_items::Snapshot *render_items() noexcept;
+// Recorded world anchors only during playback drawing; never live physics.
+bool render_rider_anchors(unsigned canonical_slot, std::array<float, 3> &bike,
+                          std::array<float, 3> &rider, bool &attached,
+                          std::array<float, 3> &bike_origin) noexcept;
 }
 extern "C" {
 #endif

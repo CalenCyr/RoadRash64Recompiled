@@ -37,10 +37,10 @@ def signed(x):
 
 
 class MusicDonor(Donor):
-    def __init__(self, rom, seqid):
+    def __init__(self, rom, seqid, bank_id=None):
         super().__init__(rom)
         self.seqid = seqid
-        self.bankid = SEQUENCE_BANKS[seqid]
+        self.bankid = SEQUENCE_BANKS[seqid] if bank_id is None else bank_id
         off, size = struct.unpack_from(">II", self.rom, 0xBC5F60 + 4 + seqid * 8)
         self.seq = bytearray(self.rom[0xBC5F60 + off : 0xBC5F60 + off + size])
         ctl = self.rom[0x966260:0x979AA0]

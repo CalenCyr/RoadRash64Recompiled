@@ -13,6 +13,7 @@
 #include "rr64_traffic_sync_capture.hpp"
 #ifdef RR64_EXPERIMENTAL_COURSE
 #include "rr64_course_hazards.hpp"
+#include "rr64_mk64_items.hpp"
 #endif
 #include <atomic>
 #include <bit>
@@ -163,6 +164,13 @@ struct State {
     std::array<std::uint32_t, maximum_racers> recording_generation{};
     std::uint64_t recovery_cuts = 0, identity_cuts = 0;
     std::uint64_t replay_detailed = 0, replay_coarse = 0, replay_rejected = 0;
+    struct BindingFailure {
+        bool recorded = false, active = false;
+        unsigned node = 0, canonical = 0;
+        BindReport source{}, local{};
+        Vec3 anchor{}, camera{};
+    };
+    std::array<BindingFailure, maximum_racers * 2> replay_failures{};
 };
 // The private-pose producer owns a different mutex. Its admission query must
 // not acquire this recorder's lock while deciding whether to prepare a pair.
@@ -195,6 +203,24 @@ bool allocate(State &s) {
 }
 void finish(State &s) {
     detail_mapping.store(nullptr, std::memory_order_release);
+    // Flush bounded rejection samples at the existing game-thread handoff.
+    // The render path only fills fixed storage; it never logs or allocates.
+    for (unsigned i = 0; i < s.replay_failures.size(); ++i) {
+        const auto &f = s.replay_failures[i];
+        if (!f.recorded)
+            continue;
+        std::fprintf(stderr,
+            "[highlights-bind] host=%u slot=%u canonical=%u rider=%u node=%08X active=%u reason=%s "
+            "recorded=%u/%u/%u/%u/%016llX local=%u/%u/%u/%u/%016llX graph=%08X "
+            "anchor=%.9g,%.9g,%.9g camera=%.9g,%.9g,%.9g scale=%.9g normalized=%u root=%.9g,%.9g,%.9g\n",
+            unsigned(s.host), i / 2, f.canonical, i % 2, f.node, unsigned(f.active),
+            bind_failure_name(f.local.failure), f.source.records, f.source.bones, f.source.lod, f.source.bank,
+            static_cast<unsigned long long>(f.source.topology), f.local.records, f.local.bones, f.local.lod, f.local.bank,
+            static_cast<unsigned long long>(f.local.topology), f.local.graph,
+            f.anchor[0], f.anchor[1], f.anchor[2], f.camera[0], f.camera[1], f.camera[2],
+            f.local.scale, unsigned(f.local.normalized), f.local.root[0], f.local.root[1], f.local.root[2]);
+    }
+    s.replay_failures = {};
     if (s.replay_detailed || s.replay_coarse || s.replay_rejected) {
         std::fprintf(stderr, "[highlights] Replay detail: tier0=%llu coarse=%llu rejected=%llu.\n",
                      static_cast<unsigned long long>(s.replay_detailed),
@@ -339,12 +365,30 @@ void reset() noexcept {
     clear_detail();
     detail_mapping.store(nullptr, std::memory_order_release);
     s.replay_detailed = s.replay_coarse = s.replay_rejected = 0;
+    s.replay_failures = {};
     if (s.recorder)
         s.recorder->reset();
 }
 const netplay::CourseHazardState *render_hazards() noexcept {
     auto &s = state();
     return s.draw && s.playing && s.shown ? &s.shown->hazards : nullptr;
+}
+const mk64_items::Snapshot *render_items() noexcept {
+    auto &s = state();
+    return s.draw && s.playing && s.shown ? &s.shown->items : nullptr;
+}
+bool render_rider_anchors(unsigned slot, std::array<float, 3> &bike,
+                          std::array<float, 3> &rider, bool &attached,
+                          std::array<float, 3> &bike_origin) noexcept {
+    auto &s = state();
+    if (!s.draw || !s.playing || !s.shown || slot >= maximum_racers || !s.shown->racers[slot].active)
+        return false;
+    const auto &r = s.shown->racers[slot];
+    bike = r.bike_anchor;
+    rider = r.rider_anchor;
+    bike_origin = r.bike_origin;
+    attached = (r.crash_flags & (BikeAttached | RiderAttached)) == (BikeAttached | RiderAttached);
+    return true;
 }
 } // namespace rr64::highlights
 
@@ -379,6 +423,7 @@ extern "C" int rr64_highlights_wait(unsigned char *m, unsigned mode) {
             clear_detail();
             s.capture_enrolled = false;
             s.replay_detailed = s.replay_coarse = s.replay_rejected = 0;
+            s.replay_failures = {};
             s.playlist = {};
             if (authoritative(status) && !s.disabled && allocate(s))
                 s.recorder->begin(s.round + 1);
@@ -695,6 +740,7 @@ extern "C" void rr64_highlights_capture(unsigned char *m) {
         frame.traffic = traffic.traffic;
 #ifdef RR64_EXPERIMENTAL_COURSE
     frame.hazards = course_hazards::capture_state();
+    frame.items = mk64_items::capture_state();
 #endif
     if (s.recorder->push(frame)) {
         s.tick = frame.tick;
@@ -805,13 +851,34 @@ extern "C" int rr64_highlights_actor(unsigned char *m, unsigned node, unsigned t
     if (s.draw && s.playing) {
         const auto &r = s.shown->racers[s.canonical[slot]];
         const auto &pose = rider_actor ? r.rider_pose : r.bike_pose;
+        BindReport report;
         const bool accepted = r.active &&
                               begin_actor(m, node, tier, pose, rider_actor ? r.rider_anchor : r.bike_anchor,
-                                          rider_actor ? r.rider_rotation : r.bike_rotation, s.camera_origin);
+                                          rider_actor ? r.rider_rotation : r.bike_rotation, s.camera_origin,
+                                          &report);
         if (accepted)
             ++(tier == 0 ? s.replay_detailed : s.replay_coarse);
-        else
+        else {
             ++s.replay_rejected;
+            // Fixed per-race budget: one first failure for each native actor.
+            // A total rejection count alone cannot distinguish a graph/source
+            // mismatch from a stale camera or a missing local pose allocation.
+            auto &f = s.replay_failures[slot * 2 + unsigned(rider_actor)];
+            if (!f.recorded) {
+                f.recorded = true;
+                f.active = r.active;
+                f.node = node;
+                f.canonical = s.canonical[slot];
+                f.local = report;
+                f.source.records = pose.record_count;
+                f.source.bones = pose.count;
+                f.source.lod = pose.lod;
+                f.source.bank = pose.source_bank;
+                f.source.topology = pose.topology;
+                f.anchor = rider_actor ? r.rider_anchor : r.bike_anchor;
+                f.camera = s.camera_origin;
+            }
+        }
         return accepted;
     }
     if (s.racing && !s.ended && s.recorder && s.capture_enrolled && m == s.memory &&
@@ -849,9 +916,15 @@ extern "C" int rr64_highlights_weapon_draw(unsigned char *m, void *context, unsi
         const auto slot = find_slot(m, node, rider_actor);
         if (slot < maximum_racers && rider_actor) {
             const auto &r = s.shown->racers[s.canonical[slot]];
-            if (r.active && r.rider_pose.valid)
+            if (r.active && r.rider_pose.valid) {
+                const bool shrunk = s.shown->items.enabled &&
+                    s.shown->items.riders[s.canonical[slot]].shrink_until > s.shown->items.clock;
+                const bool attached =
+                    (r.crash_flags & (BikeAttached | RiderAttached)) == (BikeAttached | RiderAttached);
                 draw_weapon(m, context, r.held_weapon, r.rider_anchor, r.rider_rotation,
-                            s.camera_origin, r.rider_pose.source_bank);
+                            s.camera_origin, r.rider_pose.source_bank, shrunk ? .5f : 1.f,
+                            attached ? r.bike_origin : r.rider_anchor);
+            }
         }
     }
     return 1;

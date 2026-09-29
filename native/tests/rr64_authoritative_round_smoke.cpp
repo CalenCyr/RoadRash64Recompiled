@@ -2,8 +2,12 @@
 #include <cstdlib>
 #include <limits>
 #include <vector>
+#include <cstdio>
+#include <source_location>
 using namespace rr64::authority;
-void check(bool v){if(!v)std::abort();}
+void check(bool v,std::source_location where=std::source_location::current()){
+ if(!v){std::fprintf(stderr,"round check failed line %u\n",where.line());std::exit(1);}
+}
 InputBatch batch(ClientHistory &c){InputBatch b{};b.round=1;b.count=c.resend(b.commands);return b;}
 int main(){
  HostRound host;check(host.reset(1,(1u<<14)-1));std::array<ClientHistory,14> clients;
@@ -14,7 +18,7 @@ int main(){
  for(auto a:host.stamp().acknowledged)check(a==1);
  // Retransmitted ACK-lost packets cannot replay a tap. Missing steps do not ACK.
  check(host.receive(1,batch(clients[1])));
- for(unsigned i=0;i<3;++i){check(host.begin(step));check(step.inputs[1].sequence==0 && step.inputs[1].actions==0);if(i==2)check(step.inputs[1].buttons==0&&step.inputs[1].x==0);check(host.finish(step.tick));}
+ for(unsigned i=0;i<16;++i){check(host.begin(step));check(step.inputs[1].sequence==0 && step.inputs[1].actions==0);if((i+1)*16667>250000)check(step.inputs[1].buttons==0&&step.inputs[1].x==0);else check(step.inputs[1].buttons==1);check(host.finish(step.tick));}
  check(host.stamp().acknowledged[1]==1);
  // A bad final command must not install a valid first command from the packet.
  InputBatch bad{};bad.round=1;bad.count=2;bad.commands[0]={1,2,0,4,0};bad.commands[1]={2,3,0,5,0};

@@ -57,7 +57,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr std::uint32_t kProtocolMagic = 0x52523634u; // RR64
-constexpr std::uint16_t kProtocolVersion = 58; // Imported AI now shares signed crash/recovery progress rules.
+constexpr std::uint16_t kProtocolVersion = 65; // Matching shell size/contact geometry and MK64 selection behavior.
 constexpr std::size_t kPlayerNameCapacity = 24;
 constexpr auto kHelloInterval = std::chrono::milliseconds(500);
 constexpr auto kStateInterval = std::chrono::milliseconds(25);
@@ -87,7 +87,7 @@ enum class PacketType : std::uint8_t {
     WorldSnapshot,
     HitRequest, HitCommit, HitRequestAck, HitCommitAck,
     AuthorityBegin, AuthorityInput, AuthorityState, AuthorityReady, AuthorityWorld, AuthorityItems, AuthorityHazards,
-    Highlight,
+    Highlight, AuthorityMk64Riders, AuthorityMk64Objects,
 };
 
 #pragma pack(push, 1)
@@ -130,6 +130,7 @@ struct WelcomePacket {
 
 struct ClientStatePacket {
     PacketHeader header{};
+    online_flow::PostRaceState postrace_ack{};
     std::uint32_t course_revision=0;
     race_pack::Identity course{};
     std::uint8_t course_compatibility = static_cast<std::uint8_t>(race_pack::Compatibility::Pending);
@@ -172,6 +173,7 @@ struct WireGameSetup {
 
 struct LobbySnapshotPacket {
     PacketHeader header{};
+    online_flow::PostRaceState postrace{};
     std::uint8_t phase = static_cast<std::uint8_t>(Phase::Lobby);
     std::uint8_t connected_players = 0;
     std::uint8_t replicated_riders = 0;
@@ -255,7 +257,11 @@ constexpr unsigned kAuthorityItemsBit=1u<<world_sync::batches;
 constexpr unsigned kAuthorityHazardFirst=world_sync::batches+1;
 constexpr unsigned kHazardsPerPacket=16;
 constexpr unsigned kHazardParts=(kMaximumCourseHazards+kHazardsPerPacket-1)/kHazardsPerPacket;
-constexpr unsigned kAuthorityWorldParts=kAuthorityHazardFirst+kHazardParts;
+constexpr unsigned kAuthorityMk64First=kAuthorityHazardFirst+kHazardParts;
+constexpr unsigned kAuthorityMk64RidersBit=1u<<kAuthorityMk64First;
+constexpr unsigned kMk64ObjectsPerPacket=16;
+constexpr unsigned kMk64ObjectParts=(mk64_items::object_capacity+kMk64ObjectsPerPacket-1)/kMk64ObjectsPerPacket;
+constexpr unsigned kAuthorityWorldParts=kAuthorityMk64First+1+kMk64ObjectParts;
 static_assert(kAuthorityWorldParts<32);
 struct AuthorityItemsPacket {
     PacketHeader header{};
@@ -272,6 +278,42 @@ struct AuthorityHazardsPacket {
     std::array<CourseHazardPose,kHazardsPerPacket> poses{};
 };
 static_assert(sizeof(AuthorityHazardsPacket)<1200);
+// Item effects and objects join the existing complete-world assembly. A metadata
+// fragment is sent even when every object is gone, so retirement is explicit.
+struct Mk64Metadata {
+    std::uint32_t enabled=0,clock=0,next_generation=0,random=0;
+    bool operator==(const Mk64Metadata &) const = default;
+};
+struct AuthorityMk64RidersPacket {
+    PacketHeader header{};
+    authority::Stamp stamp{};
+    std::uint32_t payload_mask=0,world_mask=0;
+    Mk64Metadata meta{};
+    std::array<mk64_items::RiderState,mk64_items::racer_capacity> riders{};
+};
+struct AuthorityMk64ObjectsPacket {
+    PacketHeader header{};
+    authority::Stamp stamp{};
+    std::uint32_t payload_mask=0,world_mask=0,part=0;
+    Mk64Metadata meta{};
+    std::array<mk64_items::Object,kMk64ObjectsPerPacket> objects{};
+};
+static_assert(sizeof(AuthorityMk64RidersPacket)<1200);
+static_assert(sizeof(AuthorityMk64ObjectsPacket)<1200);
+Mk64Metadata mk64_metadata(const mk64_items::Snapshot &state) {
+    return {state.enabled,state.clock,state.next_generation,state.random};
+}
+bool valid_mk64_metadata(const Mk64Metadata &meta) {
+    return meta.enabled==1 && meta.clock<=30000000 && meta.random;
+}
+unsigned mk64_world_mask(const mk64_items::Snapshot &state) {
+    if(!state.enabled)return 0;
+    unsigned mask=kAuthorityMk64RidersBit;
+    for(unsigned i=0;i<mk64_items::object_capacity;++i)
+        if(state.objects[i].generation)mask|=1u<<(kAuthorityMk64First+1+i/kMk64ObjectsPerPacket);
+    return mask;
+}
+constexpr unsigned kAuthorityMk64Mask=((1u<<(1+kMk64ObjectParts))-1u)<<kAuthorityMk64First;
 unsigned hazard_world_mask(unsigned count){
     if(!count || count>kMaximumCourseHazards)return 0;
     const unsigned parts=(count+kHazardsPerPacket-1)/kHazardsPerPacket;
@@ -283,7 +325,7 @@ unsigned authority_world_mask(const AuthorityFrame &frame){
         mask|=1u<<(i/world_sync::batch_size);
     // An empty roster must explicitly retire old traffic even with item boxes.
     return (mask?mask:1u) | (frame.course_items.count?kAuthorityItemsBit:0u) |
-        hazard_world_mask(frame.course_hazards.count);
+        hazard_world_mask(frame.course_hazards.count) | mk64_world_mask(frame.mk64_items);
 }
 
 
@@ -349,6 +391,8 @@ struct HitChannel {
     std::deque<HitEvent> delivered;
 };
 struct Session {
+    online_flow::PostRaceState postrace{};
+    std::array<online_flow::PostRaceState,kMaximumPlayers> postrace_ack{};
     highlight_network::Channel highlights;
     bool authoritative=false;
     unsigned authority_loaded=0;
@@ -838,6 +882,7 @@ void send_client_state_locked(const Clock::time_point now) {
     initialize_packet(packet, PacketType::ClientState);
     packet.slot = slot;
     packet.selection = g_session.players[slot].selection;
+    packet.postrace_ack = g_session.postrace_ack[slot];
     packet.ready = g_session.players[slot].ready ? 1 : 0;
     packet.character = g_session.players[slot].character;
     packet.track = g_session.players[slot].track;
@@ -853,6 +898,7 @@ void send_client_state_locked(const Clock::time_point now) {
 
 void send_snapshot_locked(const Clock::time_point now) {
     LobbySnapshotPacket packet{};
+    packet.postrace = g_session.postrace;
     initialize_packet(packet, PacketType::LobbySnapshot);
     packet.phase = static_cast<std::uint8_t>(g_session.phase);
     packet.connected_players = connected_count_locked();
@@ -1116,6 +1162,11 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
         auto &lastSequence=g_session.peers[slot].last_state_sequence;
         if(lastSequence!=0&&static_cast<std::int32_t>(header.sequence-lastSequence)<=0)return;
         lastSequence=header.sequence;
+        if(online_flow::valid(state.postrace_ack) &&
+           state.postrace_ack.round==g_session.postrace.round &&
+           state.postrace_ack.stage<=g_session.postrace.stage &&
+           online_flow::advances(state.postrace_ack,g_session.postrace_ack[slot]))
+            g_session.postrace_ack[slot]=state.postrace_ack;
         PlayerInfo &player = g_session.players[slot];
         if(g_session.game_setup.valid && g_session.phase!=Phase::Race) {
             if(!state.course_revision || state.course_revision!=g_session.game_setup.revision ||
@@ -1284,6 +1335,7 @@ void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sock
 
     if (header.type == PacketType::LobbySnapshot && size == sizeof(LobbySnapshotPacket)) {
         const auto &snapshot = *reinterpret_cast<const LobbySnapshotPacket *>(bytes);
+        if(!online_flow::advances(snapshot.postrace,g_session.postrace)) return;
         if (snapshot.game_setup.start_requested > 1 || !race_pack::valid(snapshot.game_setup.course)) return;
         // A revision identifies immutable course bytes, including snapshots
         // received after local validation. A new course needs a new revision.
@@ -1300,6 +1352,7 @@ void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sock
             return;
         }
         g_session.last_lobby_snapshot_sequence = header.sequence;
+        g_session.postrace = snapshot.postrace;
         const Phase incoming_phase = static_cast<Phase>(snapshot.phase);
         const bool preserve_local_ready = incoming_phase==Phase::Lobby && g_session.phase==Phase::Lobby;
         if (incoming_phase != g_session.phase) {
@@ -1631,7 +1684,7 @@ unsigned authority_finish_mode() {
 bool authority_queue_input(std::uint16_t buttons,std::int8_t x,std::int8_t y) {
     authority::Command accepted{};return authority_queue_input_recorded(buttons,x,y,accepted);
 }
-bool authority_queue_input_recorded(std::uint16_t buttons,std::int8_t x,std::int8_t y,authority::Command &accepted,std::uint8_t actions) {
+bool authority_queue_input_recorded(std::uint16_t buttons,std::int8_t x,std::int8_t y,authority::Command &accepted,std::uint8_t actions,unsigned duration_us) {
     std::lock_guard lock(g_mutex);
     const auto rejected=[&](const char *reason){
         std::fprintf(stderr,"[RR64-NET] input rejected reason=%s slot=%u round=%u setup=%u released=%u loaded=%x humans=%x sequence=%u buttons=%04x stick=%d,%d actions=%u\n",
@@ -1648,18 +1701,18 @@ bool authority_queue_input_recorded(std::uint16_t buttons,std::int8_t x,std::int
         // Advance only after admission; a full queue must not create a gap.
         if(g_session.authority_local_sequence==UINT32_MAX)return rejected("sequence-exhausted");
         authority::InputBatch b{};b.round=g_session.authority_round;b.count=1;
-        b.commands[0]={b.round,g_session.authority_local_sequence+1,buttons,x,y,actions};
+        b.commands[0]={b.round,g_session.authority_local_sequence+1,buttons,x,y,actions,duration_us};
         if(!g_session.authority_host.receive(0,b))return rejected("host-command-invalid-or-full");
         ++g_session.authority_local_sequence;accepted=b.commands[0];return true;
     }
     authority::Command c;
-    if(!g_session.authority_client.append(buttons,x,y,c,actions))return rejected("client-command-invalid-or-full");
+    if(!g_session.authority_client.append(buttons,x,y,c,actions,duration_us))return rejected("client-command-invalid-or-full");
     accepted=c;return true;
 }
-bool authority_begin_step(authority::Step &step) {
+bool authority_begin_step(authority::Step &step,unsigned duration_us) {
     std::lock_guard lock(g_mutex);
     return is_host_locked() && g_session.authoritative && g_session.authority_released && !g_session.host_disconnected && g_session.phase==Phase::Race &&
-        g_session.authority_round==g_session.game_setup.revision && g_session.authority_host.begin(step);
+        g_session.authority_round==g_session.game_setup.revision && g_session.authority_host.begin(step,duration_us);
 }
 bool authority_finish_step(std::uint64_t tick,authority::Stamp &stamp) {
     std::lock_guard lock(g_mutex);
@@ -1690,10 +1743,13 @@ bool authority_publish_frame(const AuthorityFrame &frame) {
        frame.stamp.tick<=g_session.authority_frame.stamp.tick || !authority::valid_timing(frame.timing) ||
        frame.cop_mode>1 || !std::isfinite(frame.cop_win_age) || frame.cop_win_age < -1)return false;
     if(!valid_course_item_state(frame.course_items) || !valid_course_hazard_state(frame.course_hazards) ||
-       ((frame.course_items.count || frame.course_hazards.count) && g_session.game_setup.course.version==0))return false;
+       !mk64_items::valid(frame.mk64_items) ||
+       ((frame.course_items.count || frame.course_hazards.count || frame.mk64_items.enabled) &&
+        g_session.game_setup.course.version==0))return false;
     if(!world_sync::valid(world_sync::Snapshot{frame.stamp.round,frame.stamp.tick,frame.traffic}))return false;
     const auto completed=g_session.authority_host.stamp();
-    if(frame.stamp.tick!=completed.tick || frame.stamp.acknowledged!=completed.acknowledged)return false;
+    if(frame.stamp.tick!=completed.tick || frame.stamp.acknowledged!=completed.acknowledged ||
+       frame.stamp.simulated_us!=completed.simulated_us)return false;
     for(const auto &outcome:frame.outcomes)if(!authority::valid_outcome(outcome))return false;
     for(unsigned s=0;s<kMaximumPlayers;++s)if(frame.riders[s].active &&
        (!finite_rider_state(frame.riders[s]) || !authority::valid_outcome(frame.outcomes[s]) || !authority::valid_dynamics(frame.dynamics[s]) ||
@@ -1878,6 +1934,7 @@ Status get_status() {
     if(prediction::active())return {};
     std::lock_guard lock(g_mutex);
     Status status{};
+    status.postrace = g_session.postrace;
     status.host_disconnected = g_session.host_disconnected;
     if (status.host_disconnected)
         status.host_disconnect_age_ms = static_cast<std::uint32_t>(
@@ -1976,6 +2033,49 @@ bool host_set_phase(Phase phase) {
     }
     send_snapshot_locked(Clock::now());
     return true;
+}
+
+bool host_advance_postrace(unsigned stage) {
+    std::lock_guard lock(g_mutex);
+    if(!is_host_locked() || g_session.host_disconnected || !g_session.authoritative ||
+       g_session.phase!=Phase::Race || g_session.authority_finish_mode!=0x1e ||
+       !g_session.game_setup.revision || stage<1 || stage>2) return false;
+    const online_flow::PostRaceState next{g_session.game_setup.revision,stage};
+    if(!online_flow::advances(next,g_session.postrace) ||
+       (stage==2 && g_session.postrace!=online_flow::PostRaceState{next.round,1}))
+        return next==g_session.postrace;
+    if(g_session.postrace!=next && std::getenv("RR64_SYNC_LOG"))
+        std::fprintf(stderr,"[RR64-FLOW] host postrace round=%u stage=%u\n",next.round,next.stage);
+    g_session.postrace=next;
+    send_snapshot_locked(Clock::now());
+    return true;
+}
+
+bool acknowledge_postrace(online_flow::PostRaceState state) {
+    std::lock_guard lock(g_mutex);
+    if(g_session.local_slot>=kMaximumPlayers || !state.round ||
+       state.round!=g_session.postrace.round || state.stage>g_session.postrace.stage ||
+       !online_flow::advances(state,g_session.postrace_ack[g_session.local_slot])) return false;
+    g_session.postrace_ack[g_session.local_slot]=state;
+    return true;
+}
+
+bool host_resume_postrace_setup() {
+    {
+        std::lock_guard lock(g_mutex);
+        if(!is_host_locked() || g_session.host_disconnected || g_session.phase!=Phase::Race ||
+           g_session.postrace.stage!=2 || g_session.postrace.round!=g_session.game_setup.revision)
+            return false;
+        // Keep the finished authority/replay available until every participant
+        // has completed native teardown and actually entered the setup menu.
+        for(unsigned slot=0;slot<kMaximumPlayers;++slot)
+            if((g_session.authority_humans&(1u<<slot)) && (slot==0 || g_session.peers[slot].connected) &&
+               g_session.postrace_ack[slot]!=g_session.postrace) return false;
+    }
+    const bool resumed=host_set_phase(Phase::GameSetup);
+    if(resumed && std::getenv("RR64_SYNC_LOG"))
+        std::fprintf(stderr,"[RR64-FLOW] all peers entered next setup\n");
+    return resumed;
 }
 
 bool host_commit_game_setup(const GameSetupState &setup) {

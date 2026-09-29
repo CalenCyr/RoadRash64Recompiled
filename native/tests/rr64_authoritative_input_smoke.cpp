@@ -8,6 +8,10 @@ bool simulate(State &s,const Command &c,bool replay) {
     s.position+=c.x;if(c.buttons&1)++s.attacks;return replay;
 }
 int main(){
+ Command invalid{1,1,0,0,0};invalid.duration_us=0;check(!valid(invalid,1));invalid.duration_us=250001;check(!valid(invalid,1));
+ ClientHistory durations;durations.reset(1);Command duration;
+ check(!durations.append(0,0,0,duration,0,0) && !durations.append(0,0,0,duration,0,250001));
+ check(durations.append(0,0,0,duration,0,250000) && duration.duration_us==250000);
  for(unsigned slot=0;slot<14;++slot){
  HostInput host;ClientHistory client;host.reset(7);client.reset(7);
  Command a,b,c;check(client.append(1,2,0,a));check(client.append(0,3,0,b));check(client.append(0,4,0,c));

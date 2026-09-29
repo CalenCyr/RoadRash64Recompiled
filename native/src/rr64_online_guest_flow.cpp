@@ -3,6 +3,7 @@
 #include "rr64_netplay.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_custom_cop_rules.hpp"
+#include "rr64_highlights.hpp"
 #include <array>
 #include <cstdlib>
 #include <cstdio>
@@ -19,6 +20,59 @@ thread_local bool private_selector=false;
 thread_local std::array<unsigned,3> hud_saved{};
 thread_local bool private_hud=false;
 thread_local unsigned hud_actor=0;
+thread_local online_flow::PostRaceState requested_postrace{};
+}
+
+extern "C" void rr64_online_game_setup_restart();
+
+extern "C" int rr64_online_postrace_wait_for_setup() {
+    const auto s=netplay::get_status();
+    return s.active && s.connected && s.phase==netplay::Phase::Race && s.postrace.stage==2;
+}
+
+extern "C" unsigned rr64_online_postrace_route_mode(unsigned char *m,unsigned requested) {
+    const auto s=netplay::get_status();
+    const unsigned stage=online_flow::postrace_stage(read(m,engine::globals::main_mode),requested);
+    if(!stage || !s.active || !s.connected) return requested;
+    // Guests consume the persistent command below. A sampled host edge, or a
+    // guest's local A button, cannot independently advance a results screen.
+    if(!s.is_host || !netplay::host_advance_postrace(stage))
+        return read(m,engine::globals::pending_mode);
+    if(stage==2) rr64_online_game_setup_restart();
+    return requested;
+}
+
+extern "C" int rr64_online_postrace_update(unsigned char *m,unsigned mode) {
+    auto s=netplay::get_status();
+    if(!s.active || !s.connected) { requested_postrace={}; return 0; }
+    if(!s.postrace.round || !s.postrace.stage) return 0;
+    if(mode==0x1f) netplay::acknowledge_postrace({s.postrace.round,1});
+    if(mode==0x23 && s.postrace.stage==2) {
+        netplay::acknowledge_postrace(s.postrace);
+        if(s.is_host) netplay::host_resume_postrace_setup();
+        // Do not let the host use the next menu while another peer is still
+        // replaying, tearing down, or waiting for the final authority frame.
+        return netplay::get_status().phase==netplay::Phase::Race;
+    }
+    if(s.is_host || rr64_highlights_presenting()) return 0;
+    unsigned next=0,stage=0;
+    if(mode==0x1e) {next=0x1f;stage=1;}
+    if(mode==0x1f && s.postrace.stage==2) {next=0x23;stage=2;}
+    if(!next) return 0;
+    const online_flow::PostRaceState command{s.postrace.round,stage};
+    if(!online_flow::advances(command,requested_postrace) || command==requested_postrace) return 0;
+    requested_postrace=command;
+    if(std::getenv("RR64_SYNC_LOG"))
+        std::fprintf(stderr,"[RR64-FLOW] guest postrace round=%u stage=%u mode=%u target=%u\n",
+            command.round,command.stage,mode,next);
+    if(stage==2) {
+        // func_80071AB0 writes this immediately before its native mode request.
+        engine::write_u32(m,engine::globals::multiplayer_stage,1);
+        rr64_online_game_setup_restart();
+    }
+    engine::write_u32(m,engine::globals::pending_mode,next);
+    engine::write_u32(m,0x8009CC50u,0);
+    return 0;
 }
 
 extern "C" void rr64_online_private_selection_begin(unsigned char *m) {

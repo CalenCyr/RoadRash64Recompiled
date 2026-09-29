@@ -48,6 +48,11 @@ public:
     std::size_t data_bytes()const{return budget_->used*page_size;}
     std::size_t metadata_bytes()const{return frames_.size()*page_count*sizeof(PageRef);}
     std::size_t frames()const{return frames_.size();}
+    bool contains(std::uint32_t round,std::uint32_t sequence)const{
+        if(!round || round!=round_)return false;
+        for(const auto &frame:frames_)if(frame.sequence==sequence)return true;
+        return false;
+    }
     bool capture(std::uint32_t round,std::uint32_t sequence,const unsigned char *memory,std::size_t size){
         if(!memory || size!=engine::kRdramSize || !round || round!=round_ ||
            frames_.size()>=authority::history_capacity+1)return false;

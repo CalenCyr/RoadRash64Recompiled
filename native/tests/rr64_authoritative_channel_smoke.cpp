@@ -79,6 +79,7 @@ int main(){
  for(unsigned s=0;s<kMaximumPlayers;++s){hostFrame.riders[s].active=true;hostFrame.riders[s].position_x=100.f+s;}
  auto wrongFrame=hostFrame;++wrongFrame.stamp.tick;check(!authority_publish_frame(wrongFrame));
  wrongFrame=hostFrame;++wrongFrame.stamp.acknowledged[0];check(!authority_publish_frame(wrongFrame));
+ wrongFrame=hostFrame;++wrongFrame.stamp.simulated_us[0];check(!authority_publish_frame(wrongFrame));
  wrongFrame=hostFrame;wrongFrame.timing.substeps=3;check(!authority_publish_frame(wrongFrame));
  wrongFrame=hostFrame;wrongFrame.timing.bits[0]=0x7fc00000;check(!authority_publish_frame(wrongFrame));
  wrongFrame=hostFrame;wrongFrame.outcomes[13].siren=2;check(!authority_publish_frame(wrongFrame));
@@ -148,7 +149,7 @@ int main(){
  // A complete rider roster alone cannot expose a newer world.
  for(unsigned part=0;part<kAuthorityParts;++part)deliver(part,hostFrame,false);
  check(!authority_get_frame(shown));
- deliver_world(hostFrame,6);check(!authority_get_frame(shown)); // missing the final car batch
+ deliver_world(hostFrame,rr64::world_sync::batches-1);check(!authority_get_frame(shown)); // missing the final car batch
  deliver_world(hostFrame);check(authority_get_frame(shown) && shown.traffic==hostFrame.traffic);
  g_session.authority_frame={};g_session.world={};
  // Reset assembly only in this fixture to exercise traffic-first permutations too.
@@ -157,7 +158,8 @@ int main(){
  for(unsigned part=kAuthorityParts;part-->0;)if(part!=3){deliver(part,hostFrame);check(!authority_get_frame(shown));}
  deliver(2,hostFrame);check(!authority_get_frame(shown)); // duplicate cannot fill a missing part
  deliver(3,hostFrame);check(authority_get_frame(shown));
- check(shown.stamp.tick==hostFrame.stamp.tick && shown.stamp.acknowledged==hostFrame.stamp.acknowledged);
+ check(shown.stamp.tick==hostFrame.stamp.tick && shown.stamp.acknowledged==hostFrame.stamp.acknowledged &&
+       shown.stamp.simulated_us==hostFrame.stamp.simulated_us);
  check(shown.timing==hostFrame.timing && shown.dynamics==hostFrame.dynamics);
  check(shown.cop_mode==1 && shown.outcomes[13]==hostFrame.outcomes[13]);
  rr64::world_sync::Snapshot sharedWorld;
@@ -285,4 +287,48 @@ int main(){
  check(g_session.phase==Phase::Offline && g_session.local_slot==kInvalidSlot);
  check(g_session.socket==INVALID_SOCKET && g_session.message.find("Failed to connect")!=std::string::npos);
  closesocket(receiver);close_socket_locked();g_session={};
+ // Native post-race progression is a persistent, ordered host command. The
+ // next setup must not retire the final frame/replay before a delayed guest
+ // completes both native transitions and acknowledges actual menu arrival.
+ g_session.config.mode=Mode::Host;g_session.phase=Phase::Race;g_session.local_slot=0;
+ g_session.authoritative=true;g_session.authority_round=8;g_session.authority_humans=3;
+ g_session.game_setup.valid=true;g_session.game_setup.revision=8;g_session.setup_serial=8;
+ g_session.authority_finish_mode=0x1e;g_session.token=123;
+ g_session.players[0].connected=g_session.players[1].connected=true;
+ g_session.peers[1].connected=true;g_session.peers[1].endpoint=remote;
+ check(!host_advance_postrace(2) && !host_advance_postrace(3));
+ check(host_advance_postrace(1) && host_advance_postrace(1));
+ check(host_advance_postrace(2) && !host_advance_postrace(1));
+ check(acknowledge_postrace({8,2}) && !host_resume_postrace_setup());
+ ClientStatePacket arrived{};initialize_packet(arrived,PacketType::ClientState);
+ arrived.slot=1;arrived.postrace_ack={8,2};
+ auto wrong=arrived;wrong.postrace_ack={7,2};
+ handle_host_packet_locked(reinterpret_cast<const std::uint8_t*>(&wrong),sizeof(wrong),remote,Clock::now());
+ check(!host_resume_postrace_setup() && g_session.authoritative);
+ arrived.header.sequence=wrong.header.sequence+1;
+ handle_host_packet_locked(reinterpret_cast<const std::uint8_t*>(&arrived),sizeof(arrived),stranger,Clock::now());
+ check(!host_resume_postrace_setup()); // Endpoint/token owns the ACK.
+ handle_host_packet_locked(reinterpret_cast<const std::uint8_t*>(&arrived),sizeof(arrived),remote,Clock::now());
+ check(host_resume_postrace_setup());
+ check(g_session.phase==Phase::GameSetup && !g_session.authoritative && !g_session.game_setup.valid);
+ check(g_session.postrace==rr64::online_flow::PostRaceState{8,2});
+ check(host_commit_game_setup(GameSetupState{}));
+ check(g_session.game_setup.revision==9 && g_session.phase==Phase::CharacterSelect);
+ g_session={};g_session.config.mode=Mode::Join;g_session.local_slot=1;g_session.token=123;
+ g_session.host_endpoint=remote;g_session.phase=Phase::Race;
+ LobbySnapshotPacket resume{};initialize_packet(resume,PacketType::LobbySnapshot);
+ resume.phase=static_cast<unsigned>(Phase::Race);resume.postrace={8,2};
+ handle_client_packet_locked(reinterpret_cast<const std::uint8_t*>(&resume),sizeof(resume),remote,Clock::now());
+ check(g_session.postrace==resume.postrace);
+ ++resume.header.sequence;resume.postrace={8,1};
+ handle_client_packet_locked(reinterpret_cast<const std::uint8_t*>(&resume),sizeof(resume),remote,Clock::now());
+ check(g_session.postrace.stage==2); // Even a fresh packet cannot rewind it.
+ ++resume.header.sequence;resume.postrace={7,2};
+ handle_client_packet_locked(reinterpret_cast<const std::uint8_t*>(&resume),sizeof(resume),remote,Clock::now());
+ check(g_session.postrace.round==8);
+ ++resume.header.sequence;resume.postrace={9,1};
+ handle_client_packet_locked(reinterpret_cast<const std::uint8_t*>(&resume),sizeof(resume),remote,Clock::now());
+ check(g_session.postrace==resume.postrace);
+ g_session={};
+ std::puts("authority channel: existing authority checks and persistent post-race setup barrier passed");
 }

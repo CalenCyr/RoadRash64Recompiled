@@ -88,6 +88,9 @@ public:
     }
     unsigned char* memory(){return image_.data();}
     const auto& image()const{return image_;}
+    // Consume a successfully completed private transaction without copying its
+    // entire 8 MiB image. The moved-from service must not execute more work.
+    std::vector<unsigned char> release_image() && noexcept {return std::move(image_);}
     std::span<const unsigned char> rom()const noexcept{return rom_;}
     void validate_worker(std::uint32_t stack_top) {
         auto inventory=ResourceInventory::inspect(memory());

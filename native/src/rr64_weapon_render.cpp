@@ -1,6 +1,9 @@
 #include "rr64_native.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_weapon_diagnostics.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_mk64_items.hpp"
+#endif
 #include <mutex>
 #include <array>
 #include <bit>
@@ -140,6 +143,11 @@ extern "C" void rr64_weapon_source(unsigned char *m, void *context, unsigned rec
 extern "C" void rr64_weapon_matrix(unsigned char *m, unsigned record, unsigned address) {
     if (onlineMapping==m && record==onlineGraph)
         rr64_online_presentation_matrix(m,onlineParent,record,address,preparedSource ? preparedSource : 3u);
+#ifdef RR64_EXPERIMENTAL_COURSE
+    if (onlineMapping == m && record == onlineGraph)
+        rr64::mk64_items::scale_weapon_matrix(m, onlineParent, record, address,
+                                               preparedSource ? preparedSource : 3u);
+#endif
     pendingValid = false;
     if (diagnostics() && same_view(m)) {
         using namespace rr64::engine;

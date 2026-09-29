@@ -11,7 +11,7 @@
 namespace rr64::highlight_network {
 namespace {
 static_assert(sizeof(unsigned) == 4);
-constexpr std::uint32_t format_magic = 0x324c4852; // RHL2: recorded held-weapon animation.
+constexpr std::uint32_t format_magic = 0x344c4852; // RHL4: recorded MK64 item/effect presentation.
 constexpr std::uint64_t timeout_us = 60000000, resend_us = 250000;
 constexpr unsigned window = 64, all_peers = (1u << 14) - 1;
 std::uint64_t hash(std::span<const std::uint8_t> data) {
@@ -155,6 +155,33 @@ template <class IO> void weapon(IO &io, highlights::WeaponPose &p) {
     for (unsigned i = 0; i < p.count; ++i)
         io.array(p.transforms[i]);
 }
+template <class IO> void item_state(IO &io, mk64_items::Snapshot &s) {
+    io.value(s.enabled);
+    if (!s.enabled)
+        return;
+    if (s.enabled != 1)
+        throw std::runtime_error("item mode");
+    io.value(s.clock);
+    io.value(s.next_generation);
+    io.value(s.random);
+    for (auto &r : s.riders) {
+        io.value(r.held); io.value(r.charges); io.value(r.deployed); io.value(r.revision);
+        io.value(r.star_until); io.value(r.boo_until); io.value(r.shrink_until);
+        io.value(r.boost_until); io.value(r.golden_until); io.value(r.last_use);
+        io.value(r.hit_until); io.value(r.boost_speed); io.value(r.event_serial);
+        io.value(r.cue); io.value(r.event_target);
+    }
+    for (auto &o : s.objects) {
+        io.value(o.generation);
+        if (!o.generation)
+            continue;
+        io.value(o.born); io.value(o.expires); io.value(o.kind); io.value(o.mode);
+        io.value(o.owner); io.value(o.target); io.value(o.orbit); io.value(o.bounces);
+        io.array(o.position); io.array(o.velocity);
+    }
+    if (!mk64_items::valid(s))
+        throw std::runtime_error("item state");
+}
 template <class IO> void frame(IO &io, highlights::Frame &f) {
     io.value(f.time_us);
     io.value(f.tick);
@@ -210,6 +237,7 @@ template <class IO> void frame(IO &io, highlights::Frame &f) {
         io.value(p.tint);
         io.value(p.environment_tint);
     }
+    item_state(io, f.items);
 }
 bool valid_clip(const highlights::Clip &c) {
     if (c.slot >= highlights::maximum_racers || !std::isfinite(c.score) || c.score <= 0 ||

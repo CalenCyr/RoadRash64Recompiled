@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <thread>
+#include "rr64_prediction_diagnostics.hpp"
 
 namespace rr64::sync_log {
 inline bool campaign() {
@@ -27,6 +28,7 @@ struct Rider {
     float received_x = 0, received_y = 0, received_z = 0;
 };
 struct Sample {
+    prediction::ReconcileDiagnostic reconciliation{};
     unsigned traffic_valid=0,traffic_count=0,traffic_hash=0;
     unsigned host = 0, local = 0, race = 0, frame = 0, phase = 0;
     unsigned setup = 0, options = 0, rng = 0, stage = 0;
@@ -50,7 +52,7 @@ class Writer {
             stopped.store(true);
             return;
         }
-        std::fprintf(file, "host,local,race,frame,phase,setup,options,rng,stage,us,slot,valid,input_valid,buttons,stick_x,stick_y,x,y,z,received,tick,received_x,received_y,received_z,dropped,root_hash,received_root_hash,actor_bike,presentation_matrices,presentation_dx,presentation_dy,presentation_dz,host_ai,weapon,received_weapon,durability,received_durability,bike_x,bike_y,bike_z,body_x,body_y,body_z,body_vx,body_vy,body_vz,bike_attached,body_attached,ejected,traffic_valid,traffic_count,traffic_hash\n");
+        std::fprintf(file, "host,local,race,frame,phase,setup,options,rng,stage,us,slot,valid,input_valid,buttons,stick_x,stick_y,x,y,z,received,tick,received_x,received_y,received_z,dropped,root_hash,received_root_hash,actor_bike,presentation_matrices,presentation_dx,presentation_dy,presentation_dz,host_ai,weapon,received_weapon,durability,received_durability,bike_x,bike_y,bike_z,body_x,body_y,body_z,body_vx,body_vy,body_vz,bike_attached,body_attached,ejected,traffic_valid,traffic_count,traffic_hash,reconcile_sequence,reconcile_round,reconcile_tick,reconcile_ack,reconcile_pending,reconcile_steps,reconcile_stage,reconcile_us,reconcile_distance,reconcile_simulated_us,reconcile_history_us,reconcile_replay_us,camera_view,camera_before_valid,camera_before_mode,camera_before_actor,camera_before_flags,camera_before_qx,camera_before_qy,camera_before_qz,camera_before_qw,camera_before_anchor_x,camera_before_anchor_y,camera_before_anchor_z,camera_replayed_valid,camera_replayed_mode,camera_replayed_actor,camera_replayed_flags,camera_replayed_qx,camera_replayed_qy,camera_replayed_qz,camera_replayed_qw,camera_replayed_anchor_x,camera_replayed_anchor_y,camera_replayed_anchor_z,camera_after_valid,camera_after_mode,camera_after_actor,camera_after_flags,camera_after_qx,camera_after_qy,camera_after_qz,camera_after_qw,camera_after_anchor_x,camera_after_anchor_y,camera_after_anchor_z,camera_authority_valid,camera_authority_flags,camera_authority_qx,camera_authority_qy,camera_authority_qz,camera_authority_qw\n");
         unsigned long long rows = 0;
         while (true) {
             auto read = tail.load(std::memory_order_relaxed);
@@ -64,7 +66,19 @@ class Writer {
                         s.host,s.local,s.race,s.frame,s.phase,s.setup,s.options,s.rng,s.stage,s.us,
                         slot,r.valid,r.input_valid,r.buttons,r.stick_x,r.stick_y,r.x,r.y,r.z,
                         r.received,r.tick,r.received_x,r.received_y,r.received_z,dropped.load(),r.root_hash,r.received_root_hash,r.actor_bike,r.presentation_matrices,r.presentation_delta[0],r.presentation_delta[1],r.presentation_delta[2],r.host_ai,r.weapon,r.received_weapon,r.durability,r.received_durability);
-                    std::fprintf(file, ",%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%u,%u,%u,%u,%u,%u\n", r.bike_position[0],r.bike_position[1],r.bike_position[2],r.body_position[0],r.body_position[1],r.body_position[2],r.body_velocity[0],r.body_velocity[1],r.body_velocity[2],r.bike_attached,r.body_attached,r.ejected,s.traffic_valid,s.traffic_count,s.traffic_hash);
+                    std::fprintf(file, ",%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%u,%u,%u,%u,%u,%u", r.bike_position[0],r.bike_position[1],r.bike_position[2],r.body_position[0],r.body_position[1],r.body_position[2],r.body_velocity[0],r.body_velocity[1],r.body_velocity[2],r.bike_attached,r.body_attached,r.ejected,s.traffic_valid,s.traffic_count,s.traffic_hash);
+                    const auto &d=s.reconciliation;
+                    std::fprintf(file, ",%u,%u,%u,%u,%u,%u,%u,%llu,%.9g,%llu,%llu,%llu",d.sequence,d.round,d.tick,d.ack,d.pending,d.steps,d.stage,static_cast<unsigned long long>(d.us),d.distance,
+                        static_cast<unsigned long long>(d.simulated_us),static_cast<unsigned long long>(d.history_us),static_cast<unsigned long long>(d.replay_us));
+                    std::fprintf(file, ",%u",d.camera_view);
+                    for(const auto *c:{&d.camera_before,&d.camera_replayed,&d.camera_after})
+                        std::fprintf(file, ",%u,%u,%u,%u,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g",
+                            c->valid,c->mode,c->mapped_actor,c->state_flags,
+                            c->rotation[0],c->rotation[1],c->rotation[2],c->rotation[3],
+                            c->anchor[0],c->anchor[1],c->anchor[2]);
+                    const auto &a=d.camera_authority;
+                    std::fprintf(file, ",%u,%u,%.9g,%.9g,%.9g,%.9g\n",a.valid,a.state_flags,
+                        a.rotation[0],a.rotation[1],a.rotation[2],a.rotation[3]);
                     ++rows;
                 }
                 tail.store(++read, std::memory_order_release);

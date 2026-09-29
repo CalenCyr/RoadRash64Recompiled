@@ -5,8 +5,12 @@
 #include "rr64_prediction_replay.hpp"
 #include "rr64_course_hazards.hpp"
 #include "rr64_course_roulette.hpp"
+#include "rr64_mk64_items.hpp"
+#include "rr64_mk64_item_hud.hpp"
+#include "rr64_mk64_item_render.hpp"
 #include "rr64_highlights.hpp"
 #include "rr64_online_flow.hpp"
+#include "rr64_local_race_options.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -52,6 +56,13 @@ struct Runtime {
 } live;
 thread_local bool hud_active = false;
 thread_local RouletteDisplay hud_weapon{};
+thread_local mk64_items::HudDisplay hud_item{};
+thread_local unsigned hud_view = 4;
+struct CycleWrap {
+    unsigned char *mapping = nullptr;
+    unsigned rider = 0;
+};
+thread_local CycleWrap cycle_wrap;
 
 unsigned word(unsigned char *m, unsigned address) {
     unsigned value = 0;
@@ -164,8 +175,8 @@ unsigned random_word() {
     live.random = x;
     return x;
 }
-unsigned choose_reward(unsigned char *m, const Pose &pose) {
-    std::array<unsigned, last_weapon - first_weapon + 3> pool{};
+unsigned choose_reward(unsigned char *m, const Pose &pose, unsigned slot) {
+    std::array<unsigned, last_weapon - first_weapon + 3 + 14> pool{};
     unsigned size = 0;
     for (unsigned weapon = first_weapon; weapon <= last_weapon; ++weapon) {
         const auto quantity =
@@ -177,6 +188,12 @@ unsigned choose_reward(unsigned char *m, const Pose &pose) {
     // when all weapon slots are full and do not occupy an inventory slot.
     pool[size++] = netplay::kCourseRewardAttackX2;
     pool[size++] = netplay::kCourseRewardAttackX4;
+    // A held MK64 item is never replaced by a second box. Double mushroom is
+    // an intermediate triple-stack icon, not an additional roulette reward.
+    if (mk64_items::can_grant(slot))
+        for (unsigned item = 1; item <= 15; ++item)
+            if (item != unsigned(mk64_items::Item::DoubleMushroom))
+                pool[size++] = mk64_items::reward_id(mk64_items::Item(item));
     // Rejection sampling avoids modulo bias without changing the guest RNG.
     const unsigned threshold = (0u - size) % size;
     unsigned value = random_word();
@@ -184,7 +201,10 @@ unsigned choose_reward(unsigned char *m, const Pose &pose) {
         value = random_word();
     return pool[value % size];
 }
-bool grant(unsigned char *m, recomp_context &context, const Pose &pose, unsigned reward) {
+bool grant(unsigned char *m, recomp_context &context, const Pose &pose, unsigned reward,
+           unsigned slot) {
+    if (mk64_items::is_reward(reward))
+        return mk64_items::grant_item(slot, mk64_items::reward_item(reward));
     auto call = context;
     call.f_odd = &call.f0.u32h;
     call.r4 = guest_address(pose.rider);
@@ -208,7 +228,10 @@ void finish_rewards(unsigned char *m, recomp_context &context, unsigned count) {
             continue;
         const auto age = live.boxes.clock - roll.start_clock;
         auto retire = [&] { roll = {roll.generation, 0, 0, 0}; };
-        if (slot >= count) { retire(); continue; }
+        if (slot >= count) {
+            retire();
+            continue;
+        }
         if (roll.phase == 2) {
             if (age >= netplay::kCourseRouletteTicks + netplay::kCourseRewardBlinkTicks)
                 retire();
@@ -221,20 +244,30 @@ void finish_rewards(unsigned char *m, recomp_context &context, unsigned count) {
         if (!half(m, actor + 0x24) || word(m, actor + 0xE0) != pose.bike ||
             word(m, actor + 0xE4) != pose.rider ||
             word(m, pose.rider + rider::bike_pointer) != pose.bike) {
-            retire(); continue;
+            retire();
+            continue;
         }
         if (age < netplay::kCourseRouletteTicks)
             continue;
         if (netplay::is_course_weapon_reward(roll.weapon)) {
-            const auto quantity = static_cast<std::int16_t>(
-                half(m, pose.bike + inventory + 2 * roll.weapon));
-            if (quantity < 0) { retire(); continue; }
+            const auto quantity =
+                static_cast<std::int16_t>(half(m, pose.bike + inventory + 2 * roll.weapon));
+            if (quantity < 0) {
+                retire();
+                continue;
+            }
             // A weapon stolen during the spin may already have filled this slot.
             // Keep the native cap and choose it without awarding a fifth copy.
             if (quantity >= 4)
                 write_u32(m, pose.rider + rider::selected_weapon, roll.weapon);
-            else if (!grant(m, context, pose, roll.weapon)) { retire(); continue; }
-        } else if (!grant(m, context, pose, roll.weapon)) { retire(); continue; }
+            else if (!grant(m, context, pose, roll.weapon, slot)) {
+                retire();
+                continue;
+            }
+        } else if (!grant(m, context, pose, roll.weapon, slot)) {
+            retire();
+            continue;
+        }
         roll.phase = 2;
     }
 }
@@ -242,6 +275,7 @@ void finish_rewards(unsigned char *m, recomp_context &context, unsigned count) {
 
 void reset_runtime() noexcept {
     if (!prediction::active()) {
+        mk64_items::reset_runtime();
         live = {};
         hud_active = false;
         hud_weapon = {};
@@ -259,6 +293,8 @@ bool apply_state(const netplay::CourseItemState &state, std::uint32_t round,
         return false;
     if (live.round == round && tick == live.tick)
         return state == live.boxes;
+    if (live.round != round)
+        mk64_items::reset_hud_focus();
     live.boxes = state;
     live.round = round;
     live.tick = tick;
@@ -273,17 +309,29 @@ extern "C" void rr64_course_items_step(unsigned char *m, void *opaque) {
     if (!m || !opaque || prediction::active() || rr64_highlights_presenting() ||
         !experimental_course::active())
         return;
+    // Publish after every live item update, including depletion and grants,
+    // rather than waiting for another HUD draw before the next input poll.
+    struct PublishCycleBindings {
+        unsigned char *memory;
+        ~PublishCycleBindings() {
+            rr64_course_items_cycle_publish(memory);
+        }
+    } publish_cycle_bindings{m};
     // The enclosing race function still reaches this hook on paused frames,
     // after skipping native physics. Retain visible boxes but award nothing.
     if (half(m, engine::globals::gameplay_pause_state))
         return;
     const auto boxes = definitions();
-    if (boxes.empty() || boxes.size() > netplay::kMaximumCourseItems)
+    if (boxes.empty() || boxes.size() > netplay::kMaximumCourseItems) {
+        rr64_mk64_items_step(m, opaque);
         return;
+    }
     const auto status = netplay::get_status();
     if (status.active && (!status.connected || !status.authoritative || !status.is_host ||
-                          status.phase != netplay::Phase::Race))
+                          status.phase != netplay::Phase::Race)) {
+        rr64_mk64_items_step(m, opaque);
         return;
+    }
     float elapsed = 0, delta = 0;
     if (!engine::read_float(m, 0x800D7670, elapsed) || !std::isfinite(elapsed) || elapsed < 0 ||
         elapsed > 1000000 || !engine::read_float(m, engine::globals::physics_delta, delta) ||
@@ -299,6 +347,9 @@ extern "C" void rr64_course_items_step(unsigned char *m, void *opaque) {
         if (!live.random)
             live.random = 1;
     }
+    // Parent reset also clears the MK runtime. Initialize/advance it only
+    // afterwards, before choosing or delivering this frame's box rewards.
+    rr64_mk64_items_step(m, opaque);
     const auto clock = static_cast<std::uint32_t>(std::floor(double(elapsed) * clock_hz));
     const unsigned advance = clock >= live.boxes.clock ? clock - live.boxes.clock : 0;
     live.boxes.clock = clock;
@@ -362,7 +413,7 @@ extern "C" void rr64_course_items_step(unsigned char *m, void *opaque) {
         for (unsigned contact = 0; contact < count && std::isfinite(contacts[contact].first);
              ++contact) {
             const unsigned slot = contacts[contact].second;
-            const unsigned reward = choose_reward(m, current[slot]);
+            const unsigned reward = choose_reward(m, current[slot], slot);
             auto &roll = live.boxes.roulette[slot];
             const auto generation = roll.generation + 1u;
             roll = {generation ? generation : 1u, live.boxes.clock,
@@ -407,11 +458,16 @@ thread_local ItemHudSpriteFit item_hud_fit;
 
 extern "C" void rr64_course_items_hud_begin() {
     item_hud_fit = {};
+    rr64::mk64_items::reset_hud_queue();
+    rr64::course_items::hud_item = {};
+    rr64::course_items::hud_view = 4;
     rr64::course_items::hud_active = rr64::experimental_course::active();
     rr64::course_items::hud_weapon = {};
 }
 extern "C" void rr64_course_items_hud_end() {
     item_hud_fit = {};
+    rr64::course_items::hud_item = {};
+    rr64::course_items::hud_view = 4;
     rr64::course_items::hud_active = false;
     rr64::course_items::hud_weapon = {};
 }
@@ -419,31 +475,141 @@ extern "C" unsigned rr64_course_items_hud_weapon(unsigned char *m, unsigned ride
                                                  unsigned original) {
     using namespace rr64::course_items;
     hud_weapon = {original};
+    hud_item = {};
+    hud_view = 4;
     if (!m || !hud_active || rr64::prediction::active())
         return original;
     for (unsigned slot = 0; slot < rr64::engine::kMaximumRacers; ++slot) {
         const unsigned actor = actors + slot * actor_stride;
         if (half(m, actor + 0x24) && word(m, actor + 0xE4) == rider) {
             const auto status = rr64::netplay::get_physics_rules();
-            const unsigned canonical = status.active
-                ? rr64::online_flow::mapped_slot(slot, status.local_slot, status.replicated_riders)
-                : slot;
-            if (canonical < live.boxes.roulette.size())
+            const unsigned canonical =
+                status.active ? rr64::online_flow::mapped_slot(slot, status.local_slot,
+                                                               status.replicated_riders)
+                              : slot;
+            if (canonical < live.boxes.roulette.size()) {
                 hud_weapon = roulette_display(live.boxes.roulette[canonical], live.boxes.clock,
-                                              canonical, original, word(m, rider + 0x5D4));
+                                              canonical, original, word(m, rider + 0x5D4),
+                                              rr64::local_race_options::mk64_items_enabled());
+                const auto items = rr64::mk64_items::capture_state();
+                if (items.enabled && rr64::mk64_items::render_asset_available())
+                    hud_item = rr64::mk64_items::hud_display_for_rider(
+                        m, canonical, rider, items.riders[canonical],
+                        live.boxes.roulette[canonical], live.boxes.clock, original,
+                        rr64::local_race_options::mk64_items_enabled());
+                const unsigned views = word(m, 0x800A6578);
+                for (unsigned view = 0; view < std::min(views, 4u); ++view)
+                    if (word(m, 0x800A657C + view * 4) == slot) {
+                        hud_view = view;
+                        break;
+                    }
+            }
             break;
         }
     }
     return hud_weapon.weapon;
 }
+extern "C" void rr64_course_items_cycle_publish(unsigned char *m) {
+    using namespace rr64;
+    using namespace course_items;
+    if (prediction::active())
+        return;
+    std::array<mk64_items::CycleBinding, 4> bindings{};
+    const auto publish_empty = [&] { mk64_items::publish_cycle_bindings(bindings); };
+    if (!m || rr64_highlights_presenting() || !experimental_course::active() ||
+        !local_race_options::mk64_items_enabled() ||
+        !engine::is_live_race_transition(word(m, engine::globals::main_mode),
+                                         word(m, engine::globals::pending_mode))) {
+        publish_empty();
+        return;
+    }
+    const auto items = mk64_items::capture_state();
+    const auto rules = netplay::get_physics_rules();
+    const unsigned mask = word(m, 0x800A54D8);
+    const unsigned views = word(m, 0x800A6578);
+    if (!items.enabled || !mk64_items::render_asset_available() || !mask || mask > 0xffff ||
+        views < 1 || views > bindings.size() ||
+        (rules.active && (!rules.connected || rules.phase != netplay::Phase::Race))) {
+        publish_empty();
+        return;
+    }
+    std::array<bool, 4> duplicate{};
+    for (unsigned view = 0; view < views; ++view) {
+        const unsigned slot = word(m, 0x800A657C + view * 4);
+        if (slot >= engine::kMaximumRacers)
+            continue;
+        const unsigned actor = actors + slot * actor_stride;
+        const unsigned canonical =
+            rules.active ? online_flow::mapped_slot(slot, rules.local_slot, rules.replicated_riders)
+                         : slot;
+        if (canonical >= items.riders.size() || (rules.active && canonical != rules.local_slot))
+            continue;
+        const unsigned profile = rules.active ? 0 : word(m, actor + 8);
+        const unsigned rider = word(m, actor + 0xE4), bike = word(m, actor + 0xE0);
+        if (profile >= bindings.size() || !half(m, actor + 0x24) ||
+            !engine::valid_guest_range(rider, engine::rider::stride) ||
+            !engine::valid_guest_range(bike, engine::bike::stride) ||
+            word(m, bike + engine::bike::rider_pointer) != rider ||
+            word(m, rider + engine::rider::bike_pointer) != bike)
+            continue;
+        if (bindings[profile].mapping) {
+            duplicate[profile] = true;
+            continue;
+        }
+        bindings[profile] = {m, canonical, rider, mask, items.riders[canonical]};
+    }
+    for (unsigned profile = 0; profile < bindings.size(); ++profile)
+        if (duplicate[profile])
+            bindings[profile] = {};
+    mk64_items::publish_cycle_bindings(bindings);
+}
+extern "C" void rr64_course_items_weapon_wrapped(unsigned char *m, unsigned rider) {
+    using namespace rr64::course_items;
+    if (!rr64::prediction::active())
+        cycle_wrap = {m, rider};
+}
+extern "C" void rr64_course_items_weapon_switched(unsigned char *m, unsigned rider) {
+    using namespace rr64;
+    using namespace course_items;
+    const bool wrapped = cycle_wrap.mapping == m && cycle_wrap.rider == rider;
+    cycle_wrap = {};
+    // These callbacks follow the original inventory search. Never filter its
+    // input or put an imported item ID into a native weapon/inventory field.
+    if (!m || prediction::active() || rr64_highlights_presenting() ||
+        !experimental_course::active() || !local_race_options::mk64_items_enabled() ||
+        !engine::valid_guest_range(rider, engine::rider::stride))
+        return;
+    const auto items = mk64_items::capture_state();
+    const unsigned equipped = word(m, rider + engine::rider::selected_weapon);
+    if (!items.enabled || equipped > 14)
+        return;
+    const auto status = netplay::get_physics_rules();
+    for (unsigned slot = 0; slot < engine::kMaximumRacers; ++slot) {
+        const unsigned actor = actors + slot * actor_stride;
+        if (!half(m, actor + 0x24) || word(m, actor + 0xE4) != rider)
+            continue;
+        const unsigned canonical =
+            status.active
+                ? online_flow::mapped_slot(slot, status.local_slot, status.replicated_riders)
+                : slot;
+        if (canonical < items.riders.size())
+            mk64_items::focus_native_weapon(m, canonical, rider, equipped, items.riders[canonical],
+                                            wrapped && equipped == 1);
+        return;
+    }
+}
 extern "C" unsigned rr64_course_items_hud_quantity(unsigned original) {
     using namespace rr64::course_items;
     const bool effect_icon = rr64::netplay::course_reward_effect(hud_weapon.reward) != 0;
-    return hud_active && (hud_weapon.rolling || effect_icon) ? 0u : original;
+    return hud_active && (hud_weapon.rolling || effect_icon || hud_item.owns) ? 0u : original;
 }
 extern "C" unsigned rr64_course_items_hud_sprite(unsigned char *m, unsigned original) {
     using namespace rr64::course_items;
     item_hud_fit = {};
+    if (hud_active && hud_item.owns && original == 0xA3u + hud_weapon.weapon) {
+        rr64::mk64_items::arm_hud_sprite(m, hud_view, original, hud_item);
+        return original;
+    }
     if (!hud_active || original != 0xA3u + hud_weapon.weapon ||
         (!hud_weapon.rolling && !hud_weapon.reward_visible))
         return original;
@@ -469,13 +635,17 @@ extern "C" unsigned rr64_course_items_hud_sprite(unsigned char *m, unsigned orig
         !hud_sprite_dimensions(m, asset, sprite, replacement))
         return original;
     item_hud_fit = {kHudSpritePool + (buffer * kHudSpriteCapacity + count) * kHudSpriteRecordBytes,
-                   buffer, count + 1, asset, sprite,
-                   std::min(float(source.width) / replacement.width,
-                            float(source.height) / replacement.height)};
+                    buffer,
+                    count + 1,
+                    asset,
+                    sprite,
+                    std::min(float(source.width) / replacement.width,
+                             float(source.height) / replacement.height)};
     return sprite;
 }
 extern "C" void rr64_course_items_hud_sprite_end(unsigned char *m) {
     using namespace rr64::course_items;
+    rr64::mk64_items::commit_hud_sprite(m);
     const auto fit = item_hud_fit;
     item_hud_fit = {};
     // The native allocator can decline a full pool. Authenticate this exact
@@ -486,8 +656,8 @@ extern "C" void rr64_course_items_hud_sprite_end(unsigned char *m) {
         return;
     float sx = 0, sy = 0;
     if (rr64::engine::read_float(m, fit.record + 0x20, sx) &&
-        rr64::engine::read_float(m, fit.record + 0x24, sy) &&
-        std::isfinite(sx) && std::isfinite(sy)) {
+        rr64::engine::read_float(m, fit.record + 0x24, sy) && std::isfinite(sx) &&
+        std::isfinite(sy)) {
         rr64::engine::write_float(m, fit.record + 0x20, sx * fit.scale);
         rr64::engine::write_float(m, fit.record + 0x24, sy * fit.scale);
     }
@@ -503,8 +673,8 @@ extern "C" void rr64_course_items_hud_quadrants(unsigned char *m, void *context)
     // 30220 branches past its entire weapon block for layouts >= 2. Do not
     // change those layout globals to force it through a different HUD: doing
     // so also changes world/view placement. Online's scoped HUD is layout 0.
-    if (!m || !context || !hud_active || prediction::active() ||
-        rr64_highlights_presenting() || half(m, engine::globals::gameplay_pause_state))
+    if (!m || !context || !hud_active || prediction::active() || rr64_highlights_presenting() ||
+        half(m, engine::globals::gameplay_pause_state))
         return;
     const unsigned views = word(m, 0x800A6578), layout = word(m, 0x800A4F24);
     if (layout < 2 || views < 3 || views > 4)
@@ -526,29 +696,42 @@ extern "C" void rr64_course_items_hud_quadrants(unsigned char *m, void *context)
     std::array<unsigned char, 0x60> scratch;
     std::memcpy(scratch.data(), m + stack - 0x80000000u - 0x18u, scratch.size());
     const auto previous = hud_weapon;
+    const auto previous_item = hud_item;
+    const auto previous_view = hud_view;
+    const auto items = mk64_items::capture_state();
     for (unsigned view = 0; view < views; ++view) {
         const unsigned slot = word(m, 0x800A657C + view * 4);
         if (slot >= engine::kMaximumRacers)
             continue;
-        const unsigned canonical = rules.active
-            ? online_flow::mapped_slot(slot, rules.local_slot, rules.replicated_riders) : slot;
+        const unsigned canonical =
+            rules.active ? online_flow::mapped_slot(slot, rules.local_slot, rules.replicated_riders)
+                         : slot;
         if (canonical >= live.boxes.roulette.size())
             continue;
         const auto &roll = live.boxes.roulette[canonical];
-        if (!roll.phase || live.boxes.clock < roll.start_clock ||
-            live.boxes.clock - roll.start_clock >=
-                netplay::kCourseRouletteTicks + netplay::kCourseRewardBlinkTicks)
-            continue;
         const unsigned actor = actors + slot * actor_stride;
         const unsigned rider = word(m, actor + 0xE4), route = word(m, actor + 0xE8);
         if (!half(m, actor + 0x24) || !engine::valid_guest_range(rider, engine::rider::stride) ||
-            !engine::valid_guest_range(route, 0x54) || half(m, route + 0x4E) || half(m, route + 0x50))
+            !engine::valid_guest_range(route, 0x54) || half(m, route + 0x4E) ||
+            half(m, route + 0x50))
             continue;
         const unsigned equipped = word(m, rider + engine::rider::selected_weapon);
-        hud_weapon = roulette_display(roll, live.boxes.clock, canonical, equipped,
-                                      word(m, rider + 0x5D4));
-        if (hud_weapon.blink_off ||
-            (!hud_weapon.rolling && !hud_weapon.reward_visible) ||
+        hud_weapon =
+            roulette_display(roll, live.boxes.clock, canonical, equipped, word(m, rider + 0x5D4),
+                             local_race_options::mk64_items_enabled());
+        hud_view = view;
+        hud_item = items.enabled && mk64_items::render_asset_available()
+                       ? mk64_items::hud_display_for_rider(
+                             m, canonical, rider, items.riders[canonical], roll, live.boxes.clock,
+                             equipped, local_race_options::mk64_items_enabled())
+                       : mk64_items::HudDisplay{};
+        // The original quadrant HUD has no permanent weapon icon. Keep this
+        // shared square visible when switching away from a held imported item.
+        const bool held_item = items.enabled && local_race_options::mk64_items_enabled() &&
+                               items.riders[canonical].held != mk64_items::Item::None;
+        if ((!hud_item.owns &&
+             (hud_weapon.blink_off ||
+              (!hud_weapon.rolling && !hud_weapon.reward_visible && !held_item))) ||
             half(m, kHudSpriteCounts + buffer * 2) >= kHudSpriteCapacity)
             continue;
         const unsigned sprite = roulette_sprite(hud_weapon);
@@ -576,9 +759,14 @@ extern "C" void rr64_course_items_hud_quadrants(unsigned char *m, void *context)
         for (unsigned offset = 0x24; offset <= 0x3C; offset += 4)
             engine::write_float(m, stack + offset, 1.0f);
         engine::write_u32(m, stack + 0x44, 0x400); // Original weapon sprite flags.
+        if (hud_item.owns)
+            mk64_items::arm_hud_sprite(m, view, sprite, hud_item);
         func_8001EB90(m, &call);
+        mk64_items::commit_hud_sprite(m);
     }
     hud_weapon = previous;
+    hud_item = previous_item;
+    hud_view = previous_view;
     std::memcpy(m + stack - 0x80000000u - 0x18u, scratch.data(), scratch.size());
 }
 

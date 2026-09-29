@@ -37,21 +37,23 @@ AuthorityAssembly *authority_assembly_locked(const authority::Stamp &stamp,unsig
     if(a.frame.stamp.tick>stamp.tick)return nullptr;
     if(a.frame.stamp.tick!=stamp.tick){a={};a.frame.stamp=stamp;a.payload_mask=riders;a.world_mask=world;}
     if(a.payload_mask!=riders || a.world_mask!=world || a.frame.stamp.round!=stamp.round ||
-       a.frame.stamp.acknowledged!=stamp.acknowledged)return nullptr;
+       a.frame.stamp.acknowledged!=stamp.acknowledged || a.frame.stamp.simulated_us!=stamp.simulated_us)return nullptr;
     return &a;
 }
 void complete_authority_assembly_locked(AuthorityAssembly &a){
     if(a.mask!=(a.payload_mask?a.payload_mask:1u) || a.received_world!=a.world_mask)return;
     for(unsigned s=0;s<kMaximumPlayers;++s)
-        if(a.frame.stamp.acknowledged[s]<g_session.authority_frame.stamp.acknowledged[s])return;
+        if(a.frame.stamp.acknowledged[s]<g_session.authority_frame.stamp.acknowledged[s] ||
+           a.frame.stamp.simulated_us[s]<g_session.authority_frame.stamp.simulated_us[s])return;
     if(!world_sync::valid(world_sync::Snapshot{a.frame.stamp.round,a.frame.stamp.tick,a.frame.traffic}) ||
        !valid_course_item_state(a.frame.course_items) || !valid_course_hazard_state(a.frame.course_hazards) ||
+       !mk64_items::valid(a.frame.mk64_items) ||
        authority_world_mask(a.frame)!=a.world_mask)return;
     commit_authority_frame_locked(a.frame);
 }
 bool handle_authority_locked(const std::uint8_t *bytes,int size,unsigned sender,const sockaddr_in &) {
     const auto type=reinterpret_cast<const PacketHeader*>(bytes)->type;
-    if(type!=PacketType::AuthorityBegin && type!=PacketType::AuthorityInput && type!=PacketType::AuthorityState && type!=PacketType::AuthorityReady && type!=PacketType::AuthorityWorld && type!=PacketType::AuthorityItems && type!=PacketType::AuthorityHazards)return false;
+    if(type!=PacketType::AuthorityBegin && type!=PacketType::AuthorityInput && type!=PacketType::AuthorityState && type!=PacketType::AuthorityReady && type!=PacketType::AuthorityWorld && type!=PacketType::AuthorityItems && type!=PacketType::AuthorityHazards && type!=PacketType::AuthorityMk64Riders && type!=PacketType::AuthorityMk64Objects)return false;
     if(g_session.phase!=Phase::Race)return true;
     if(is_client_locked() && type==PacketType::AuthorityBegin && size==sizeof(AuthorityBeginPacket)) {
         const auto &p=*reinterpret_cast<const AuthorityBeginPacket*>(bytes);
@@ -144,6 +146,48 @@ bool handle_authority_locked(const std::uint8_t *bytes,int size,unsigned sender,
             hazards.poses[p.part*kHazardsPerPacket+i]=p.poses[i];
         pending->received_world|=bit;
         complete_authority_assembly_locked(*pending);
+    } else if(is_client_locked() && g_session.authoritative &&
+              type==PacketType::AuthorityMk64Riders && size==sizeof(AuthorityMk64RidersPacket)) {
+        const auto &p=*reinterpret_cast<const AuthorityMk64RidersPacket*>(bytes);
+        if(!valid_mk64_metadata(p.meta) || !g_session.game_setup.course.version ||
+           !(p.world_mask&kAuthorityMk64RidersBit) || (p.world_mask>>kAuthorityWorldParts) ||
+           (p.payload_mask>>kMaximumPlayers))return true;
+        for(const auto &rider:p.riders)if(!mk64_items::valid(rider,p.meta.clock))return true;
+        auto *pending=authority_assembly_locked(p.stamp,p.payload_mask,p.world_mask);
+        if(!pending || (pending->received_world&kAuthorityMk64RidersBit))return true;
+        auto &items=pending->frame.mk64_items;
+        if((pending->received_world&kAuthorityMk64Mask) && mk64_metadata(items)!=p.meta)return true;
+        items.enabled=p.meta.enabled;items.clock=p.meta.clock;
+        items.next_generation=p.meta.next_generation;items.random=p.meta.random;
+        items.riders=p.riders;
+        pending->received_world|=kAuthorityMk64RidersBit;
+        complete_authority_assembly_locked(*pending);
+    } else if(is_client_locked() && g_session.authoritative &&
+              type==PacketType::AuthorityMk64Objects && size==sizeof(AuthorityMk64ObjectsPacket)) {
+        const auto &p=*reinterpret_cast<const AuthorityMk64ObjectsPacket*>(bytes);
+        if(!valid_mk64_metadata(p.meta) || !g_session.game_setup.course.version ||
+           p.part>=kMk64ObjectParts || !(p.world_mask&kAuthorityMk64RidersBit) ||
+           (p.world_mask>>kAuthorityWorldParts) || (p.payload_mask>>kMaximumPlayers))return true;
+        const unsigned bit=1u<<(kAuthorityMk64First+1+p.part);
+        if(!(p.world_mask&bit))return true;
+        bool populated=false;
+        for(unsigned i=0;i<kMk64ObjectsPerPacket;++i) {
+            const auto &object=p.objects[i];
+            if(!mk64_items::valid(object,p.meta.clock) || object.generation>p.meta.next_generation ||
+               (p.part*kMk64ObjectsPerPacket+i>=mk64_items::object_capacity && object!=mk64_items::Object{}))return true;
+            populated|=object.generation!=0;
+        }
+        if(!populated)return true;
+        auto *pending=authority_assembly_locked(p.stamp,p.payload_mask,p.world_mask);
+        if(!pending || (pending->received_world&bit))return true;
+        auto &items=pending->frame.mk64_items;
+        if((pending->received_world&kAuthorityMk64Mask) && mk64_metadata(items)!=p.meta)return true;
+        items.enabled=p.meta.enabled;items.clock=p.meta.clock;
+        items.next_generation=p.meta.next_generation;items.random=p.meta.random;
+        for(unsigned i=0;i<kMk64ObjectsPerPacket && p.part*kMk64ObjectsPerPacket+i<mk64_items::object_capacity;++i)
+            items.objects[p.part*kMk64ObjectsPerPacket+i]=p.objects[i];
+        pending->received_world|=bit;
+        complete_authority_assembly_locked(*pending);
     }
     return true;
 }
@@ -207,6 +251,25 @@ void service_authority_locked(Clock::time_point now) {
                 for(unsigned peer=1;peer<kMaximumPlayers;++peer)if(g_session.peers[peer].connected)
                     send_packet_locked(state,g_session.peers[peer].endpoint);
             }
+        const auto &items=g_session.authority_frame.mk64_items;
+        if(g_session.authority_frame.stamp.tick && items.enabled) {
+            const unsigned mask=authority_world_mask(g_session.authority_frame);
+            AuthorityMk64RidersPacket riders{};initialize_packet(riders,PacketType::AuthorityMk64Riders);
+            riders.stamp=g_session.authority_frame.stamp;riders.payload_mask=payload_mask;riders.world_mask=mask;
+            riders.meta=mk64_metadata(items);riders.riders=items.riders;
+            for(unsigned peer=1;peer<kMaximumPlayers;++peer)if(g_session.peers[peer].connected)
+                send_packet_locked(riders,g_session.peers[peer].endpoint);
+            for(unsigned part=0;part<kMk64ObjectParts;++part) {
+                if(!(mask&(1u<<(kAuthorityMk64First+1+part))))continue;
+                AuthorityMk64ObjectsPacket objects{};initialize_packet(objects,PacketType::AuthorityMk64Objects);
+                objects.stamp=riders.stamp;objects.payload_mask=payload_mask;objects.world_mask=mask;
+                objects.part=part;objects.meta=riders.meta;
+                for(unsigned i=0;i<kMk64ObjectsPerPacket && part*kMk64ObjectsPerPacket+i<mk64_items::object_capacity;++i)
+                    objects.objects[i]=items.objects[part*kMk64ObjectsPerPacket+i];
+                for(unsigned peer=1;peer<kMaximumPlayers;++peer)if(g_session.peers[peer].connected)
+                    send_packet_locked(objects,g_session.peers[peer].endpoint);
+            }
+        }
     } else {
         if(g_session.local_slot<kMaximumPlayers && (g_session.authority_loaded&(1u<<g_session.local_slot))){
             AuthorityReadyPacket ready{};initialize_packet(ready,PacketType::AuthorityReady);ready.round=g_session.authority_round;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rr64_course_hazard_state.hpp"
+#include "rr64_mk64_item_state.hpp"
 #include "rr64_world_sync.hpp"
 #include <array>
 #include <cstddef>
@@ -26,7 +27,9 @@ struct Bone {
 struct Pose {
     bool valid = false;
     std::uint16_t count = 0, record_count = 0, lod = 0, source_bank = 0;
-    std::uint64_t topology = 0; // Address-independent topology identity.
+    // Ordered native types, hierarchy flags and source-template offsets;
+    // excludes process-local renderer record/pose allocation spacing.
+    std::uint64_t topology = 0;
     std::array<Bone, maximum_bones> bones{};
     bool operator==(const Pose &) const = default;
 };
@@ -61,6 +64,7 @@ struct Frame {
     std::array<Racer, maximum_racers> racers{};
     std::array<world_sync::Traffic, world_sync::capacity> traffic{};
     netplay::CourseHazardState hazards{};
+    mk64_items::Snapshot items{};
     bool operator==(const Frame &) const = default;
 };
 struct Clip {

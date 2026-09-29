@@ -3,17 +3,45 @@
 #include "rr64_online_ready.hpp"
 #include <vector>
 #include <cstdlib>
+#include <source_location>
 
 namespace {
 rr64::netplay::Status state;
-void require(bool value) { if (!value) std::abort(); }
+bool replay_holding=false,postrace_ready=false;
+unsigned setup_restarts=0;
+rr64::online_flow::PostRaceState ack{};
+void require(bool value,std::source_location where=std::source_location::current()) {
+    if (!value) {std::fprintf(stderr,"guest flow failed at line %u\n",where.line());std::exit(1);}
+}
 }
 namespace rr64::netplay {
 Status get_status() { return state; }
 bool set_selection(const online_flow::Selection &s) { state.players[state.local_slot].selection=s; return true; }
 bool host_release_selection() { return false; }
+bool host_advance_postrace(unsigned stage) {
+    if(!state.is_host || !state.authoritative) return false;
+    state.postrace={state.game_setup.revision,stage};return true;
 }
+bool acknowledge_postrace(online_flow::PostRaceState s) {ack=s;return true;}
+bool host_resume_postrace_setup() {
+    if(!state.is_host || !postrace_ready) return false;
+    state.phase=Phase::GameSetup;state.authoritative=false;return true;
+}
+}
+extern "C" int rr64_highlights_presenting(){return replay_holding;}
+extern "C" void rr64_online_game_setup_restart(){++setup_restarts;}
+namespace recomp { void *alloc(unsigned char *, std::size_t){return nullptr;} }
 #include "../src/rr64_online_guest_flow.cpp"
+
+#ifdef RR64_POSTRACE_NATIVE_SETTERS
+extern "C" void func_80048544(unsigned char *,recomp_context *);
+extern "C" void func_80048558(unsigned char *,recomp_context *);
+extern "C" void rr64_trace_race_end(unsigned char *,unsigned,unsigned){}
+extern "C" void rr64_thrash_options_mode(unsigned){}
+extern "C" void rr64_online_menu_mode_changed(unsigned){}
+// This fixture tests post-race routing; native audio cleanup is isolated.
+extern "C" void rr64_rival_engine_mode(unsigned char *, void *, unsigned){}
+#endif
 
 int main() {
     for(unsigned slot=0;slot<14;++slot) {
@@ -44,6 +72,7 @@ int main() {
     rr64_online_private_selection_begin(m);
     require(word(0x8009EF5C)==4); // offline must be untouched
     state.active=state.connected=true;state.connected_players=2;state.local_slot=1;
+    for(auto &p:state.players) p.course_compatibility=rr64::race_pack::Compatibility::Ready;
     state.phase=rr64::netplay::Phase::CharacterSelect;
     state.game_setup.valid=true;state.game_setup.revision=9;
     write_u32(m,0x8009EF5C,2);
@@ -120,5 +149,65 @@ int main() {
     state.active=false;
     require(rr64_online_player_count_label(4)==4);
     require(rr64_online_race_choice(0,99,0)==99);
+    // Preserve original local multiplayer's native result/statistics requests.
+    write_u32(m,rr64::engine::globals::main_mode,0x1e);
+    require(rr64_online_postrace_route_mode(m,0x1f)==0x1f);
+    state.active=state.connected=state.authoritative=true;
+    state.is_host=true;state.phase=rr64::netplay::Phase::Race;
+    state.game_setup.revision=10;
+    require(rr64_online_postrace_route_mode(m,0x1f)==0x1f);
+    require(state.postrace==rr64::online_flow::PostRaceState{10,1});
+    write_u32(m,rr64::engine::globals::main_mode,0x1f);
+    require(rr64_online_postrace_route_mode(m,0x23)==0x23 && setup_restarts==1);
+    require(rr64_online_postrace_update(m,0x23)==1); // guest still in highlights
+    require(rr64_online_postrace_wait_for_setup());
+    require(state.phase==rr64::netplay::Phase::Race && ack.stage==2);
+    postrace_ready=true;
+    require(rr64_online_postrace_update(m,0x23)==0 && state.phase==rr64::netplay::Phase::GameSetup);
+    require(!rr64_online_postrace_wait_for_setup());
+
+    state.is_host=false;state.authoritative=true;state.phase=rr64::netplay::Phase::Race;
+    write_u32(m,rr64::engine::globals::main_mode,0x1e);
+    write_u32(m,rr64::engine::globals::pending_mode,0x1e);
+    require(rr64_online_postrace_route_mode(m,0x1f)==0x1e); // guest cannot advance
+    // Missing stage1's packets entirely must still traverse both native modes.
+    replay_holding=true;rr64_online_postrace_update(m,0x1e);
+    require(word(rr64::engine::globals::pending_mode)==0x1e);
+    replay_holding=false;rr64_online_postrace_update(m,0x1e);
+    require(word(rr64::engine::globals::pending_mode)==0x1f);
+    require(rr64_online_postrace_route_mode(m,0x1f)==0x1f); // retain commanded pending mode
+    write_u32(m,0x8009CC50,9);
+    rr64_online_postrace_update(m,0x1e);rr64_online_postrace_update(m,0x39);
+    require(word(0x8009CC50)==9); // never restart an in-flight transition
+    rr64_online_postrace_update(m,0x1f);
+    require(word(rr64::engine::globals::pending_mode)==0x23);
+    require(word(rr64::engine::globals::multiplayer_stage)==1 && setup_restarts==2);
+    require(rr64_online_postrace_update(m,0x23)==1 && ack.stage==2);
+    state.phase=rr64::netplay::Phase::GameSetup;
+    require(rr64_online_postrace_update(m,0x23)==0);
+    require(!rr64::online_flow::advances({10,1},{10,2}));
+    require(!rr64::online_flow::advances({9,2},{10,1}));
+    require(!rr64::online_flow::advances({10,3},{10,2}));
+    require(rr64::online_flow::advances({11,1},{10,2}));
+#ifdef RR64_POSTRACE_NATIVE_SETTERS
+    // Execute both real generated mode setters. The guest's controller edge
+    // is rejected before either setter can overwrite the pending native mode.
+    state.active=state.connected=state.authoritative=true;state.is_host=false;
+    write_u32(m,rr64::engine::globals::main_mode,0x1e);
+    write_u32(m,rr64::engine::globals::pending_mode,0x1e);
+    recomp_context ctx{};ctx.r4=0x1f;
+    func_80048544(m,&ctx);
+    require(word(rr64::engine::globals::pending_mode)==0x1e && word(0x8009CC50)==0);
+    ctx.r4=0x1f;write_u32(m,0x8009CC50,77);
+    func_80048558(m,&ctx);
+    require(word(rr64::engine::globals::pending_mode)==0x1e && word(0x8009CC50)==77);
+    state.is_host=true;ctx.r4=0x1f;
+    func_80048544(m,&ctx);
+    require(word(rr64::engine::globals::pending_mode)==0x1f);
+    state.active=false;ctx.r4=0x1f;
+    func_80048558(m,&ctx);
+    require(word(rr64::engine::globals::pending_mode)==0x1f);
+#endif
+    std::puts("online guest flow: selection, results ownership, delayed replay and next-setup barrier passed");
     return 0;
 }

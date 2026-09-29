@@ -160,7 +160,8 @@ bool valid_weapon_pose(const WeaponPose &p) noexcept {
     return true;
 }
 bool valid_frame(const Frame &frame) noexcept {
-    if (!frame.tick || !netplay::valid_course_hazard_state(frame.hazards))
+    if (!frame.tick || !netplay::valid_course_hazard_state(frame.hazards) ||
+        !mk64_items::valid(frame.items))
         return false;
     for (const auto &r : frame.racers) {
         // Asset identifiers are values, never graph or actor addresses. The
@@ -213,6 +214,19 @@ bool interpolate(const Frame &a, const Frame &b, std::uint64_t time, Frame &out)
     result.time_us = time;
     if (b.time_us - a.time_us <= maximum_blend_gap_us) {
         const double weight = double(time - a.time_us) / double(b.time_us - a.time_us);
+        // Keep timer/inventory decisions on the preceding recorded sample.
+        // Only a stable object's position can interpolate across samples;
+        // creation, collision, release and expiry remain hard boundaries.
+        if (a.items.enabled && b.items.enabled)
+            for (unsigned i = 0; i < mk64_items::object_capacity; ++i) {
+                const auto &x = a.items.objects[i], &y = b.items.objects[i];
+                if (x.generation && x.generation == y.generation && x.owner == y.owner &&
+                    x.kind == y.kind && x.mode == y.mode && x.bounces == y.bounces &&
+                    nearby(x.position, y.position)) {
+                    blend_values(x.position, y.position, weight, result.items.objects[i].position);
+                    blend_values(x.velocity, y.velocity, weight, result.items.objects[i].velocity);
+                }
+            }
         for (unsigned i = 0; i < maximum_racers; ++i) {
             const auto &x = a.racers[i], &y = b.racers[i];
             auto &r = result.racers[i];

@@ -22,6 +22,7 @@ namespace rr64::offline_modifiers { bool enabled(Flag) { return false; } }
 extern "C" int rr64_offline_bikes_active(unsigned char*, unsigned) { return 0; }
 extern "C" unsigned rr64_offline_bikes_entry(unsigned char*, unsigned, unsigned original) { return original; }
 namespace rr64::netplay { Status get_status() { Status result{}; result.active = online; result.connected = online_connected; result.is_host = online_host; return result; } }
+namespace rr64::netplay { PhysicsRules get_physics_rules() { PhysicsRules result{}; result.active = online; result.connected = online_connected; result.is_host = online_host; return result; } }
 namespace rr64::netplay { bool authority_get_outcome(unsigned,authority::Outcome&,bool&){return false;} }
 namespace recomp { void* alloc(unsigned char* memory, size_t size) { static size_t next = 0x700000; const size_t offset = next; next += (size + 15) & ~size_t(15); return memory + offset; } }
 namespace { bool placement_ok=false; unsigned voices=0; }
@@ -754,7 +755,7 @@ int main() {
     check_solo(online_options() == host_choices, "guest cannot toggle host race music");
     apply_online_options((host_choices & ~all_music) | course_music_bit("mario_raceway"));
     check_solo(course_music_enabled("rainbow_road"), "legacy host music choice follows another course");
-    apply_online_options(0x08000000u);
+    apply_online_options(0x10000000u);
     check_solo(course_music_enabled("mario_raceway"), "invalid setup ignored");
     online = online_connected = online_host = false;
     enter_thrash();

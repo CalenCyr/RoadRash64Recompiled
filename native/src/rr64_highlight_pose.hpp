@@ -16,13 +16,26 @@ bool capture_entity(unsigned char *memory, std::uint32_t entity, unsigned type, 
 bool capture_prepared_node(unsigned char *live, unsigned char *prepared,
                            std::uint32_t node, Pose &out) noexcept;
 
+enum class BindFailure : unsigned {
+    None, ActiveScope, WorldPosition, WorldRotation, Node, Graph, PosePointer,
+    SourceBank, PoseValues, PoseOverlap, Compatibility, Scale, RootRange, PoseRead
+};
+struct BindReport {
+    BindFailure failure = BindFailure::None;
+    unsigned graph = 0, records = 0, bones = 0, lod = 0, bank = 0;
+    std::uint64_t topology = 0;
+    float scale = 0;
+    Vec3 root{};
+    bool normalized = false;
+};
+const char *bind_failure_name(BindFailure) noexcept;
 // One scope per game/render thread. Requires the exact recorded tier and
 // topology; does not force a tier, change allocation/resource pointers, or
 // update simulation state. Rebuilds only the root pose using current camera.
 // Returns false without writes when validation fails or a scope is active.
 bool begin_actor(unsigned char *memory, std::uint32_t node, unsigned actual_tier, const Pose &recorded,
                  const Vec3 &world_anchor, const Quaternion &world_rotation,
-                 const Vec3 &camera_world) noexcept;
+                 const Vec3 &camera_world, BindReport *report = nullptr) noexcept;
 // Existing native root hooks provide the same source1 -> source2 unit/depth
 // convention as live detailed rendering, scoped to this recorded actor only.
 unsigned root_source(unsigned char *, unsigned node, unsigned record, unsigned original) noexcept;

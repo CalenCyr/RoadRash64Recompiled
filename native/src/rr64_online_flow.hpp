@@ -2,6 +2,23 @@
 #include <cstdint>
 
 namespace rr64::online_flow {
+// Persistent host commands for native multiplayer Results -> Statistics ->
+// Race Setup. A missed edge or a slower highlight reel cannot strand a peer.
+struct PostRaceState {
+    std::uint32_t round = 0;
+    std::uint32_t stage = 0; // 1: statistics (1F), 2: next setup (23)
+    bool operator==(const PostRaceState &) const = default;
+};
+constexpr bool valid(const PostRaceState &s) {
+    return (!s.round && !s.stage) || (s.round && s.stage >= 1 && s.stage <= 2);
+}
+constexpr bool advances(PostRaceState next, PostRaceState previous) {
+    return valid(next) && (next == previous || next.round > previous.round ||
+        (next.round == previous.round && next.stage > previous.stage));
+}
+constexpr unsigned postrace_stage(unsigned from, unsigned to) {
+    return from == 0x1e && to == 0x1f ? 1u : from == 0x1f && to == 0x23 ? 2u : 0u;
+}
 // Swapping local and host slots is its own inverse. Only the >4-player
 // representation uses guest rider zero for every machine's local player.
 constexpr unsigned mapped_slot(unsigned slot, unsigned local, bool replicated) {

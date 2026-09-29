@@ -16,10 +16,10 @@ namespace rr64::netplay {
 void authority_pin_frame(){}
 bool authority_race_gate(bool){return true;}
 Status get_status(){return status;}
-bool authority_queue_input_recorded(std::uint16_t b,std::int8_t x,std::int8_t y,authority::Command &c,std::uint8_t actions){c={status.game_setup.revision,1,b,x,y};return authority_queue_input(b,x,y);}
+bool authority_queue_input_recorded(std::uint16_t b,std::int8_t x,std::int8_t y,authority::Command &c,std::uint8_t actions,unsigned duration_us){c={status.game_setup.revision,1,b,x,y};return authority_queue_input(b,x,y);}
 void authority_fail(const char*){check(false);}
 bool authority_queue_input(std::uint16_t,std::int8_t,std::int8_t){return true;}
-bool authority_begin_step(authority::Step &out){out=step;return true;}
+bool authority_begin_step(authority::Step &out,unsigned duration_us){out=step;return true;}
 bool authority_finish_step(std::uint64_t tick,authority::Stamp &stamp){check(tick==step.tick);++finished;stamp.round=step.round;stamp.tick=tick;return true;}
 }
 extern "C" int rr64_online_authority_capture(unsigned char*,const void*){return 1;}
@@ -46,6 +46,7 @@ int main(){
   status.phase=netplay::Phase::Race;status.local_slot=0;status.game_setup.revision=count+unsigned(transition)*20+passes*100;
   status.authority_humans=(1u<<count)-1;step={};step.round=status.game_setup.revision;step.tick=1;
   engine::write_u32(m,0x800a656c,count);
+  for(unsigned i=0;i<4;++i)engine::write_float(m,0x8009cba8+i*4,.016667f);
   for(unsigned s=0;s<count;++s){
    const unsigned a=0x800d8570+s*0x118,b=0x80100000+s*engine::bike::stride,r=0x80300000+s*engine::rider::stride;
    engine::write_u32(m,a+4,s);engine::write_u16(m,a+0x24,1);engine::write_u16(m,a+0x26,s?1:0);

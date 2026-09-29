@@ -1,4 +1,7 @@
 #include "rr64_experimental_course.hpp"
+#include "rr64_mk64_item_render.hpp"
+#include "rr64_mk64_item_material.hpp"
+#include "rr64_mk64_item_audio.hpp"
 #include "rr64_race_pack.hpp"
 #include "rr64_race_pack_menu.hpp"
 #include "rr64_course_material.hpp"
@@ -665,6 +668,11 @@ void load_stock() noexcept {
 }
 
 void initialize() {
+    mk64_items::reset_audio();
+    mk64_items::clear_audio_bank();
+    mk64_items::reset_render_session();
+    mk64_items::reset_material_session();
+    mk64_items::clear_render_asset();
     course_music::reset_runtime();
     course_music::unload_bank();
     course_audio::reset_runtime();
@@ -694,6 +702,9 @@ void initialize() {
     require(manifest.at("format") == "rr64-race-pack-catalogue" && manifest.at("version") == 1 &&
                 manifest.at("group_id") == "mk64" && manifest.at("group_name") == "MK64",
             "unsupported catalogue");
+    require(manifest.value("mk64_items_version", 0u) == 1u &&
+                manifest.contains("mk64_items_asset") && manifest.contains("mk64_items_audio_asset"),
+            "Reimport your Mario Kart 64 ROM to add the full item set.");
     const auto rom = recomp::get_rom();
     require(rom.size() == original_size &&
                 race_pack::hex_digest(race_pack::sha256(rom)) == original_sha,
@@ -842,6 +853,15 @@ void initialize() {
         validate_route(course.route); // Includes the derived missing-contact floor.
     }
     auto combined = compose(rom, manifest, files, prepared);
+    {
+        std::string error;
+        const bool art_ready = mk64_items::install_render_asset(
+            files.at(manifest.at("mk64_items_asset").get<std::string>()), error);
+        require(art_ready, error.c_str());
+        const bool audio_ready = mk64_items::install_audio_bank(
+            files.at(manifest.at("mk64_items_audio_asset").get<std::string>()), error);
+        require(audio_ready, error.c_str());
+    }
     if (manifest.contains("course_audio_asset"))
         course_audio::load_bank(files.at(manifest.at("course_audio_asset").get<std::string>()));
     if (manifest.contains("course_music_asset"))

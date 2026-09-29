@@ -6,7 +6,9 @@
 namespace rr64::world_sync {
 // Complete motion/basis state needs several sub-MTU batches. Commit only full
 // snapshots; partial receipt must never retire half the visible traffic roster.
-constexpr unsigned capacity=20, batch_size=3, batches=(capacity+batch_size-1)/batch_size;
+// Two records leave room for the fourteen timed-input cursors in the shared
+// authority stamp while keeping every UDP fragment below the 1200-byte limit.
+constexpr unsigned capacity=20, batch_size=2, batches=(capacity+batch_size-1)/batch_size;
 // Pointer-free traffic observations. Native +4 is a race-scoped identity;
 // allocation addresses and the compacted route roster index are not identities.
 struct Traffic {

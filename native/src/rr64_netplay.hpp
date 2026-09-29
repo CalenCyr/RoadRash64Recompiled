@@ -9,6 +9,7 @@
 #include "rr64_online_flow.hpp"
 #include "rr64_race_pack_identity.hpp"
 #include "rr64_course_hazard_state.hpp"
+#include "rr64_mk64_item_state.hpp"
 #include "rr64_world_sync.hpp"
 #include "rr64_attack_visual.hpp"
 #include "rr64_authoritative_round.hpp"
@@ -178,8 +179,8 @@ bool host_skip_highlights();
 // End a failed authority session without falling back into local simulation.
 void authority_fail(const char *reason);
 bool authority_queue_input(std::uint16_t buttons,std::int8_t x,std::int8_t y);
-bool authority_queue_input_recorded(std::uint16_t buttons,std::int8_t x,std::int8_t y,authority::Command &accepted,std::uint8_t actions=0);
-bool authority_begin_step(authority::Step &step);
+bool authority_queue_input_recorded(std::uint16_t buttons,std::int8_t x,std::int8_t y,authority::Command &accepted,std::uint8_t actions=0,unsigned duration_us=16667);
+bool authority_begin_step(authority::Step &step,unsigned duration_us=16667);
 bool authority_finish_step(std::uint64_t tick,authority::Stamp &stamp);
 // Imported item placements are immutable course data. Only their host-owned
 // clock, cooldowns and break generations travel with a completed race tick.
@@ -197,7 +198,7 @@ constexpr bool is_course_weapon_reward(unsigned reward) noexcept {
 }
 constexpr bool valid_course_reward(unsigned reward) noexcept {
     return is_course_weapon_reward(reward) || reward == kCourseRewardAttackX2 ||
-           reward == kCourseRewardAttackX4;
+           reward == kCourseRewardAttackX4 || mk64_items::is_reward(reward);
 }
 constexpr unsigned course_reward_effect(unsigned reward) noexcept {
     return reward == kCourseRewardAttackX2 ? 1u : reward == kCourseRewardAttackX4 ? 2u : 0u;
@@ -244,6 +245,7 @@ struct AuthorityFrame {
     float cop_win_age=-1;
     CourseItemState course_items{};
     CourseHazardState course_hazards{};
+    mk64_items::Snapshot mk64_items{};
 };
 // Publication is allowed only for the last completed host step. Reading a
 // snapshot does not discard predicted inputs; reconciliation must do that.
@@ -266,6 +268,7 @@ bool authority_prepare_replay(AuthorityReplayPlan &plan);
 bool authority_commit_replay(std::uint64_t ticket);
 
 struct Status {
+    online_flow::PostRaceState postrace{};
     bool authoritative=false;
     std::uint32_t authority_humans=0;
     bool host_disconnected = false;
@@ -302,6 +305,9 @@ bool set_ready(bool ready);
 bool set_character(std::uint8_t character);
 bool set_track(std::uint8_t track);
 bool host_set_phase(Phase phase);
+bool host_advance_postrace(unsigned stage);
+bool acknowledge_postrace(online_flow::PostRaceState state);
+bool host_resume_postrace_setup();
 bool host_commit_game_setup(const GameSetupState &setup);
 bool set_selection(const online_flow::Selection &selection);
 bool host_release_selection();

@@ -10,6 +10,7 @@ int main(){
  std::vector<unsigned char> memory(size),restored(size,0xff);
  prediction::GuestJournal journal;journal.reset(7);
  check(journal.capture(7,0,memory.data(),size));check(journal.data_bytes()==size);
+ check(journal.contains(7,0) && !journal.contains(8,0) && !journal.contains(7,1));
  const auto start=std::chrono::steady_clock::now();
  for(unsigned seq=1;seq<=256;++seq){memory[(seq-1)*4096]=static_cast<unsigned char>(seq);check(journal.capture(7,seq,memory.data(),size));}
  const auto elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
@@ -20,6 +21,7 @@ int main(){
  auto untouched=restored;check(!journal.restore(8,100,restored.data(),size) && restored==untouched);
  check(!journal.retire_before(7,257));check(journal.retire_before(7,100));
  check(journal.frames()==157 && !journal.restore(7,99,restored.data(),size));
+ check(!journal.contains(7,99) && journal.contains(7,100) && journal.contains(7,256));
  check(journal.capture(7,257,memory.data(),size));
  check(journal.retire_before(7,257));check(journal.data_bytes()==size);
  check(journal.restore(7,257,restored.data(),size) && restored==memory);

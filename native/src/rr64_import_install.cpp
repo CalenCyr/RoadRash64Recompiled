@@ -93,6 +93,9 @@ std::string validate_pack(const fs::path& pack, std::stop_token stop) {
 
     const auto music = manifest.value("course_music_asset", std::string{});
     require(!music.empty() && manifest.contains("course_audio_asset"), "The import is missing course sound or music.");
+    require(manifest.value("mk64_items_version", 0u) == 1u &&
+                manifest.contains("mk64_items_asset") && manifest.contains("mk64_items_audio_asset"),
+            "This converter is missing the full MK64 items. Update the converter and reimport your ROM.");
     const auto& records = manifest.at("files");
     require(records.is_array() && !records.empty() && records.size() <= 4096, "The converted asset list is invalid.");
     std::set<std::string> files;
@@ -114,6 +117,9 @@ std::string validate_pack(const fs::path& pack, std::stop_token stop) {
     }
     require(files.contains(music) && files.contains(manifest.at("course_audio_asset").get<std::string>()),
             "The imported sound banks are missing.");
+    require(files.contains(manifest.at("mk64_items_asset").get<std::string>()) &&
+                files.contains(manifest.at("mk64_items_audio_asset").get<std::string>()),
+            "The imported item art or sounds are missing.");
     for (const auto& course : courses) {
         for (const char* field : {"route", "preview", "item_boxes", "walls", "surfaces", "hazards"})
             require(files.contains(course.at(field).get<std::string>()), "A course is missing a required file.");

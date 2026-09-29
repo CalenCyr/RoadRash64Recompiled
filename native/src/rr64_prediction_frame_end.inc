@@ -44,6 +44,7 @@ bool replay_native_order(Resources &resources,const FrameInput &input){
     // Without an explicit seed, isolated_state would clone TODAY's live cop
     // state into this historical transaction on its first notification.
     if(!scope.valid() || !seed_cop_rules(input.rules))return fail_frame("order cop state unavailable");
+    if(!bind_item_state(resources.memory(),input.items))return fail_frame("order item state unavailable");
     if(!rr64::online_terrain::bind_replay(resources.memory(),resources.rom()))
         return fail_frame("historical collision bank unavailable");
     struct Binding {
@@ -67,6 +68,7 @@ bool replay_native_order(Resources &resources,const FrameInput &input){
 bool replay_native_frame(Resources& resources,const FrameInput& input,FrameOutput& output){
     frame_error[0]=0;
     if(active() || frame_resources || !authority::valid(input.command,input.command.round) ||
+       input.replay_duration_us>input.command.duration_us ||
        input.passes<1 || input.passes>2 || input.passes!=input.timing.substeps ||
        !authority::valid_timing(input.timing) ||
        !ResourceInventory::inspect(resources.memory()).can_start_worker())return fail_frame("input, timing or resource inventory unavailable");
@@ -80,6 +82,7 @@ bool replay_native_frame(Resources& resources,const FrameInput& input,FrameOutpu
     ReplayScope scope(input.session);
     if(!scope.valid() || !seed_cop_rules(input.rules) || !seed_cop_posts(input.posts) ||
        !seed_manual_eject(input.eject))return fail_frame("native shadow state unavailable");
+    if(!bind_item_state(resources.memory(),input.items))return fail_frame("historical item state unavailable");
     if(!rr64::online_terrain::bind_replay(resources.memory(),resources.rom()))
         return fail_frame("historical collision bank unavailable");
     std::uint16_t actor_ai=0;
@@ -110,10 +113,18 @@ bool replay_native_frame(Resources& resources,const FrameInput& input,FrameOutpu
             }) || !seed_manual_eject(eject)))return fail_frame("eject replay rejected");
         VisibilityScope visibility_scope(input.visibility);
         TerrainAvailabilityScope terrain_scope(input.terrain);
+#ifdef RR64_EXPERIMENTAL_COURSE
+        // The generated private prefix deliberately excludes live entry hooks.
+        // Apply only its bound historical physics effects once before native
+        // substeps; this cannot consume input, step objects, or emit cues.
+        rr64_mk64_items_before_physics(resources.memory());
+#endif
         native_frame(resources.memory(),&context);
         FrameOutput completed{};
         if(!controls.completed(ai_replay?0:input.passes) || !replay_cop_rules(completed.rules) ||
            !replay_cop_posts(completed.posts) || !replay_manual_eject(completed.eject))return fail_frame("control pass count or native output mismatch");
+        if(!complete_item_state(input.replay_duration_us?input.replay_duration_us:input.command.duration_us,
+                                completed.items))return fail_frame("historical item completion unavailable");
         output=completed;return true;
     }catch(const Resources::Invalid &error){return fail_frame(error.what());}
      catch(const Resources::Blocked&){return fail_frame("private resource wait blocked");}

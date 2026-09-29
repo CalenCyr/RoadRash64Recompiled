@@ -19,6 +19,7 @@ struct StreamingMailbox {
     std::vector<rr64::prediction::HistoricalStreaming> events;
 } streaming_mailbox;
 struct NativeFrame {
+    std::uint64_t elapsed_us=0;
     std::vector<rr64::prediction::HistoricalStreaming> streaming;
     bool streaming_complete=true;
     rr64::authority::NativeTiming timing{};
@@ -31,6 +32,7 @@ struct NativeFrame {
     rr64::prediction::CopRulesState rules{};
     rr64::prediction::CopPostsState posts{};
     rr64::prediction::ManualEjectState eject{};
+    rr64::mk64_items::ReplayState items{};
     rr64::prediction::ResourceInventory resources{};
 };
 struct History {
@@ -53,6 +55,7 @@ thread_local std::unique_ptr<History> history;
 thread_local std::uint64_t next_epoch=0;
 bool capture(unsigned char *memory,rr64::authority::Command command) {
     NativeFrame frame{};frame.command=command;frame.entry=history->pending_entry;
+    frame.elapsed_us=history->native.empty()?0:history->native.back().elapsed_us+command.duration_us;
     frame.session=history->pending_session;
     frame.timing=history->pending_timing;
     frame.counters=history->pending_counters;
@@ -61,6 +64,7 @@ bool capture(unsigned char *memory,rr64::authority::Command command) {
     frame.streaming_complete=history->pending_streaming_complete;
     if(!ultramodern::rr64::copy_guest_snapshot(memory,history->scratch.data(),history->scratch.size()) ||
        !rr64::prediction::capture_cop_rules(frame.rules) || !rr64::prediction::capture_cop_posts(frame.posts) || !rr64::prediction::capture_manual_eject(frame.eject))return false;
+    if(!rr64::prediction::capture_item_state(frame.items))return false;
     // Do not infer a quiescent resource worker from a successful memory copy.
     // Retain the evidence with this exact frame for the replay admission gate.
     frame.resources=rr64::prediction::ResourceInventory::inspect(history->scratch.data());
@@ -89,8 +93,10 @@ bool prepare_history_replay(std::uint32_t round,std::uint32_t acknowledged,
         candidate.acknowledged=acknowledged;candidate.last=history->last;
         candidate.memory.resize(engine::kRdramSize);
         if(!history->guest.restore(round,acknowledged,candidate.memory.data(),candidate.memory.size()))return false;
-        candidate.baseline={baseline->rules,baseline->posts,baseline->eject};
+        candidate.baseline={baseline->rules,baseline->posts,baseline->eject,baseline->items};
+        candidate.baseline_elapsed_us=baseline->elapsed_us;
         candidate.steps.reserve(commands.size());
+        candidate.completed_eject.reserve(commands.size());
         auto previous=baseline->command.buttons;
         for(const auto &frame:history->native){
             if(frame.command.sequence<=acknowledged)continue;
@@ -106,6 +112,7 @@ bool prepare_history_replay(std::uint32_t round,std::uint32_t acknowledged,
             // Native post-state is carried from the corrected baseline and then
             // each completed replay, not taken from the old uncorrected future.
             candidate.steps.push_back(input);previous=frame.command.buttons;
+            candidate.completed_eject.push_back(frame.eject[(actor-0x800d8570u)/0x118u]);
             candidate.streaming.push_back(frame.streaming);
         }
         if(candidate.steps.size()!=commands.size())return false;
@@ -127,7 +134,7 @@ bool commit_history_replay(const HistoricalReplay &plan,ReplayedHistory &result,
     if(!approve || active() || !history || next_epoch==UINT64_MAX || history->pending.sequence || history->epoch!=plan.epoch ||
        history->round!=plan.round || history->last!=plan.last ||
        result.native.size()!=plan.steps.size()+1 || result.final_memory.size()!=engine::kRdramSize ||
-       result.guest.frames()!=result.native.size())return false;
+       result.guest.frames()!=result.native.size() || result.resources.size()!=result.native.size())return false;
     try{
         std::deque<NativeFrame> replacement;
         for(const auto &old:history->native){
@@ -135,9 +142,9 @@ bool commit_history_replay(const HistoricalReplay &plan,ReplayedHistory &result,
             const auto index=replacement.size();
             if(index>=result.native.size())return false;
             auto frame=old;const auto &native=result.native[index];
-            frame.rules=native.rules;frame.posts=native.posts;frame.eject=native.eject;
-            if(!result.guest.restore(plan.round,frame.command.sequence,history->scratch.data(),history->scratch.size()))return false;
-            frame.resources=ResourceInventory::inspect(history->scratch.data());
+            frame.rules=native.rules;frame.posts=native.posts;frame.eject=native.eject;frame.items=native.items;
+            if(!result.guest.contains(plan.round,frame.command.sequence))return false;
+            frame.resources=result.resources[index];
             replacement.push_back(frame);
         }
         if(replacement.size()!=result.native.size())return false;

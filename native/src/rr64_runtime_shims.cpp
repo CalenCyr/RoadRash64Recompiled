@@ -1,4 +1,7 @@
 #include "rr64_netplay.hpp"
+#ifdef RR64_EXPERIMENTAL_COURSE
+#include "rr64_mk64_items.hpp"
+#endif
 #include "rr64_authoritative_eject.hpp"
 #include "rr64_prediction_context.hpp"
 #include "rr64_prediction_replay.hpp"
@@ -1316,8 +1319,12 @@ bool replay_manual_eject(ManualEjectState &out){
 extern "C" unsigned rr64_authority_take_actions(unsigned controller) {
     if(controller>=4)return 0;
     const auto mask=1u<<controller;
-    return (rider_eject_requests.fetch_and(~mask,std::memory_order_acq_rel)&mask)
+    unsigned actions=(rider_eject_requests.fetch_and(~mask,std::memory_order_acq_rel)&mask)
         ? rr64::authority::action_eject : 0;
+#ifdef RR64_EXPERIMENTAL_COURSE
+    if(rr64::mk64_items::take_action(controller))actions|=rr64::authority::action_mk64_item;
+#endif
+    return actions;
 }
 extern "C" int rr64_authority_eject_step(unsigned char *m,void *context,unsigned slot,unsigned actions) {
     if(!context || (actions&~rr64::authority::allowed_actions))return 0;

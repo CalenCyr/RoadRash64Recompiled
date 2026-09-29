@@ -446,6 +446,7 @@ Motion resolve(const World &world, std::span<const Sphere> spheres, Vec displace
 #include "rr64_engine_layout.hpp"
 #include "rr64_prediction_rules.hpp"
 #include "rr64_race_end_trace.hpp"
+#include "rr64_mk64_items.hpp"
 
 extern "C" void func_8004E754(unsigned char *, recomp_context *);
 
@@ -637,6 +638,10 @@ void end(unsigned char *m, recomp_context &context, unsigned kind) {
     const auto resolve_dynamic = [&] {
         if (p.local_client || p.replay)
             return;
+#ifdef RR64_EXPERIMENTAL_COURSE
+        if (rr64_mk64_items_ghost(m, p.object))
+            return;
+#endif
         dynamic = course_hazards::resolve({p.spheres.data(), p.count}, motion.displacement,
                                           motion.velocity, p.delta, kind >= 2);
         if (dynamic.contacts) {

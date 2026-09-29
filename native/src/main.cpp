@@ -12,6 +12,7 @@
 #include "rr64_log_batch.hpp"
 #include "rr64_presentation_options.hpp"
 #include "rr64_master_volume.hpp"
+#include "rr64_rival_engine_config.hpp"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -110,6 +111,9 @@
 #ifdef RR64_EXPERIMENTAL_COURSE
 #include "rr64_course_audio.hpp"
 #include "rr64_course_music.hpp"
+#include "rr64_mk64_item_audio.hpp"
+#include "rr64_mk64_items.hpp"
+#include "rr64_mk64_item_hud.hpp"
 #endif
 #include "rr64_music.hpp"
 #include "rr64_achievements.hpp"
@@ -128,7 +132,7 @@
 #include "rr64_experimental_course.hpp"
 #endif
 
-constexpr const char* kVersion = "1.4.1";
+constexpr const char* kVersion = "1.4.2";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -1272,11 +1276,13 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
         g_audio_rate);
 #ifdef RR64_EXPERIMENTAL_COURSE
     rr64::course_music::mix(std::span<std::int16_t>(swapped.data(), swapped.size()),
-                           g_audio_rate, rr64::music::volume_gain());
+                           g_audio_rate, rr64::music::volume_gain() * rr64::mk64_items::item_music_gain());
 #endif
     rr64::music::mix(std::span<std::int16_t>(swapped.data(), swapped.size()), g_audio_rate);
 #ifdef RR64_EXPERIMENTAL_COURSE
     rr64::course_audio::mix(std::span<std::int16_t>(swapped.data(), swapped.size()), g_audio_rate);
+    rr64::mk64_items::mix_audio(std::span<std::int16_t>(swapped.data(), swapped.size()),
+                               g_audio_rate, 1.f, rr64::music::volume_gain());
 #endif
     rr64::voice_chat::mix(
         std::span<std::int16_t>(swapped.data(), swapped.size()),
@@ -1538,6 +1544,9 @@ bool get_local_input_with_road_rumble(
 {
     const bool got_response =
         recompinput::profiles::get_n64_input(profile_index, buttons, x, y);
+#ifdef RR64_EXPERIMENTAL_COURSE
+    const std::uint16_t physical_buttons = got_response && buttons ? *buttons : 0;
+#endif
     const bool dismissal_input_blocked = profile_index == 0
         ? rr64::popup_input::suppress(recompinput::game_input_disabled(),
             got_response, buttons ? *buttons : 0, x ? *x : 0, y ? *y : 0)
@@ -1560,6 +1569,21 @@ bool get_local_input_with_road_rumble(
     }
     // Edge state and requests belong to the controller slot, not player one.
     if (profile_index >= 0 && profile_index < 4) {
+#ifdef RR64_EXPERIMENTAL_COURSE
+        static std::array<bool, 4> item_was_held{};
+        const bool item_held=got_response && recompinput::profiles::get_action_input(
+            profile_index,recompinput::GameInput::RR64_MK64_USE_ITEM);
+        const bool item_pressed=item_held && !item_was_held[profile_index];
+        item_was_held[profile_index]=item_held;
+        if(item_pressed && !dismissal_input_blocked && !recompinput::game_input_disabled() &&
+           recompinput::game_window_focused() && rr64_are_gameplay_shortcuts_active() &&
+           rr64::mk64_items::input_active()) {
+            const auto online=rr64::netplay::get_status();
+            rr64::mk64_items::request_use(rr64::online_flow::shortcut_slot(profile_index,
+                online.active && online.connected && online.phase==rr64::netplay::Phase::Race,
+                online.local_slot,online.replicated_riders));
+        }
+#endif
         static std::array<bool, 4> eject_was_held{};
         const bool held = got_response && recompinput::profiles::get_action_input(
             profile_index, recompinput::GameInput::RR64_EJECT);
@@ -1614,6 +1638,17 @@ bool get_local_input_with_road_rumble(
         ? 0.14f + (0.04f * steering_load)
         : 0.0f;
     recompinput::set_road_rumble(rumble_channel, road_strength);
+#ifdef RR64_EXPERIMENTAL_COURSE
+    // Filter the physical cycle hold before native input and netplay/history
+    // receive it. This helper is used only for this machine's local profiles.
+    if (profile_index >= 0 && profile_index < 4 && buttons) {
+        *buttons = rr64::mk64_items::filter_cycle_input(unsigned(profile_index), physical_buttons,
+            got_response ? *buttons : 0,
+            got_response && !dismissal_input_blocked && !recompinput::game_input_disabled() &&
+            recompinput::game_window_focused() && rr64_are_gameplay_shortcuts_active() &&
+            rr64::mk64_items::input_active());
+    }
+#endif
     return got_response;
 }
 
@@ -2034,6 +2069,7 @@ void init_recompui_config() {
         [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
             g_master_volume_gain.store(rr64::audio::volume_gain(std::get<double>(value)), std::memory_order_relaxed);
         });
+    rr64::rival_engine::configure_volume(sound_config);
     auto music_directory = executable_directory() / "music";
 #ifndef _WIN32
     // AppImage's mounted executable directory is read-only. Keep user tracks
@@ -2077,6 +2113,7 @@ void init_recompui_config() {
     rr64::offline_modifiers::apply_config();
     // Registering another tab can relocate the frontend's config vector.
     auto& loaded_sound_config = recompui::config::get_config(recompui::config::sound::id);
+    rr64::rival_engine::apply_volume_config(loaded_sound_config);
     rr64::voice_chat::apply_config(loaded_sound_config);
     rr64::voice_chat::set_enabled(std::get<bool>(loaded_sound_config.get_option_value(kProximityVoiceEnabledOption)));
     recompui::register_player_name_callbacks(

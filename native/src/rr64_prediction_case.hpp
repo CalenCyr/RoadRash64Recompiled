@@ -10,7 +10,7 @@ namespace rr64::prediction {
 struct ReplayCase {
     struct Header {
         std::uint64_t magic=0x3153414334365252ull,rom_hash=0;
-        std::uint32_t version=4,input_size=sizeof(FrameInput),image_size=engine::kRdramSize;
+        std::uint32_t version=6,input_size=sizeof(FrameInput),image_size=engine::kRdramSize;
         std::uint32_t local=0,humans=0,mapped=0,attempt=0,category=0;
         std::uint32_t native_size=sizeof(FrameOutput),native_valid=1;
     } header;
@@ -40,7 +40,7 @@ inline bool read_case(const std::filesystem::path& path,ReplayCase& out){
     if(std::filesystem::file_size(path,error)!=sizeof(ReplayCase::Header)+sizeof(FrameInput)+sizeof(FrameOutput)+3ull*engine::kRdramSize || error)return false;
     std::ifstream in(path,std::ios::binary);ReplayCase c;
     in.read(reinterpret_cast<char*>(&c.header),sizeof(c.header));
-    if(!in || c.header.magic!=ReplayCase::Header{}.magic || c.header.version!=4 ||
+    if(!in || c.header.magic!=ReplayCase::Header{}.magic || c.header.version!=6 ||
        c.header.input_size!=sizeof(FrameInput) || c.header.image_size!=engine::kRdramSize ||
        c.header.native_size!=sizeof(FrameOutput) || c.header.native_valid>1 ||
        c.header.local>=14 || c.header.mapped>1 || c.header.humans>=1u<<14)return false;

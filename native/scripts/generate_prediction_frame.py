@@ -56,6 +56,42 @@ parts.append('using NativeFunction=void(*)(uint8_t*,recomp_context*);\nNativeFun
 parts.extend('case 0x'+a+':return '+n+';' for a,n in sorted(addresses.items()) if n in seen)
 parts.append('default:{char reason[96];std::snprintf(reason,sizeof(reason),"unregistered native replay callback %08x",static_cast<unsigned>(address));throw Resources::Invalid(reason);}}}')
 for text in [*(functions[n] for n in sorted(seen)),prefix,order]:
+    # These register-only presentation hooks consult the live peer's listener.
+    # Historical simulation keeps the original native gain path and must never
+    # read today's network session or cause a live audio service call.
+    text=re.sub(r'\brr64_online_audio_(?:owner|listener|weapon_gain)\(rdram, ctx\);',
+                '(void)0; // Live listener hook omitted from private replay.',text)
+    text=re.sub(r'\brr64_online_audio_weapon_source\(rdram, ctx, \(unsigned\)ctx->r(?:4|16)\);',
+                '(void)0; // Live listener hook omitted from private replay.',text)
+    if 'rr64_online_audio_' in text:
+        raise RuntimeError('New online audio hook requires explicit private replay handling')
+    # Weapon cycling remains native physics/input, but its HUD focus belongs
+    # to the visible frame, never to an older private correction frame.
+    text=re.sub(r'\brr64_course_items_weapon_(?:switched|wrapped)\(rdram,\(unsigned\)ctx->r(?:4|16)\);',
+                '(void)0; // Live inventory HUD focus omitted from private replay.',text)
+    if 'rr64_course_items_weapon_switched' in text or 'rr64_course_items_weapon_wrapped' in text:
+        raise RuntimeError('New weapon HUD hook requires explicit private replay handling')
+    # Rival engines and their allocation budget are live presentation only.
+    # The original private sound path still uses its isolated mixer services.
+    text=re.sub(r'if \(rr64_rival_engine_(?:gain|allocate)\(rdram, ctx\)\) return;',
+                '(void)0; // Live rival engine hook omitted from private replay.',text)
+    text=re.sub(r'\brr64_rival_engine_(?:frame|gate|threshold|no_steal|allocated|child_adopt)\(rdram, ctx\);',
+                '(void)0; // Live rival engine hook omitted from private replay.',text)
+    text=re.sub(r'\brr64_rival_engine_(?:mode|recovery)\(rdram, ctx, \(unsigned\)ctx->r(?:4|17)\);',
+                '(void)0; // Live rival engine hook omitted from private replay.',text)
+    text=re.sub(r'\brr64_rival_engine_child\(rdram, ctx, [01]\);|\brr64_rival_engine_audio_reset\(\);',
+                '(void)0; // Live rival engine hook omitted from private replay.',text)
+    if 'rr64_rival_engine_' in text:
+        raise RuntimeError('New rival engine hook requires explicit private replay handling')
+    # Inventory, projectiles, cues and display are live-only. Physics effects
+    # are explicitly seeded by frame_end from historical state. The entry
+    # before_physics call is supplied there once (the prefix drops entry hooks),
+    # while native immunity/ghost queries remain in their audited consumers.
+    text=re.sub(r'\brr64_mk64_items_(?:step|mode|scale_matrix|draw|hud|bike_contact)\([^;]*\);',
+                '(void)0; // Live MK64 item simulation/presentation omitted from private replay.',text)
+    item_hooks=set(re.findall(r'\b(rr64_mk64_items_\w+)\(',text))
+    if item_hooks-{'rr64_mk64_items_before_physics','rr64_mk64_items_immune','rr64_mk64_items_ghost'}:
+        raise RuntimeError('New MK64 item hook requires explicit private replay handling: '+str(item_hooks))
     # Verifier-only cell dependency probe at the original, already-computed
     # indices. Do not duplicate float-to-cell conversion or touch live code.
     if text.startswith('RECOMP_FUNC void func_800146C8('):

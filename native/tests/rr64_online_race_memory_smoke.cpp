@@ -35,6 +35,9 @@ bool set_selection(const online_flow::Selection &){return true;}
 bool host_release_selection(){return false;}
 }
 extern "C" int rr64_is_live_race_mode(unsigned){return 1;}
+extern "C" int rr64_online_postrace_update(unsigned char *,unsigned){return 0;}
+extern "C" int rr64_highlights_presenting(){return 0;}
+namespace rr64::highlight_camera { bool active() noexcept {return false;} }
 namespace rr64::prediction {
 bool capture_cop_rules(CopRulesState &){return false;}
 bool capture_cop_posts(CopPostsState &){return false;}
@@ -125,6 +128,29 @@ int main(){
         rr64_online_render_end(m);check(rr64_online_render_loop_continue(1)==1);
         engine::read_u32(m,0x8009DB88,views);check(views==(count>4?1u:count));
     }
+    // Captured regression: highlights restore two logical players in native
+    // mode30. Results must still draw only this peer, retaining camera bank1
+    // and the complete simulation roster; leaving the scene ends the override.
+    status={};status.active=status.connected=true;status.phase=netplay::Phase::Race;
+    status.local_slot=1;status.connected_players=2;
+    engine::write_u32(m,engine::globals::pending_mode,0x1e);
+    engine::write_u32(m,0x800A4F24,2);
+    online_race_sync::before_guest_update(m,0x1e);
+    rr64_online_render_begin(m);
+    check(online_race_sync::g_viewport_render_plan.peer_fullscreen);
+    check(online_race_sync::g_viewport_render_plan.first_viewport==1);
+    check(online_race_sync::g_viewport_render_plan.layout==0);
+    unsigned logical_views=0;engine::read_u32(m,0x8009DB88,logical_views);check(logical_views==2);
+    rr64_online_render_end(m);
+    engine::write_u32(m,engine::globals::pending_mode,0x1f);
+    online_race_sync::before_guest_update(m,0x1f);
+    rr64_online_render_begin(m);check(!online_race_sync::g_viewport_render_plan.peer_fullscreen);
+    rr64_online_render_end(m);
+    status.active=false;
+    engine::write_u32(m,engine::globals::pending_mode,0x1e);
+    online_race_sync::before_guest_update(m,0x1e);
+    rr64_online_render_begin(m);check(!online_race_sync::g_viewport_render_plan.peer_fullscreen);
+    rr64_online_render_end(m);
     // Actual bridge: host AI must update an existing matching client roster
     // actor, reject a different model, and never override the host simulation.
     status.active=status.connected=true;status.phase=netplay::Phase::Race;

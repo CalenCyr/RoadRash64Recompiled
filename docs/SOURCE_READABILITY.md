@@ -47,3 +47,11 @@ checks. Formatting can change debug line information and binary hashes; treat
 the rebuilt candidate as a new artifact. Runtime acceptance and publication
 remain separate steps. Optional diagnostics and validation guards are not dead
 code merely because ordinary play leaves them disabled.
+
+## 1.4.2 additions
+
+See [MK64 item modules](mk64-items.md), [rival-engine ownership](rival-engine-audio.md),
+and [Insanity campaign mapping](insanity-campaign.md). Keep gameplay simulation,
+local input/HUD focus, recorded presentation and sound ownership separate.
+The release removes the unused scalar-size HUD wrapper; all draws use the actual
+native weapon rectangle. Tests target that same production entry point.
