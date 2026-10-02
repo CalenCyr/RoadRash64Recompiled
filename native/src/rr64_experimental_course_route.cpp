@@ -368,9 +368,11 @@ extern "C" int rr64_experimental_course_build_route(unsigned char* memory, void*
     }
     for (unsigned i = 0; i < 6; ++i)
         descriptor_coordinates.written[i] = word(memory, descriptor + 0x34 + i * 4);
-    // Imported packs contain closed circuits even if the stock menu entry
-    // used to reach them was a point-to-point race.
-    MEM_H(0, guest_address(0x800D7680)) = 1;
+    // Tag and Deathmatch use points, so retain their native disabled lap flag.
+    // Custom Cop still needs circuit finishes for racers to escape.
+    const unsigned type = word(memory, 0x8009EAE4);
+    if ((type != 6 && type != 7) || rr64_custom_cop_enabled())
+        MEM_H(0, guest_address(0x800D7680)) = 1;
     if (previous) {
         context.r4 = 0;
         context.r5 = guest_address(previous);

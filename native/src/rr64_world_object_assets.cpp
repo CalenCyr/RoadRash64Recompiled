@@ -360,6 +360,43 @@ struct ModelBuilder {
     }
 };
 
+void append_model(const Reader &rom, ObjectAssets &out, std::vector<std::uint8_t> &memory,
+                  std::size_t i, bool batch_triangles) {
+    require(i < model_count, "object resource index exceeds table");
+    const auto entry = model_table + 0x40u + i * 12u, p = rom.relative(entry);
+    const auto size = rom.word(entry + 4u);
+    require(size >= 0x40u && size <= maximum_model, "object raw model exceeds budget");
+    const auto raw = rom.record(p, size);
+    require(raw.word(0) == 0x41u && raw.word(4) == size, "invalid raw object model header");
+    const auto root = std::size_t(raw.half(0xeu)) * 8u;
+    raw.range(root, 0x40u);
+    copy(memory, scratch_model, raw.bytes);
+    const auto upload = append(out, raw.bytes);
+    ModelBuilder builder{out, raw, memory, {}, upload};
+    builder.metadata.raw_rom_offset = std::uint32_t(p);
+    builder.batch_triangles = batch_triangles;
+    builder.metadata.root_source_offset = std::uint32_t(root);
+    builder.metadata.minimum.fill(std::numeric_limits<float>::infinity());
+    builder.metadata.maximum.fill(-std::numeric_limits<float>::infinity());
+    builder.walk(root, identity());
+    // Original entries163/250 are deliberate 192-byte empty roots. They
+    // retain their indices and empty display lists; no geometry is invented.
+    if (builder.metadata.vertices == 0u) {
+        builder.metadata.minimum.fill(0.0f);
+        builder.metadata.maximum.fill(0.0f);
+    }
+    command(builder.commands, 0xdf000000u, 0u);
+    builder.metadata.display_list_offset = append(out, builder.commands);
+    builder.metadata.display_list_size = std::uint32_t(builder.commands.size());
+    for (auto r : builder.relocations) {
+        r.word_offset += builder.metadata.display_list_offset;
+        out.relocations.push_back(r);
+    }
+    out.vertices += builder.metadata.vertices;
+    out.triangles += builder.metadata.triangles;
+    out.models.push_back(builder.metadata);
+}
+
 void build(const Reader &rom, ObjectAssets &out, bool batch_triangles) {
     require((rom.bytes.size() == 0x2000000u
 #ifdef RR64_EXPERIMENTAL_COURSE
@@ -376,40 +413,8 @@ void build(const Reader &rom, ObjectAssets &out, bool batch_triangles) {
     copy(memory, 0x80000000u, rom.bytes.subspan(0xc00u, 0xa0000u));
     put(memory, 0x80000c70u, 0u);
     out.models.reserve(model_count);
-    for (std::size_t i = 0; i < model_count; ++i) {
-        const auto entry = model_table + 0x40u + i * 12u, p = rom.relative(entry);
-        const auto size = rom.word(entry + 4u);
-        require(size >= 0x40u && size <= maximum_model, "object raw model exceeds budget");
-        const auto raw = rom.record(p, size);
-        require(raw.word(0) == 0x41u && raw.word(4) == size, "invalid raw object model header");
-        const auto root = std::size_t(raw.half(0xeu)) * 8u;
-        raw.range(root, 0x40u);
-        copy(memory, scratch_model, raw.bytes);
-        const auto upload = append(out, raw.bytes);
-        ModelBuilder builder{out, raw, memory, {}, upload};
-        builder.metadata.raw_rom_offset = std::uint32_t(p);
-        builder.batch_triangles = batch_triangles;
-        builder.metadata.root_source_offset = std::uint32_t(root);
-        builder.metadata.minimum.fill(std::numeric_limits<float>::infinity());
-        builder.metadata.maximum.fill(-std::numeric_limits<float>::infinity());
-        builder.walk(root, identity());
-        // Original entries163/250 are deliberate 192-byte empty roots. They
-        // retain their indices and empty display lists; no geometry is invented.
-        if (builder.metadata.vertices == 0u) {
-            builder.metadata.minimum.fill(0.0f);
-            builder.metadata.maximum.fill(0.0f);
-        }
-        command(builder.commands, 0xdf000000u, 0u);
-        builder.metadata.display_list_offset = append(out, builder.commands);
-        builder.metadata.display_list_size = std::uint32_t(builder.commands.size());
-        for (auto r : builder.relocations) {
-            r.word_offset += builder.metadata.display_list_offset;
-            out.relocations.push_back(r);
-        }
-        out.vertices += builder.metadata.vertices;
-        out.triangles += builder.metadata.triangles;
-        out.models.push_back(builder.metadata);
-    }
+    for (std::size_t i = 0; i < model_count; ++i)
+        append_model(rom, out, memory, i, batch_triangles);
     std::array<std::size_t, descriptor_count> descriptors{};
     auto p = descriptor_table + 8u;
     for (auto &d : descriptors) {
@@ -460,6 +465,27 @@ void build(const Reader &rom, ObjectAssets &out, bool batch_triangles) {
 }
 } // namespace
 
+bool build_object_model_assets(std::span<const std::uint8_t> bytes,
+                               std::span<const unsigned> resources, ObjectAssets &output,
+                               std::string &error) noexcept {
+    try {
+        const Reader rom{bytes};
+        require(bytes.size() >= 0x2000000u && bytes.size() <= 0x4000000u &&
+                    rom.word(0) == 0x80371240u && rom.word(model_table) == 0x40u &&
+                    rom.word(model_table + 0xcu) == model_count && resources.size() <= model_count,
+                "selected object cache needs the supported Road Rash resource table");
+        std::vector<std::uint8_t> memory(8u * 1024u * 1024u);
+        copy(memory, 0x80000000u, bytes.subspan(0xc00u, 0xa0000u));
+        put(memory, 0x80000c70u, 0u);
+        ObjectAssets candidate;
+        candidate.models.reserve(resources.size());
+        for (auto resource : resources) append_model(rom, candidate, memory, resource, false);
+        output = std::move(candidate);
+        error.clear();
+        return true;
+    } catch (const std::exception &e) { error = e.what(); return false; }
+    catch (...) { error = "unknown selected object compilation failure"; return false; }
+}
 bool build_object_assets(std::span<const std::uint8_t> rom, ObjectAssets &output,
                          std::string &error, bool batch_triangles, bool compile_packets) noexcept {
     try {

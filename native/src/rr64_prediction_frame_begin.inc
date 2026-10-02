@@ -4,6 +4,7 @@
 #include "rr64_prediction_dependency_probe.hpp"
 #include "rr64_authoritative_eject.hpp"
 #include "rr64_native.hpp"
+#include "rr64_terrain_graphics_pool.hpp"
 #include <cstdio>
 namespace rr64::prediction {
 namespace {
@@ -11,6 +12,21 @@ thread_local Resources* frame_resources=nullptr;
 thread_local CpuContext worker_entry;
 thread_local unsigned frame_blocks=0;
 thread_local char frame_error[192]{};
+thread_local bool historical_bounded_terrain = false;
+struct TerrainStreamingScope {
+    bool previous = historical_bounded_terrain;
+    explicit TerrainStreamingScope(bool bounded) { historical_bounded_terrain = bounded; }
+    ~TerrainStreamingScope() { historical_bounded_terrain = previous; }
+};
+unsigned private_terrain_streaming_range(unsigned bits) {
+    return rr64::terrain_graphics::streaming_range(bits, historical_bounded_terrain);
+}
+void private_terrain_pool_require(unsigned char *memory, unsigned pool, unsigned bytes) {
+    if (pool != 2u) return;
+    const auto state = rr64::terrain_graphics::inspect_pool(memory, bytes);
+    if (!state.valid || !state.selected)
+        throw Resources::Invalid("historical terrain display-list pool exhausted or invalid");
+}
 bool fail_frame(const char *reason){std::snprintf(frame_error,sizeof(frame_error),"%s",reason);return false;}
 bool prepare_worker_entry(){
     // Stock0CB94 supplies800B12D8; osCreateThread reserves the first16 bytes.

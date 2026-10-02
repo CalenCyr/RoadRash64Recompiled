@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "heads": {
+    "doom-guy": {
+      "file": "art/heads/doom-guy.png",
+      "source_x": [0, 2, 6.5, 19, 38],
+      "target_x": [0, 2, 9, 24, 38]
+    },
+    "punisher": {
+      "file": "art/heads/punisher.png",
+      "source_x": [
+        0,
+        2,
+        7.5,
+        22.5,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        10.5,
+        24,
+        38
+      ]
+    },
+    "dominic-santiago": {
+      "file": "art/heads/dominic-santiago.png",
+      "source_x": [
+        0,
+        2,
+        4.5,
+        18,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        10.5,
+        24,
+        38
+      ]
+    },
+    "green-pants-rider": {
+      "file": "art/heads/green-pants-rider.png",
+      "source_x": [
+        0,
+        2,
+        4.5,
+        19,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        10.5,
+        24,
+        38
+      ]
+    },
+    "vin-diesel": {
+      "file": "art/heads/vin-diesel.png",
+      "source_x": [
+        0,
+        2,
+        4.5,
+        19,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        10.5,
+        24,
+        38
+      ]
+    },
+    "marcus-fenix": {
+      "file": "art/heads/marcus-fenix.png",
+      "source_x": [
+        0,
+        2,
+        5.5,
+        21.5,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        10.5,
+        24,
+        38
+      ]
+    },
+    "cortana": {
+      "file": "art/heads/cortana.png",
+      "source_x": [
+        0,
+        2,
+        4.5,
+        21.5,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        10.5,
+        24,
+        38
+      ]
+    },
+    "link": {
+      "file": "art/heads/link.png",
+      "source_x": [0, 2, 4.5, 22, 38],
+      "target_x": [0, 2, 8, 24, 38]
+    },
+    "riddick": {
+      "file": "art/heads/riddick.png"
+    }
+  }
+}

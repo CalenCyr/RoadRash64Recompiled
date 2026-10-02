@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 
 // Observation only: callbacks aggregate counters outside the scheduling path.
 extern "C" void rr64_record_scheduler_stage(unsigned int stage, unsigned long long nanoseconds);
@@ -11,6 +12,14 @@ extern "C" void rr64_record_external_queue_event(unsigned int queue, unsigned in
     unsigned long long nanoseconds);
 
 namespace ultramodern::rr64_diagnostics {
+inline bool enabled() {
+    static const bool value = [] {
+        const char *option = std::getenv("RR64_DIAGNOSTICS");
+        return option && option[0] == '1' && option[1] == '\0';
+    }();
+    return value;
+}
+
 enum class Stage : unsigned int {
     ViWakeGap, ViWakeLate, ViDispatch, ViCallback,
     GfxTaskQueue, ScreenQueue, ScreenUpdate, SendDisplayList,
@@ -33,20 +42,32 @@ inline constexpr const char* EventNames[] = {
 static_assert(sizeof(StageNames) / sizeof(StageNames[0]) == static_cast<unsigned int>(Stage::Count));
 static_assert(sizeof(EventNames) / sizeof(EventNames[0]) == static_cast<unsigned int>(Event::Count));
 
-using Clock = std::chrono::steady_clock;
+// Every use of this clock belongs to optional scheduler telemetry. Actual VI
+// deadlines and queue behavior use the runtime's separate clocks. Returning a
+// zero timestamp when disabled also avoids reads in callers that collect
+// enqueue/delivery times without a Scope.
+struct Clock : std::chrono::steady_clock {
+    static time_point now() noexcept {
+        return enabled() ? std::chrono::steady_clock::now() : time_point{};
+    }
+};
 inline void record(Stage stage, Clock::duration elapsed) {
+    if (!enabled()) { return; }
     const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
     if (ns >= 0) {
         rr64_record_scheduler_stage(static_cast<unsigned int>(stage), static_cast<unsigned long long>(ns));
     }
 }
 inline void count(Event event, std::uint64_t amount = 1) {
+    if (!enabled()) { return; }
     rr64_record_scheduler_event(static_cast<unsigned int>(event), amount);
 }
 class Scope {
 public:
     explicit Scope(Stage stage) : stage_(stage), start_(Clock::now()) { }
-    ~Scope() { record(stage_, Clock::now() - start_); }
+    ~Scope() {
+        if (enabled()) { record(stage_, Clock::now() - start_); }
+    }
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
 private:

@@ -11,6 +11,10 @@ extern "C" {
 void rr64_world_camera_far(unsigned char *rdram, void *context);
 void rr64_world_camera_normalization(unsigned char *rdram, void *context);
 int rr64_world_camera_ready(unsigned char *rdram, unsigned source, unsigned slot);
+// Fresh completed original camera producer, with either stock or extended far
+// plane. This observation is independent of the Extended World Objects option;
+// world geometry must continue to use the option-gated readiness above.
+int rr64_world_camera_native_ready(unsigned char *rdram, unsigned source, unsigned slot);
 // Imported open gaps are not camera obstructions. Called only at the native
 // no-floor branch; real terrain clearance and normal chase smoothing remain.
 int rr64_world_camera_open_gap(unsigned char *rdram, void *context);

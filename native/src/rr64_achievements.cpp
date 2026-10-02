@@ -1,5 +1,6 @@
 #include "rr64_msvc_crt_compat.hpp"
 #include "rr64_achievements.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_offline_modifiers.hpp"
 #include "rr64_prediction_replay.hpp"
 
@@ -377,8 +378,10 @@ void queue_unlock(std::size_t index) {
     g_toast_queue.push_back(index);
     g_persist_dirty = true;
     rr64::achievement_audio::request_guitar_sting();
-    std::fprintf(stderr, "[RR64-ACH] Unlocked %u: %s (%u points).\n", kAchievements[index].retro_id,
-                 kAchievements[index].title, kAchievements[index].points);
+    if (rr64::diagnostics::routine_enabled()) {
+        std::fprintf(stderr, "[RR64-ACH] Unlocked %u: %s (%u points).\n", kAchievements[index].retro_id,
+                     kAchievements[index].title, kAchievements[index].points);
+    }
 }
 
 std::pair<unsigned, unsigned>

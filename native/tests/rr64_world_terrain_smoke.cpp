@@ -99,6 +99,34 @@ void driver_checks() {
             extended_word(command+48u) == 0x6400000du && extended_word(command+52u) == 1u,
             "terrain group encloses only its root and cell, restoring both matrix and matching stacks");
     };
+    const auto native_range = std::bit_cast<unsigned>(3600.0f);
+    check(!rr64_terrain_streaming_bounded(nullptr), "null streaming input has no compiled coverage");
+    driver_enabled = false;
+    check(rr64_terrain_streaming_range(memory.data(), native_range) == native_range && allocations.empty(),
+        "disabled world renderer retains native range without warming a cache");
+    driver_enabled = true; testLocalWindow = false;
+    check(rr64_terrain_streaming_range(memory.data(), native_range) == native_range && allocations.empty(),
+        "disabled draw distance retains native range without warming a cache");
+    testLocalWindow = true;
+    memory_word(memory, globals::terrain_map_width, 69u);
+    check(!rr64_terrain_streaming_bounded(memory.data()) && allocations.empty(),
+        "unsupported map dimensions never claim compiled terrain coverage");
+    memory_word(memory, globals::terrain_map_width, 70u);
+    check(rr64_terrain_streaming_range(memory.data(), native_range) == std::bit_cast<unsigned>(999.0f) &&
+        allocations.size() == 2u, "cold streaming prewarms the real two-buffer cache once before bounding the native tier");
+    for (unsigned views = 1; views <= 4; ++views) {
+        memory_word(memory, rr64::lod::test::Fixture::race_player_count, views);
+        memory_word(memory, 0x8009db88u, views);
+        for (unsigned view = 0; view < views; ++view) {
+            memory_word(memory, globals::active_viewport, view);
+            check(rr64_terrain_streaming_bounded(memory.data()) && allocations.size() == 2u,
+                "each supported split-screen view shares the certified compiled cache without allocating");
+        }
+        memory_word(memory, globals::active_viewport, views);
+        check(!rr64_terrain_streaming_bounded(memory.data()), "out-of-range viewport cannot claim compiled coverage");
+    }
+    memory_word(memory, rr64::lod::test::Fixture::race_player_count, 1u);
+    memory_word(memory, 0x8009db88u, 1u); memory_word(memory, globals::active_viewport, 0u);
     setup(0u, 1u); rr64_world_terrain_begin(memory.data());
     check(allocations.size() == 2u, "terrain allocates exactly two persistent graphics-buffer caches");
     if (allocations.size() != 2u) { return; }
@@ -326,6 +354,17 @@ void driver_checks() {
     check(rr64_world_terrain_stock_state(memory.data(),grid+700u*16u,5u)==5u,"Big Game stock terrain remains unrestricted");
     check(rr64::world::terrain_statistics().course_excluded_cells==0&&rr64::world::terrain_statistics().visible_cells==2,
         "Big Game keeps all previously visible terrain and clears lap selection");
+    rr64::world::terrain_reset_session(); driver_rom.assign(16u, 0u);
+    const auto allocations_before_refusal = allocations.size();
+    check(rr64_terrain_streaming_range(memory.data(), native_range) == native_range &&
+        rr64_terrain_streaming_range(memory.data(), native_range) == native_range &&
+        allocations.size() == allocations_before_refusal,
+        "refused source retains the native tier and does not retry cache allocation every frame");
+    rr64::world::terrain_reset_session(); driver_rom = fixture(4u, 0u);
+    next_allocation = memory.size();
+    check(rr64_terrain_streaming_range(memory.data(), native_range) == native_range &&
+        !rr64_terrain_streaming_bounded(memory.data()) && allocations.size() == allocations_before_refusal,
+        "allocation failure retains native streaming instead of promising unavailable distant geometry");
 }
 } // namespace
 

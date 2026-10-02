@@ -1,8 +1,8 @@
-# Release 1.4: contributor guide
+# Release 1.4.3: contributor guide
 
 Paths below are relative to the source repository root. The release comparison
-baseline is published **1.3.1 Revision 2**; the 1.4 release adds the
-features below. Read `docs/multiplayer-plan.md` before changing local multiplayer
+baseline is published **1.4.2**; the table covers the maintained features.
+This release uses protocol 66 and the current native-model skin implementation. Read `docs/multiplayer-plan.md` before changing local multiplayer
 or online behavior. Online remains experimental; local gameplay acceptance does
 not prove online parity.
 
@@ -33,6 +33,9 @@ source.
 | Imported course lifetime and route | `native/src/rr64_experimental_course.cpp`, `rr64_experimental_course_route.cpp` | Keep stock courses on their native path; branch/recovery reacquisition must not invent or erase completed circuit progress. |
 | Course surfaces, hazards and AI | `native/src/rr64_course_material.cpp`, `rr64_course_walls.cpp`, `rr64_course_hazards.cpp`, `rr64_course_ai.cpp` | Preserve finite contacts, actual voids and native rider physics. Resolve authenticated terrain alternatives without deleting genuine branches/decks. |
 | Course items and audio | `native/src/rr64_course_items.cpp`, `rr64_course_item_render.cpp`, `rr64_course_audio.cpp`, `rr64_course_music.cpp` | Host/local authority grants items once; roulette is presentation. Audio callbacks perform no file loading or sequence synthesis. |
+| Native rider skins | `native/src/rr64_rider_skin_*`, `rr64_rider_skins.cpp` | Authored diffuse textures only; preserve native donor geometry, slot ownership and separate appearance preferences. See `rider-skins.md`. |
+| Rival engines | `native/src/rr64_rival_engine.cpp` | Three bounded voices; preserve voice reservation, listener ownership and early disabled path. |
+| Bonus campaign saves | `native/src/rr64_campaign_bonus_save.cpp` | Keep saved bonus progress and native bike purchase ownership consistent. |
 | Crash highlights | `native/src/rr64_highlights.cpp`, `rr64_highlight_recording.cpp`, `rr64_highlight_pose.cpp`, `rr64_highlight_weapon.cpp`, `rr64_highlight_network.cpp` | Replay recorded presentation without rerunning race physics, inventory grants or damage; restore guest state after drawing. |
 | Offline cheats | `native/src/rr64_offline_modifiers.cpp`, `rr64_offline_modifiers_bikes.cpp` | Default off; suppress online, AI, demo and replay effects. Preserve physical crashes and normal save ownership. |
 | ROM import and installation | `native/src/rr64_mk64_import.cpp`, `rr64_import_process.cpp`, `rr64_import_install.cpp` | Worker owns conversion; UI polls progress/cancellation. Validate staging before replacing an installed pack; block game start during conversion. |
@@ -99,4 +102,4 @@ controller testing and live online acceptance are different gates.
 Deeper notes: `roaming-distance-recovery.md`, `custom-cop-backhand.md`,
 `custom-cop-victory-jam.md`, `pickup-hud-exclusion.md`, `RT64_EDITING_GUIDE.md`,
 `FRONTEND_EDITING_GUIDE.md`, `public-mk64-import.md`, `offline-cheats.md`,
-`character-preferences.md`, `RELEASE_CLEANUP_1.4.md`, and `multiplayer-plan.md`.
+`character-preferences.md`, `RELEASE_CLEANUP_1.4.2.md`, and `multiplayer-plan.md`.

@@ -12,9 +12,16 @@ double normalized_percent(double value) {
 }
 
 void configure_volume(recomp::config::Config &config) {
+    config.add_bool_option(
+        enabled_option, "Rival Engines",
+        "Engine sounds from nearby AI and online opponents. Off stops rival engines and skips their sound updates. Your own bike and other game sounds stay on.",
+        true);
+    config.add_option_change_callback(enabled_option, [](auto value, auto, auto) {
+        set_enabled(std::get<bool>(value));
+    });
     config.add_percent_number_option(
         volume_option, "Rival Engine Volume",
-        "Volume of nearby opponent bikes, including online players. 0 turns these engines off.",
+        "Volume of nearby opponent bikes, including online players, while Rival Engines is on.",
         default_volume_percent);
     // Numeric UI bounds do not clamp manually edited JSON. Keep the stored
     // slider value and the engine gain consistent when loading older settings.
@@ -34,6 +41,7 @@ void configure_volume(recomp::config::Config &config) {
 
 void apply_volume_config(const recomp::config::Config &config) {
     // A first-run config uses schema defaults without firing load callbacks.
+    set_enabled(std::get<bool>(config.get_option_value(enabled_option)));
     set_volume_percent(
         normalized_percent(std::get<double>(config.get_option_value(volume_option))));
 }

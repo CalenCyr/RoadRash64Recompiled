@@ -1,16 +1,20 @@
 #include "rr64_campaign_bonus_save.hpp"
+#include "rr64_campaign_completion.hpp"
 #include "rr64_engine_layout.hpp"
 
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <string_view>
 #include <vector>
 
 extern "C" void func_8001F960(unsigned char *, recomp_context *);
+extern "C" void func_8001F9BC(unsigned char *, recomp_context *);
+extern "C" void func_800207DC(unsigned char *, recomp_context *);
 extern "C" void func_80020ECC(unsigned char *, recomp_context *);
 extern "C" void func_8005F480(unsigned char *, recomp_context *);
 extern "C" void test_bonus_native_save(unsigned char *, recomp_context *);
-extern "C" void test_bonus_native_read(unsigned char *, recomp_context *);
 
 namespace {
 using namespace rr64::engine;
@@ -21,7 +25,8 @@ using File = std::array<unsigned char, 256>;
 std::array<File, 6> files{};
 std::array<bool, 6> exists{};
 unsigned io_slot = 0, write_error = 0, read_error = 0, scan_error = 0;
-unsigned writes = 0, reads = 0, accepts = 0, checks = 0;
+unsigned writes = 0, reads = 0, checks = 0;
+unsigned directory_reads = 0, deletes = 0;
 
 void check(bool value, const char *message) {
   ++checks;
@@ -82,10 +87,7 @@ void save(unsigned char *m, unsigned slot) {
             word(m, buffer + 256) == 0x55667788u,
         "256-byte serialization preserves neighboring memory");
 }
-unsigned load(unsigned char *m, unsigned slot) {
-  // Native load checks cached slot availability before performing a rescan.
-  write_u32(m, status + slot * 4, 2);
-  write_u32(m, 0x800C0450u, 0);
+unsigned selected_load(unsigned char *m, unsigned slot) {
   recomp_context ctx{};
   ctx.r29 = guest_address(stack);
   ctx.r4 = slot;
@@ -93,11 +95,30 @@ unsigned load(unsigned char *m, unsigned slot) {
   func_80020ECC(m, &ctx);
   return unsigned(ctx.r2);
 }
+void invalidate(unsigned char *m) {
+  recomp_context ctx{};
+  ctx.r29 = guest_address(stack);
+  func_8001F9BC(m, &ctx);
+  write_u32(m, 0x800C0450u, 0);
+}
+unsigned scan(unsigned char *m) {
+  recomp_context ctx{};
+  ctx.r29 = guest_address(stack);
+  func_800207DC(m, &ctx);
+  return unsigned(ctx.r2);
+}
+unsigned load(unsigned char *m, unsigned slot) {
+  // A real menu scan populates the native cache; selecting Load calls scan
+  // again and must retain its validated bonus tail on the cache-hit return.
+  invalidate(m);
+  scan(m);
+  return selected_load(m, slot);
+}
 } // namespace
 
-// Model only the Pak device. The actual generated code chooses byte counts,
-// clears its file buffer, calculates checksums, copies profiles and checks
-// errors.
+// Model the Pak device and its name encoding, not the game scan. The complete
+// native scan owns cache hits, invalidation, directory traversal, status flags,
+// checksums, profile copies and error reporting.
 extern "C" void func_8000C3AC(unsigned char *m, recomp_context *ctx) {
   ++writes;
   check(unsigned(ctx->r7) == 256, "native write requests exactly256bytes");
@@ -115,41 +136,168 @@ extern "C" void func_8000C2AC(unsigned char *m, recomp_context *ctx) {
   check(unsigned(ctx->r7) == 256, "native read requests exactly256bytes");
   const unsigned destination = word(m, unsigned(ctx->r29) + 0x10);
   check(destination == buffer, "native read uses its original staging buffer");
-  if (read_error == 0 && exists[io_slot])
+  std::uint8_t slot = 255;
+  read_u8(m, unsigned(ctx->r6), slot);
+  check(slot < files.size(), "native read identifies a valid Pak extension");
+  if (read_error == 0 && exists[slot])
     for (unsigned i = 0; i < 256; ++i)
-      write_s8(m, destination + i, files[io_slot][i]);
-  ctx->r2 = read_error != 0 ? read_error : exists[io_slot] ? 0 : 1;
+      write_s8(m, destination + i, files[slot][i]);
+  ctx->r2 = read_error != 0 ? read_error : exists[slot] ? 0 : 1;
 }
-extern "C" void func_8001F990(unsigned char *, recomp_context *) {}
-extern "C" void rr64_campaign_restore_unlocks(unsigned char *, unsigned) {
-  ++accepts;
+extern "C" void func_8000B8BC(unsigned char *m, recomp_context *) {
+  write_u16(m, 0x800B0AA0u, 1);
 }
-extern "C" void func_800207DC(unsigned char *m, recomp_context *ctx) {
-  rr64_campaign_bonus_scan(m);
-  if (scan_error != 0) {
-    ctx->r2 = scan_error;
-    return;
+extern "C" void func_8000C124(unsigned char *m, recomp_context *ctx) {
+  write_u32(m, unsigned(ctx->r5), files.size());
+  unsigned used = 0;
+  for (bool present : exists)
+    used += present;
+  write_u32(m, unsigned(ctx->r6), used);
+  ctx->r2 = scan_error;
+}
+extern "C" void func_8000C224(unsigned char *m, recomp_context *ctx) {
+  write_u32(m, unsigned(ctx->r5), 0x1000);
+  ctx->r2 = 0;
+}
+extern "C" void func_8000C5D0(unsigned char *m, recomp_context *ctx) {
+  ++directory_reads;
+  check(unsigned(ctx->r7) == files.size(), "native scan uses Pak directory capacity");
+  for (unsigned slot = 0; slot < files.size(); ++slot) {
+    const unsigned record = unsigned(ctx->r5) + slot * 32;
+    write_u32(m, unsigned(ctx->r6) + slot * 4, exists[slot] ? 0 : 5);
+    write_u32(m, record, 256);
+    write_u32(m, record + 4, 0x4E524F45u);
+    write_u16(m, record + 8, 0x3738u);
+    write_s8(m, record + 10, slot);
   }
-  for (io_slot = 0; io_slot < 6; ++io_slot) {
-    if (!exists[io_slot])
-      continue;
-    // Empty stock cache is its first-read checksum baseline. Subsequent
-    // scans retain the original base record exactly, as production does.
-    recomp_context read{};
-    read.r29 = guest_address(stack - 0x200);
-    read.r23 = guest_address(0x800C0570u);
-    read.r19 = guest_address(0x800C0590u);
-    write_s8(m, unsigned(read.r29) + 0x18,
-             static_cast<unsigned char>('A' + io_slot));
-    write_u32(m, unsigned(read.r29) + 0x40, 0x800C0440u);
-    test_bonus_native_read(m, &read);
-  }
-  ctx->r2 = read_error;
+  ctx->r2 = 0;
+}
+extern "C" void func_8000C050(unsigned char *m, recomp_context *ctx) {
+  std::uint8_t slot = 255;
+  read_u8(m, unsigned(ctx->r4), slot);
+  check(slot < files.size() && unsigned(ctx->r6) == 1,
+        "native scan decodes one slot-letter extension");
+  write_s8(m, unsigned(ctx->r5), 'A' + slot);
+}
+extern "C" void func_8000C518(unsigned char *m, recomp_context *ctx) {
+  ++deletes;
+  std::uint8_t slot = 255;
+  read_u8(m, word(m, unsigned(ctx->r29) + 0x10), slot);
+  check(slot < files.size(), "native delete identifies a valid Pak extension");
+  exists[slot] = false;
+  ctx->r2 = 0;
 }
 
-int main() {
+// Persist only the simulated Pak payloads and independently captured live
+// profile expectations. A separate process reads this fixture into fresh RDRAM;
+// this does not substitute for the runtime virtual-Pak .mpk implementation.
+void write_fixture(const char *path,
+                   const std::array<std::vector<unsigned char>, 6> &profiles) {
+  std::ofstream out(path, std::ios::binary);
+  out.write("RR64BS01", 8);
+  for (const auto &file : files)
+    out.write(reinterpret_cast<const char *>(file.data()), file.size());
+  for (const auto &record : profiles)
+    out.write(reinterpret_cast<const char *>(record.data()), record.size());
+  out.close();
+  check(out.good(), "separate-process Pak fixture saved successfully");
+}
+void read_fixture(const char *path,
+                  std::array<std::vector<unsigned char>, 6> &profiles) {
+  std::ifstream in(path, std::ios::binary);
+  std::array<char, 8> magic{};
+  in.read(magic.data(), magic.size());
+  check(std::string_view(magic.data(), magic.size()) == "RR64BS01",
+        "separate-process Pak fixture has the expected version");
+  for (auto &file : files)
+    in.read(reinterpret_cast<char *>(file.data()), file.size());
+  for (auto &record : profiles) {
+    record.resize(0xF8);
+    in.read(reinterpret_cast<char *>(record.data()), record.size());
+  }
+  check(in.good() && in.peek() == std::char_traits<char>::eof(),
+        "separate-process Pak fixture is complete and has no trailing bytes");
+  exists.fill(true);
+}
+void verify_cached_session(
+    unsigned char *m,
+    const std::array<std::vector<unsigned char>, 6> &initial_profiles) {
+  const unsigned initial_reads = reads, initial_directories = directory_reads;
+  check(scan(m) == 0, "fresh-session native directory scan succeeds");
+  check(reads == initial_reads + 6 && directory_reads == initial_directories + 1,
+        "fresh-session scan reads all six saved files exactly once");
+  std::uint16_t cached = 0;
+  read_u16(m, 0x800C07C0u, cached);
+  check(cached == 1, "native scan sets its cache-valid flag");
+  for (unsigned menu_frame = 0; menu_frame < 3; ++menu_frame) {
+    check(scan(m) == 0, "repeated native menu scan succeeds from cache");
+    for (unsigned slot = 0; slot < 6; ++slot)
+      check(rr64_campaign_bonus_record(m, cache + slot * 0xF8) == 1 &&
+                word(m, cache + slot * 0xF8 + 0x3C) == 4,
+            "cached menu scan retains bonus identity and compatible base record");
+  }
+  for (unsigned slot = 0; slot < 6; ++slot) {
+    check(selected_load(m, slot) == 1 && word(m, profile + 0x3C) == 5 &&
+              bonus(m) == 0xFEDCBA98u - slot * 0x11111111u,
+          "cold-start cached selection restores each independent bonus result");
+    check(bytes(m, profile, 0xF8) == initial_profiles[slot],
+          "cold-start cached selection preserves every cash, bike, inventory and reputation byte");
+  }
+  recomp_context reset_profile{};
+  reset_profile.r4 = guest_address(profile);
+  func_8005F480(m, &reset_profile);
+  check(selected_load(m, 3) == 1 &&
+            bytes(m, profile, 0xF8) == initial_profiles[3] &&
+            bonus(m) == 0xFEDCBA98u - 3 * 0x11111111u,
+        "new campaign initialization does not invalidate native cached saved profiles");
+  check(reads == initial_reads + 6 && directory_reads == initial_directories + 1,
+        "cached menu frames and selected loads perform no Pak reads");
+
+  const File before_replacement = files[2];
+  for (unsigned i = 0xF8; i < 256; ++i)
+    files[2][i] = 0;
+  check(scan(m) == 0 && rr64_campaign_bonus_record(m, cache + 2 * 0xF8) == 1,
+        "native cache remains authoritative until explicitly invalidated");
+  invalidate(m);
+  check(scan(m) == 0 && rr64_campaign_bonus_record(m, cache + 2 * 0xF8) == 0,
+        "actual rescan rejects a replaced file's absent bonus extension");
+  check(selected_load(m, 2) == 1 && word(m, profile + 0x3C) == 4,
+        "replaced ordinary save cannot reuse previously cached bonus results");
+  const auto completed_profile = bytes(m, profile, 0xF8);
+  rr64_campaign_results_begin(m);
+  check(rr64_campaign_repeat_completion(m),
+        "fresh-process loaded native completion prevents a repeated ending");
+  check(bytes(m, profile, 0xF8) == completed_profile,
+        "fresh-process completion decision preserves spent cash and bike");
+  files[2] = before_replacement;
+  exists[5] = false;
+  invalidate(m);
+  check(scan(m) == 0 && rr64_campaign_bonus_record(m, cache + 5 * 0xF8) == 0,
+        "actual rescan clears extension metadata for a removed slot");
+  exists[5] = true;
+  invalidate(m);
+  check(scan(m) == 0 && rr64_campaign_bonus_record(m, cache + 5 * 0xF8) == 1,
+        "actual rescan captures a restored slot independently");
+
+}
+
+int main(int argc, char **argv) {
   std::vector<unsigned char> memory(kRdramSize);
   auto *m = memory.data();
+  std::array<std::vector<unsigned char>, 6> initial_profiles;
+  const bool writer = argc == 3 && std::string_view(argv[1]) == "--write-fixture";
+  const bool reader = argc == 3 && std::string_view(argv[1]) == "--read-fixture";
+  check(argc == 1 || writer || reader,
+        "usage: RR64CampaignBonusSaveSmoke [--write-fixture|--read-fixture path]");
+  if (reader) {
+    read_fixture(argv[2], initial_profiles);
+    verify_cached_session(m, initial_profiles);
+    check(writes == 0 && deletes == 0,
+          "fresh-process reload never rewrites or removes simulated Pak saves");
+    std::printf("Campaign bonus save fresh-process read: %u checks passed; "
+                "%u native reads, %u writes\n", checks, reads, writes);
+    return 0;
+  }
 
   // Full nibble range survives native I/O, including signed high-bit words.
   for (unsigned slot = 0; slot < 6; ++slot) {
@@ -160,6 +308,7 @@ int main() {
               reputation,
           "bonus writes preserve original reputation word");
     const auto live = bytes(m, profile, 0xF8);
+    initial_profiles[slot] = live;
     save(m, slot);
     check(bytes(m, profile, 0xF8) == live,
           "native save preserves live profile and index5");
@@ -183,6 +332,16 @@ int main() {
           "selected slot restores its full independent bonus word");
     check(word(m, profile + 0x54) == reputation, "load preserves reputation");
   }
+
+  if (writer) {
+    write_fixture(argv[2], initial_profiles);
+    std::printf("Campaign bonus save fixture written: six 256-byte simulated "
+                "Pak files; %u checks passed\n", checks);
+    return 0;
+  }
+  std::vector<unsigned char> restarted(kRdramSize);
+  m = restarted.data();
+  verify_cached_session(m, initial_profiles);
 
   // Each track has all16 native counter values, including zeros and caps.
   for (unsigned track = 0; track < 8; ++track)
@@ -211,6 +370,11 @@ int main() {
         "old completed save loads without profile conversion");
   check(writes == saved_writes && files[0] == legacy,
         "load never writes or upgrades save automatically");
+  rr64_campaign_results_begin(m);
+  check(rr64_campaign_repeat_completion(m),
+        "legacy completed save suppresses replay ending after native save/load");
+  check(bytes(m, profile, 0xF8) == original && files[0] == legacy,
+        "completion decision neither spends money nor rewrites older saves");
 
   seed(m, 5, 4);
   rr64_campaign_qualification_store(m, profile + 0x54, 0x10203040u);
@@ -274,7 +438,10 @@ int main() {
         "failed native write preserves disk and live profile");
   write_error = 0;
   scan_error = 8;
-  check(load(m, 0) == 8 && bytes(m, profile, 0xF8) == unsaved &&
+  // Native directory failures clear slot availability and set the Pak error
+  // word; they do not return the fabricated scan error used by the old stub.
+  check(load(m, 0) == ~0u && word(m, 0x800C0450u) == 8 &&
+            bytes(m, profile, 0xF8) == unsaved &&
             bonus(m) == 0x76543210u,
         "failed scan leaves current unsaved bonus unchanged");
   check(rr64_campaign_bonus_record(m, cache) == 0,
@@ -285,6 +452,7 @@ int main() {
             bonus(m) == 0x76543210u,
         "failed native read leaves current unsaved bonus unchanged");
   read_error = 0;
+  check(deletes == 0, "all valid native base profiles survived complete Pak scans");
 
   // The original profile initializer invokes the reset and clears counters;
   // changing RDRAM mappings also cannot borrow another session's progress.
@@ -311,6 +479,6 @@ int main() {
   }
 
   std::printf("Campaign bonus save: %u checks passed; %u native writes, %u "
-              "native reads, %u base acceptances\n",
-              checks, writes, reads, accepts);
+              "native reads\n",
+              checks, writes, reads);
 }

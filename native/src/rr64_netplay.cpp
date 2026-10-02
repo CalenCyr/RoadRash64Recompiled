@@ -1,5 +1,6 @@
 #include "rr64_prediction_replay.hpp"
 #include "rr64_netplay.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_connection_address.hpp"
 #include "rr64_local_race_options.hpp"
 
@@ -57,7 +58,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr std::uint32_t kProtocolMagic = 0x52523634u; // RR64
-constexpr std::uint16_t kProtocolVersion = 65; // Matching shell size/contact geometry and MK64 selection behavior.
+constexpr std::uint16_t kProtocolVersion = 66; // Matching camera-independent stock wall/building contacts.
 constexpr std::size_t kPlayerNameCapacity = 24;
 constexpr auto kHelloInterval = std::chrono::milliseconds(500);
 constexpr auto kStateInterval = std::chrono::milliseconds(25);
@@ -734,11 +735,13 @@ bool create_socket_locked(bool bind_host, std::uint16_t port) {
         g_session.message = "Could not bind UDP port " + std::to_string(port);
         return false;
     }
-    socklen_type length = sizeof(local);
-    getsockname(g_session.socket, reinterpret_cast<sockaddr *>(&local), &length);
-    std::fprintf(stderr, "[RR64-NET] socket role=%s local-udp-port=%u protocol=%u\n",
-                 bind_host ? "host" : "join", ntohs(local.sin_port), kProtocolVersion);
-    std::fflush(stderr);
+    if (rr64::diagnostics::network_detail_enabled()) {
+        socklen_type length = sizeof(local);
+        getsockname(g_session.socket, reinterpret_cast<sockaddr *>(&local), &length);
+        std::fprintf(stderr, "[RR64-NET] socket role=%s local-udp-port=%u protocol=%u\n",
+                     bind_host ? "host" : "join", ntohs(local.sin_port), kProtocolVersion);
+        std::fflush(stderr);
+    }
     return true;
 }
 
@@ -859,7 +862,8 @@ void send_hello_locked(const Clock::time_point now) {
     send_packet_locked(packet, g_session.host_endpoint);
     g_session.last_hello = now;
     ++g_session.hello_attempts;
-    if (g_session.hello_attempts == 1 || g_session.hello_attempts % 10 == 0) {
+    if (rr64::diagnostics::network_detail_enabled() &&
+        (g_session.hello_attempts == 1 || g_session.hello_attempts % 10 == 0)) {
         std::fprintf(stderr, "[RR64-NET] hello attempt=%llu received=%llu\n",
                      static_cast<unsigned long long>(g_session.hello_attempts),
                      static_cast<unsigned long long>(g_session.received_packets));
@@ -1120,9 +1124,11 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
             g_session.players[slot].connected = true;
             g_session.players[slot].slot = slot;
             g_session.players[slot].ready = false;
-            std::fprintf(stderr, "[RR64-NET] hello accepted slot=%u peer=%s:%u\n", slot,
-                         inet_ntoa(endpoint.sin_addr), ntohs(endpoint.sin_port));
-            std::fflush(stderr);
+            if (rr64::diagnostics::network_detail_enabled()) {
+                std::fprintf(stderr, "[RR64-NET] hello accepted slot=%u peer=%s:%u\n", slot,
+                             inet_ntoa(endpoint.sin_addr), ntohs(endpoint.sin_port));
+                std::fflush(stderr);
+            }
         }
         g_session.peers[slot].last_seen = now;
         const auto &hello = *reinterpret_cast<const HelloPacket *>(bytes);
@@ -1263,7 +1269,8 @@ void handle_host_packet_locked(const std::uint8_t *bytes, int size, const sockad
         if(g_session.authoritative && (g_session.authority_humans&(1u<<slot))) {
             g_session.authority_host.disconnect(slot);
             g_session.authority_loaded|=1u<<slot;
-            std::fprintf(stderr,"[RR64-NET] peer %u left; race continues with neutral input.\n",unsigned(slot));
+            if (rr64::diagnostics::network_detail_enabled())
+                std::fprintf(stderr,"[RR64-NET] peer %u left; race continues with neutral input.\n",unsigned(slot));
         }
         g_session.peers[slot] = {};
         g_session.course_ack[slot] = 0;
@@ -1318,10 +1325,12 @@ void handle_client_packet_locked(const std::uint8_t *bytes, int size, const sock
         local.name = g_session.config.player_name;
         g_session.message = "Connected to host";
         g_session.last_host_seen = now;
-        std::fprintf(stderr, "[RR64-NET] welcome accepted slot=%u attempts=%llu\n",
-                     g_session.local_slot,
-                     static_cast<unsigned long long>(g_session.hello_attempts));
-        std::fflush(stderr);
+        if (rr64::diagnostics::network_detail_enabled()) {
+            std::fprintf(stderr, "[RR64-NET] welcome accepted slot=%u attempts=%llu\n",
+                         g_session.local_slot,
+                         static_cast<unsigned long long>(g_session.hello_attempts));
+            std::fflush(stderr);
+        }
         send_client_state_locked(now);
         return;
     }
@@ -1687,10 +1696,13 @@ bool authority_queue_input(std::uint16_t buttons,std::int8_t x,std::int8_t y) {
 bool authority_queue_input_recorded(std::uint16_t buttons,std::int8_t x,std::int8_t y,authority::Command &accepted,std::uint8_t actions,unsigned duration_us) {
     std::lock_guard lock(g_mutex);
     const auto rejected=[&](const char *reason){
-        std::fprintf(stderr,"[RR64-NET] input rejected reason=%s slot=%u round=%u setup=%u released=%u loaded=%x humans=%x sequence=%u buttons=%04x stick=%d,%d actions=%u\n",
-            reason,unsigned(g_session.local_slot),g_session.authority_round,g_session.game_setup.revision,
-            g_session.authority_released,g_session.authority_loaded,g_session.authority_humans,
-            g_session.authority_local_sequence,buttons,int(x),int(y),unsigned(actions));return false;
+        if (rr64::diagnostics::network_detail_enabled()) {
+            std::fprintf(stderr,"[RR64-NET] input rejected reason=%s slot=%u round=%u setup=%u released=%u loaded=%x humans=%x sequence=%u buttons=%04x stick=%d,%d actions=%u\n",
+                reason,unsigned(g_session.local_slot),g_session.authority_round,g_session.game_setup.revision,
+                g_session.authority_released,g_session.authority_loaded,g_session.authority_humans,
+                g_session.authority_local_sequence,buttons,int(x),int(y),unsigned(actions));
+        }
+        return false;
     };
     if(!g_session.authoritative || g_session.host_disconnected || g_session.phase!=Phase::Race ||
        g_session.authority_round!=g_session.game_setup.revision || !g_session.authority_released ||
@@ -1876,10 +1888,12 @@ void configure(const Config &requested) {
         g_session.phase = Phase::Connecting;
         g_session.message = "Connecting to " + g_session.config.host_address + ":" +
                             std::to_string(g_session.config.port);
-        std::fprintf(stderr, "[RR64-NET] destination=%s:%u protocol=%u\n",
-                     inet_ntoa(g_session.host_endpoint.sin_addr),
-                     ntohs(g_session.host_endpoint.sin_port), kProtocolVersion);
-        std::fflush(stderr);
+        if (rr64::diagnostics::network_detail_enabled()) {
+            std::fprintf(stderr, "[RR64-NET] destination=%s:%u protocol=%u\n",
+                         inet_ntoa(g_session.host_endpoint.sin_addr),
+                         ntohs(g_session.host_endpoint.sin_port), kProtocolVersion);
+            std::fflush(stderr);
+        }
     }
 }
 

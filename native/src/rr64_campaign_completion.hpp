@@ -3,6 +3,8 @@
 extern "C" {
 #endif
 unsigned rr64_campaign_ending_exit(unsigned char *rdram, unsigned original_mode);
+void rr64_campaign_results_begin(unsigned char *rdram);
+int rr64_campaign_repeat_completion(unsigned char *rdram);
 int rr64_campaign_finish_menu(unsigned char *rdram);
 void rr64_campaign_restore_unlocks(unsigned char *rdram, unsigned record);
 unsigned rr64_campaign_shop_promotion(unsigned char *rdram, unsigned native_ready);

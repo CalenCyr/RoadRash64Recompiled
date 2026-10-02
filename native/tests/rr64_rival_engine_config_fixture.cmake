@@ -1,5 +1,6 @@
 # Uses the production Config parser/serializer/file backup implementation.
 # Run with one argument: a new, nonexistent disposable output directory.
+# Then run --verify-off with that directory in a fresh process to check restart.
 add_executable(RR64RivalEngineConfigSmoke EXCLUDE_FROM_ALL
     tests/rr64_rival_engine_config_smoke.cpp
     src/rr64_rival_engine_config.cpp

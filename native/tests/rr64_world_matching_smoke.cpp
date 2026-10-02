@@ -200,7 +200,11 @@ void run_motion_history() {
 }
 }
 int main() {
+#ifdef _WIN32
     _putenv_s("RR64_STABLE_PRESENTATION", "1");
+#else
+    setenv("RR64_STABLE_PRESENTATION", "1", 1);
+#endif
     std::vector<unsigned> all(64u); std::iota(all.begin(), all.end(), 0u);
     auto reversed = all; std::reverse(reversed.begin(), reversed.end());
     std::vector<unsigned> partial{63u, 18u, 1u, 40u, 900u};

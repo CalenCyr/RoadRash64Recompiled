@@ -2,6 +2,8 @@
 #include "rr64_experimental_course.hpp"
 #endif
 #include "rr64_world_terrain.hpp"
+#include "rr64_terrain_graphics_pool.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_world_camera.hpp"
 #include "rr64_local_world_window.hpp"
 #include "rr64_world_frustum.hpp"
@@ -244,9 +246,11 @@ bool initialize(Cache &c, unsigned char *m) {
     c.stats.cached_cells = unsigned(c.assets.cells.size());
     c.stats.cached_triangles = c.assets.triangles;
     c.stats.cached_bytes = 2u * (bytes + 4u * frame_bytes);
-    std::fprintf(stderr,
-                 "[RR64-WORLD] terrain cache cells=%u triangles=%u bytes=%u triangle-batches=1\n",
-                 c.stats.cached_cells, c.stats.cached_triangles, c.stats.cached_bytes);
+    if (rr64::diagnostics::routine_enabled()) {
+        std::fprintf(stderr,
+                     "[RR64-WORLD] terrain cache cells=%u triangles=%u bytes=%u triangle-batches=1\n",
+                     c.stats.cached_cells, c.stats.cached_triangles, c.stats.cached_bytes);
+    }
     return true;
 }
 bool frame_context(unsigned char *m, unsigned &slot, unsigned &graphics_slot, unsigned &epoch,
@@ -307,6 +311,26 @@ void terrain_reset_session() noexcept {
     c.grid = 0;
     c.stats = {};
 }
+}
+extern "C" int rr64_terrain_streaming_bounded(unsigned char *m) {
+    using namespace rr64::engine;
+    unsigned grid = 0, width = 0;
+    if (!m || !rr64_world_distance_enabled() || !rr64_draw_distance_enabled() ||
+        !rr64::world::static_scene(m) ||
+        !read_u32(m, globals::terrain_map_width, width) || width != 70u ||
+        !read_u32(m, globals::terrain_cell_grid, grid) ||
+        !valid_guest_range(grid, 4900u * terrain::cell_stride))
+        return 0;
+    auto &c = rr64::world::cache();
+    std::lock_guard lock(c.mutex);
+    // This is the same once-per-ROM cache used by the draw pass. Prepare it
+    // before the first streamed frame, so a cold or refused cache never makes
+    // a promise to cover terrain which it cannot actually render.
+    return rr64::world::initialize(c, m) && c.ready && !c.assets.cells.empty();
+}
+extern "C" unsigned rr64_terrain_streaming_range(unsigned char *m, unsigned original_bits) {
+    return rr64::terrain_graphics::streaming_range(original_bits,
+                                                  rr64_terrain_streaming_bounded(m) != 0);
 }
 extern "C" void rr64_world_terrain_begin(unsigned char *m) {
     auto &c = rr64::world::cache();

@@ -91,8 +91,11 @@ extern "C" void rr64_campaign_begin_bonus(unsigned char *m) {
 
 extern "C" void rr64_campaign_bonus_new_profile(unsigned char *m, unsigned record) {
     if (record == profile) {
-        state = {};
-        state.memory = m;
+        bind(m);
+        // Starting a new campaign resets only its live results. Native 5F480
+        // does not invalidate the Pak cache; its matching extensions must live
+        // until a real rescan, including when the player next selects Load Game.
+        state.results = 0;
     }
 }
 
@@ -115,6 +118,8 @@ extern "C" unsigned rr64_campaign_qualification_store(unsigned char *m, unsigned
 
 extern "C" void rr64_campaign_bonus_scan(unsigned char *m) {
     bind(m);
+    // This follows the native scan cache guards. Clearing on a cached lookup
+    // loses the bonus marker because no Pak read follows to recapture its tail.
     state.saved = {};
 }
 

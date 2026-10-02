@@ -68,12 +68,14 @@ working Keyboard (SP) layout. An explicitly chosen empty or custom layout stays
 as chosen. Existing profile contents are not migrated or overwritten. The
 existing UI and physical button defaults are unchanged.
 
-Known pre-existing limitation: choosing a different saved/custom layout in the
+Historical limitation at the September 23 repair: choosing a different saved/custom layout in the
 dropdown changes its current player assignment, but that association is not
 persisted in the controller registry. Its edited bindings are saved; the layout
 may need to be selected again after reconnect/restart. Editing the device's
 default assigned layout does persist. This repair does not claim to change that
-separate saved-layout association behavior.
+separate saved-layout association behavior. The September 29
+[controller-remap follow-up](controller-remap-followup.md) addresses association
+persistence and editor/scanner synchronization, with its own verification scope.
 
 ## Offline verification
 

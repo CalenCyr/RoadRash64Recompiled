@@ -39,6 +39,10 @@ TerrainStatistics terrain_statistics() noexcept;
 void terrain_reset_session() noexcept;
 }
 extern "C" {
+// True only after the compiled terrain cache owns distant presentation.
+// Native collision/resource streaming may then retain its original near tier.
+int rr64_terrain_streaming_bounded(unsigned char *rdram);
+unsigned rr64_terrain_streaming_range(unsigned char *rdram, unsigned original_bits);
 void rr64_world_terrain_begin(unsigned char *rdram);
 unsigned rr64_world_terrain_stock_state(unsigned char *rdram, unsigned record, unsigned state);
 void rr64_world_terrain_observe(unsigned char *rdram, unsigned record);

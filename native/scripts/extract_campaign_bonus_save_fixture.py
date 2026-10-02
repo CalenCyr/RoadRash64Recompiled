@@ -10,7 +10,7 @@ p.add_argument('output', type=Path)
 p.add_argument('config', type=Path)
 p.add_argument('--candidate-config', action='store_true')
 a = p.parse_args()
-names = {'func_8001F960', 'func_800207DC', 'func_80020BE8', 'func_80020ECC',
+names = {'func_8001F960', 'func_8001F990', 'func_8001F9BC', 'func_800207DC', 'func_80020BE8', 'func_80020ECC',
          'func_8005F480', '_bcopy', '_bzero'}
 functions = {}
 for path in a.generated.glob('funcs_*.c'):
@@ -34,6 +34,11 @@ for line in a.config.read_text().splitlines():
     marker = f'    // 0x{address:08X}:'
     code = functions[name]
     assert code.count(marker) == 1
+    # A moved hook must replace its previous generated position. Otherwise
+    # candidate mode silently retains the old entry hook as well as the fix.
+    if a.candidate_config:
+        code, count = re.subn(r'^\s*' + re.escape(statement) + r'\s*\n', '', code, flags=re.M)
+        assert count <= 1, ('Duplicate generated persistence hook', name, statement)
     if not code.split(marker)[0].rstrip().endswith(statement):
         assert a.candidate_config, ('Missing generated persistence hook', name, address)
         code = code.replace(marker, '    ' + statement + '\n' + marker)
@@ -54,13 +59,11 @@ def slice_function(name, alias, start, end, tail=''):
             'uint64_t hi=0,lo=0,result=0; int c1cs=0;\n' + code[first:finish] +
             '\n' + tail + '\n}\n')
 
-parts = [functions[n] for n in ('func_8001F960', '_bcopy', '_bzero', 'func_8005F480',
-                               'func_80020ECC')]
+parts = [functions[n] for n in ('func_8001F960', 'func_8001F990', 'func_8001F9BC',
+                               '_bcopy', '_bzero', 'func_8005F480',
+                               'func_800207DC', 'func_80020ECC')]
 parts.append(slice_function('func_80020BE8', 'test_bonus_native_save',
                            0x80020E04, 0x80020E60))
-parts.append(slice_function('func_800207DC', 'test_bonus_native_read',
-                           0x800209FC, 0x80020ABC,
-                           'return; L_80020AC0: ctx->r2=1; return; L_80020B14: return;'))
 code = ''.join(parts)
 calls = set(re.findall(r'^\s+(\w+)\(rdram, ctx\);', code, re.M))
 decls = '\n'.join(f'void {name}(uint8_t*,recomp_context*);' for name in sorted(calls))
@@ -68,4 +71,4 @@ output = ('#include "recomp.h"\n#include "rr64_native.hpp"\nextern "C" {\n' +
           decls + '\n' + code + '\n}\n')
 a.output.parent.mkdir(parents=True, exist_ok=True)
 a.output.write_text(output)
-print(f'Extracted five persistence hooks, native checksum, 248-byte copies and 256-byte Pak I/O; candidate={a.candidate_config}')
+print(f'Extracted five persistence hooks, full native scan/cache/error paths, checksum, 248-byte copies and 256-byte Pak I/O; candidate={a.candidate_config}')

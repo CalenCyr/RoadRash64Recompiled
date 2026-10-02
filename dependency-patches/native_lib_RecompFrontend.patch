@@ -67,9 +67,10 @@ index 1961e29..7796c1d 100644
      SDL_GameController *get_controller_from_joystick_id(SDL_JoystickID joystick_id);
      void add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller);
 diff --git a/recompinput/include/recompinput/input_types.h b/recompinput/include/recompinput/input_types.h
+index f5ed6c0..a4bc864 100644
 --- a/recompinput/include/recompinput/input_types.h
 +++ b/recompinput/include/recompinput/input_types.h
-@@ -37,10 +37,15 @@
+@@ -37,10 +37,15 @@ namespace recompinput {
          DEFINE_INPUT(TAB_LEFT_MENU, 0, "Tab Left (Menu)") \
          DEFINE_INPUT(TAB_RIGHT_MENU, 0, "Tab Right (Menu)")
  
@@ -100,12 +101,25 @@ index 6c59b61..5fc0536 100644
      }
  
 diff --git a/recompinput/include/recompinput/profiles.h b/recompinput/include/recompinput/profiles.h
-index 45bedd1..9155123 100644
+index 45bedd1..e7c8645 100644
 --- a/recompinput/include/recompinput/profiles.h
 +++ b/recompinput/include/recompinput/profiles.h
-@@ -47,6 +47,11 @@ namespace recompinput {
+@@ -9,7 +9,7 @@
+ 
+ namespace recompinput {
+     struct ControllerGUID {
+-        uint64_t hash;
++        uint64_t hash{};
+         std::string serial;
+         int vendor{};
+         int product{};
+@@ -46,7 +46,15 @@ namespace recompinput {
+         int get_input_profile_count();
          const std::vector<int> get_indices_for_custom_profiles(InputDevice device);
          void set_input_profile_for_player(int player_index, int profile_index, InputDevice device);
++        // Explicit UI choice: remember the assigned controller's layout for
++        // reconnect/restart. Internal slot updates must use the setter above.
++        bool select_input_profile_for_player(int player_index, int profile_index, InputDevice device);
          int get_input_profile_for_player(int player_index, InputDevice device);
 +        // Gameplay follows the layout selected in Controls, including in SP.
 +        // Unassigned SP keyboard/startup input retains its legacy layout.
@@ -115,7 +129,7 @@ index 45bedd1..9155123 100644
          int add_controller(ControllerGUID guid, int profile_index);
          const ControllerGUID &get_controller_guid(int controller_index);
          int get_controller_profile_index(int controller_index);
-@@ -60,7 +65,9 @@ namespace recompinput {
+@@ -60,7 +68,9 @@ namespace recompinput {
          int get_sp_controller_profile_index();
          int get_sp_keyboard_profile_index();
          int get_or_create_mp_keyboard_profile_index(int player_index);
@@ -138,29 +152,94 @@ index 855ec2e..9a70053 100644
  namespace recompinput {
      constexpr size_t max_num_players_supported = 128;
 diff --git a/recompinput/src/input_binding.cpp b/recompinput/src/input_binding.cpp
-index 45d55a7..1b8920d 100644
+index 45d55a7..735ce94 100644
 --- a/recompinput/src/input_binding.cpp
 +++ b/recompinput/src/input_binding.cpp
-@@ -50,10 +50,6 @@ namespace recompinput {
+@@ -11,6 +11,9 @@ namespace recompinput {
+         // Designates when binding has been cancelled or completed and the event queue should be purged/ignored.
+         bool skip_events = false;
+         int player_index = -1;
++        int profile_index = -1;
++        SDL_JoystickID controller_id = -1;
++        bool keyboard_assigned = false;
+         recompinput::GameInput game_input = recompinput::GameInput::COUNT;
+         int binding_index = -1;
+         recompinput::InputField new_binding = {};
+@@ -20,6 +23,9 @@ namespace recompinput {
+             active = false;
+             skip_events = false;
+             player_index = -1;
++            profile_index = -1;
++            controller_id = -1;
++            keyboard_assigned = false;
+             game_input = recompinput::GameInput::COUNT;
+             binding_index = -1;
+             new_binding = {};
+@@ -27,13 +33,37 @@ namespace recompinput {
+         }
+     } BindingState;
+ 
++    static SDL_JoystickID assigned_controller_id(int player_index) {
++        const auto player = players::get_player(player_index);
++        if (!player.controller) return -1;
++        const auto connected = recompinput::connected_controllers();
++        // Removal closes SDL's handle before slot reconciliation. A queued
++        // binding event must not dereference that stale slot pointer.
++        if (std::find(connected.begin(), connected.end(), player.controller) == connected.end()) return -1;
++        return SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(player.controller));
++    }
++
+     void binding::start_scanning(int player_index, recompinput::GameInput game_input, int binding_index, recompinput::InputDevice device) {
++        BindingState.reset();
++        if (player_index < 0 || player_index >= max_num_players_supported ||
++            static_cast<size_t>(game_input) >= num_game_inputs || binding_index < 0 ||
++            binding_index >= num_bindings_per_input ||
++            (device != InputDevice::Controller && device != InputDevice::Keyboard)) return;
++        const int profile = profiles::get_input_profile_for_player(player_index, device);
++        if (profile < 0 || profile >= profiles::get_input_profile_count() ||
++            profiles::get_input_profile_device(profile) != device) return;
++        const auto player = players::get_player(player_index);
++        const auto controller_id = device == InputDevice::Controller ? assigned_controller_id(player_index) : -1;
++        if (device == InputDevice::Controller && player.controller && controller_id < 0) return;
+         BindingState.active = true;
+         BindingState.skip_events = false;
+         BindingState.player_index = player_index;
+         BindingState.game_input = game_input;
+         BindingState.binding_index = binding_index;
+         BindingState.device = device;
++        BindingState.profile_index = profile;
++        BindingState.controller_id = controller_id;
++        BindingState.keyboard_assigned = player.keyboard_enabled;
+     }
+ 
+     void binding::stop_scanning() {
+@@ -46,28 +76,49 @@ namespace recompinput {
+     }
+ 
+     bool binding::is_controller_being_bound(SDL_JoystickID joystick_id) {
+-        if (BindingState.device != InputDevice::Controller) {
++        if (!BindingState.active || BindingState.device != InputDevice::Controller) {
              return false;
          }
  
 -        if (players::is_single_player_mode()) {
 -            return true;
 -        }
--
-         const auto& player = players::get_player(BindingState.player_index);
-         if (player.controller != nullptr) {
-             SDL_JoystickID assigned_id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(player.controller));
-@@ -62,6 +58,24 @@ namespace recompinput {
-             }
-         }
++        const auto assigned_id = assigned_controller_id(BindingState.player_index);
++        if (assigned_id >= 0 && assigned_id == joystick_id && assigned_id == BindingState.controller_id) return true;
  
+-        const auto& player = players::get_player(BindingState.player_index);
+-        if (player.controller != nullptr) {
+-            SDL_JoystickID assigned_id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(player.controller));
+-            if (assigned_id == joystick_id) {
+-                return true;
+-            }
+-        }
 +        // Controls exposes all assigned slots even during a single-player
 +        // game. Only the pre-assignment legacy path accepts any controller.
 +        return players::is_single_player_mode() && players::get_number_of_assigned_players() == 0;
 +    }
-+
+ 
 +    bool binding::is_cancel_button(int button) {
 +        // Use the profile being edited, not profile zero (which may be a
 +        // keyboard). An axis/scancode with the same numeric ID is not a button.
@@ -169,7 +248,7 @@ index 45d55a7..1b8920d 100644
 +            BindingState.game_input == GameInput::TOGGLE_MENU) return false;
 +        const int profile = profiles::get_input_profile_for_player(
 +            BindingState.player_index, BindingState.device);
-+        if (profile < 0) return false;
++        if (profile < 0 || profile != BindingState.profile_index) return false;
 +        for (size_t i = 0; i < num_bindings_per_input; ++i) {
 +            const auto input = profiles::get_input_binding(profile, GameInput::TOGGLE_MENU, i);
 +            if (input.input_type == InputType::ControllerDigital && input.input_id == button) return true;
@@ -177,6 +256,25 @@ index 45d55a7..1b8920d 100644
          return false;
      }
  
+     void binding::set_scanned_input(recompinput::InputField value) {
++        if (!BindingState.active) return;
++        const int profile = profiles::get_input_profile_for_player(BindingState.player_index, BindingState.device);
++        const auto controller_id = BindingState.device == InputDevice::Controller ?
++            assigned_controller_id(BindingState.player_index) : -1;
++        // An assignment/hotplug event can arrive before the controls page's
++        // next update. Never apply its queued binding to a different layout.
++        if (profile != BindingState.profile_index || controller_id != BindingState.controller_id ||
++            (BindingState.device == InputDevice::Keyboard &&
++             players::get_player(BindingState.player_index).keyboard_enabled != BindingState.keyboard_assigned)) {
++            binding::stop_scanning();
++            return;
++        }
+         profiles::set_input_binding(
+-            profiles::get_input_profile_for_player(BindingState.player_index, BindingState.device),
++            profile,
+             BindingState.game_input,
+             BindingState.binding_index,
+             value
 diff --git a/recompinput/src/input_events.cpp b/recompinput/src/input_events.cpp
 index c76a1dc..867bb00 100644
 --- a/recompinput/src/input_events.cpp
@@ -410,9 +508,10 @@ index c76a1dc..867bb00 100644
          started = true;
          recompui::process_game_started();
 diff --git a/recompinput/src/input_mapping.cpp b/recompinput/src/input_mapping.cpp
+index bfcfef4..97ae085 100644
 --- a/recompinput/src/input_mapping.cpp
 +++ b/recompinput/src/input_mapping.cpp
-@@ -6,6 +6,7 @@
+@@ -6,6 +6,7 @@ namespace recompinput {
      using default_game_input_device_mapping = std::unordered_map<GameInput, std::vector<InputField>>;
  
      default_game_input_device_mapping default_n64_mappings_keyboard = {
@@ -420,7 +519,7 @@ diff --git a/recompinput/src/input_mapping.cpp b/recompinput/src/input_mapping.c
          { GameInput::A,              { InputField::keyboard(SDL_SCANCODE_SPACE) } },
          { GameInput::B,              { InputField::keyboard(SDL_SCANCODE_LSHIFT) } },
          { GameInput::L,              { InputField::keyboard(SDL_SCANCODE_E) } },
-@@ -35,6 +36,10 @@
+@@ -35,16 +36,23 @@ namespace recompinput {
      };
  
      default_game_input_device_mapping default_n64_mappings_controller = {
@@ -431,11 +530,19 @@ diff --git a/recompinput/src/input_mapping.cpp b/recompinput/src/input_mapping.c
          { GameInput::A,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_SOUTH) } },
          { GameInput::B,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_WEST) } },
          { GameInput::L,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) } },
-@@ -44,7 +49,7 @@
-         { GameInput::C_LEFT,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_NORTH) } },
-         { GameInput::C_RIGHT,        { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, true),  InputField::controller_digital(SDL_CONTROLLER_BUTTON_EAST) } },
-         { GameInput::C_UP,           { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK) } },
+         { GameInput::R,              { InputField::controller_analog( SDL_CONTROLLER_AXIS_TRIGGERRIGHT, true) } },
+         { GameInput::Z,              { InputField::controller_analog( SDL_CONTROLLER_AXIS_TRIGGERLEFT, true) } },
+         { GameInput::START,          { InputField::controller_digital(SDL_CONTROLLER_BUTTON_START) } },
+-        { GameInput::C_LEFT,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_NORTH) } },
+-        { GameInput::C_RIGHT,        { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, true),  InputField::controller_digital(SDL_CONTROLLER_BUTTON_EAST) } },
+-        { GameInput::C_UP,           { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK) } },
 -        { GameInput::C_DOWN,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, true),  InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) } },
++        // Directional attacks/weapon cycling default to the right stick only.
++        // R3 and RB have dedicated actions. Set this at creation/reset rather
++        // than rewriting a player's deliberately saved secondary bindings.
++        { GameInput::C_LEFT,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, false) } },
++        { GameInput::C_RIGHT,        { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, true) } },
++        { GameInput::C_UP,           { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, false) } },
 +        { GameInput::C_DOWN,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, true) } },
          { GameInput::DPAD_LEFT,      { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_LEFT) } },
          { GameInput::DPAD_RIGHT,     { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) } },
@@ -887,9 +994,10 @@ index 03ed871..5bbce2f 100644
  
  void recompinput::add_rotation_deltas(SDL_JoystickID joystick_id, float rot_x, float rot_y) {
 diff --git a/recompinput/src/input_types.cpp b/recompinput/src/input_types.cpp
+index c6786e6..9ac1724 100644
 --- a/recompinput/src/input_types.cpp
 +++ b/recompinput/src/input_types.cpp
-@@ -12,11 +12,36 @@
+@@ -12,11 +12,36 @@ static std::array<std::string, num_game_inputs> game_input_names = {
  };
  #undef DEFINE_INPUT
  
@@ -928,7 +1036,7 @@ diff --git a/recompinput/src/input_types.cpp b/recompinput/src/input_types.cpp
      descriptions[static_cast<size_t>(GameInput::ACCEPT_MENU)] = "In the recomp interface, performs the action for the currently highlighted item. Like pressing a button, or toggling a switch.";
      descriptions[static_cast<size_t>(GameInput::BACK_MENU)] = "In the recomp interface, returns to the header or backs out to a previous menu.";
 diff --git a/recompinput/src/players.cpp b/recompinput/src/players.cpp
-index 08cb3f3..016170c 100644
+index 08cb3f3..fe2aa8e 100644
 --- a/recompinput/src/players.cpp
 +++ b/recompinput/src/players.cpp
 @@ -1,3 +1,4 @@
@@ -1118,42 +1226,64 @@ index 08cb3f3..016170c 100644
  
  bool playerassignment::is_active() {
      return PlayerState.is_assigning;
-@@ -150,18 +247,21 @@ void playerassignment::stop_and_close_modal() {
+@@ -150,18 +247,38 @@ void playerassignment::stop_and_close_modal() {
  }
  
  void playerassignment::commit_player_assignment() {
 +    std::scoped_lock lock(assignment_mutex);
      stop_and_close_modal();
  
++    const auto previous_players = PlayerState.players;
++    std::array<std::pair<int, int>, max_num_players_supported> previous_profiles;
++    for (int i = 0; i < max_num_players_supported; ++i) {
++        previous_profiles[i] = {
++            profiles::get_input_profile_for_player(i, InputDevice::Controller),
++            profiles::get_input_profile_for_player(i, InputDevice::Keyboard)};
++    }
      PlayerState.players = PlayerState.temp_players;
-     for (int i = 0; i < players::get_number_of_assigned_players(); i++) {
+-    for (int i = 0; i < players::get_number_of_assigned_players(); i++) {
++    for (int i = 0; i < max_num_players_supported; i++) {
          Player &player = PlayerState.players[i];
          if (player.controller != nullptr) {
 +            profiles::set_input_profile_for_player(i, -1, InputDevice::Keyboard);
              int cont_profile_index = profiles::get_controller_profile_index_from_sdl_controller(player.controller);
-             if (cont_profile_index >= 0) {
-                 profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
+-            if (cont_profile_index >= 0) {
+-                profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
++            // A live controller keeps its selected layout when players reorder.
++            // In particular, identical pads without serials share a reconnect
++            // default, but must not overwrite each other's current layouts.
++            for (int j = 0; j < max_num_players_supported; ++j) {
++                if (previous_players[j].controller == player.controller) {
++                    cont_profile_index = previous_profiles[j].first;
++                    break;
++                }
              }
++            profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
          } else {
 -            profiles::set_input_profile_for_player(i, profiles::get_or_create_mp_keyboard_profile_index(i), InputDevice::Keyboard);
 +            profiles::set_input_profile_for_player(i, -1, InputDevice::Controller);
-+            profiles::set_input_profile_for_player(i, profiles::get_default_keyboard_profile_for_player(i), InputDevice::Keyboard);
++            const int keyboard_profile = !player.keyboard_enabled ? -1 :
++                previous_players[i].keyboard_enabled ? previous_profiles[i].second :
++                profiles::get_default_keyboard_profile_for_player(i);
++            profiles::set_input_profile_for_player(i, keyboard_profile, InputDevice::Keyboard);
          }
      }
  }
 diff --git a/recompinput/src/profiles.cpp b/recompinput/src/profiles.cpp
-index c89956e..492e484 100644
+index c89956e..7d97112 100644
 --- a/recompinput/src/profiles.cpp
 +++ b/recompinput/src/profiles.cpp
-@@ -2,6 +2,7 @@
+@@ -2,7 +2,9 @@
  #include <fstream>
  #include <iomanip>
  #include <string>
 +#include <atomic>
  #include "recompinput/profiles.h"
++#include "recompinput/input_state.h"
  #include "./json.h"
  #include "xxHash/xxh3.h"
-@@ -19,7 +20,8 @@ struct InputProfile {
+ 
+@@ -19,7 +21,8 @@ struct InputProfile {
  };
  
  static std::vector<InputProfile> input_profiles{};
@@ -1163,7 +1293,54 @@ index c89956e..492e484 100644
  static std::unordered_map<std::string, int> input_profile_key_index_map{};
  static std::vector<int> input_profile_custom_indices[static_cast<size_t>(recompinput::InputDevice::COUNT)]{};
  
-@@ -225,6 +227,35 @@ namespace recompinput {
+@@ -32,6 +35,21 @@ struct Controller {
+ static std::vector<Controller> controllers;
+ static std::unordered_map<uint64_t, int> controller_hash_index_map{};
+ 
++static uint64_t controller_identity_hash(const recompinput::ControllerGUID& guid) {
++    // The hash is runtime-only. Rebuild it for both SDL identities and saved
++    // JSON; deserialization never supplies a valid hash. A serial, when SDL
++    // provides one, keeps two controllers of the same model distinct.
++    XXH3_state_t state;
++    XXH3_64bits_reset(&state);
++    XXH3_64bits_update(&state, &guid.vendor, sizeof(guid.vendor));
++    XXH3_64bits_update(&state, &guid.product, sizeof(guid.product));
++    XXH3_64bits_update(&state, &guid.version, sizeof(guid.version));
++    XXH3_64bits_update(&state, &guid.crc16, sizeof(guid.crc16));
++    if (!guid.serial.empty())
++        XXH3_64bits_update(&state, guid.serial.data(), guid.serial.size());
++    return XXH3_64bits_digest(&state);
++}
++
+ static int keyboard_sp_profile_index = -1;
+ static int controller_sp_profile_index = -1;
+ 
+@@ -213,6 +231,24 @@ namespace recompinput {
+         }
+     }
+ 
++    bool profiles::select_input_profile_for_player(int player_index, int profile_index, InputDevice device) {
++        if (player_index < 0 || player_index >= max_num_players_supported ||
++            profile_index < 0 || profile_index >= get_input_profile_count() ||
++            get_input_profile_device(profile_index) != device) return false;
++        const auto player = players::get_player(player_index);
++        if (device == InputDevice::Controller) {
++            const auto connected = recompinput::connected_controllers();
++            if (!player.controller || std::find(connected.begin(), connected.end(), player.controller) == connected.end()) return false;
++            add_controller(get_guid_from_sdl_controller(player.controller), profile_index);
++        } else if (device != InputDevice::Keyboard || !player.keyboard_enabled) {
++            return false;
++        }
++        // Only an explicit layout choice changes the reconnect default. Slot
++        // reconciliation and temporary assignments use the setter above.
++        set_input_profile_for_player(player_index, profile_index, device);
++        return true;
++    }
++
+     int profiles::get_input_profile_for_player(int player_index, InputDevice device) {
+         switch (device) {
+         case InputDevice::Controller:
+@@ -225,7 +261,39 @@ namespace recompinput {
          }
      }
  
@@ -1197,9 +1374,38 @@ index c89956e..492e484 100644
 +    }
 +
      int profiles::add_controller(ControllerGUID guid, int profile_index) {
++        if (profile_index < 0 || profile_index >= get_input_profile_count() ||
++            get_input_profile_device(profile_index) != InputDevice::Controller) return -1;
++        guid.hash = controller_identity_hash(guid);
          auto it = controller_hash_index_map.find(guid.hash);
          if (it != controller_hash_index_map.end()) {
-@@ -371,6 +402,29 @@ namespace recompinput {
+             controllers[it->second].profile_index = profile_index;
+@@ -250,7 +318,7 @@ namespace recompinput {
+     }
+ 
+     int profiles::get_controller_by_guid(ControllerGUID guid) {
+-        auto it = controller_hash_index_map.find(guid.hash);
++        auto it = controller_hash_index_map.find(controller_identity_hash(guid));
+         if (it != controller_hash_index_map.end()) {
+             return it->second;
+         }
+@@ -285,14 +353,7 @@ namespace recompinput {
+         guid.version = version;
+         guid.crc16 = crc16;
+ 
+-        // Compute the hash from the GUID.
+-        XXH3_state_t state;
+-        XXH3_64bits_reset(&state);
+-        XXH3_64bits_update(&state, &guid.vendor, sizeof(guid.vendor));
+-        XXH3_64bits_update(&state, &guid.product, sizeof(guid.product));
+-        XXH3_64bits_update(&state, &guid.version, sizeof(guid.version));
+-        XXH3_64bits_update(&state, &guid.crc16, sizeof(guid.crc16));
+-        guid.hash = XXH3_64bits_digest(&state);
++        guid.hash = controller_identity_hash(guid);
+ 
+         return guid;
+     }
+@@ -371,6 +432,29 @@ namespace recompinput {
          return "SERIAL_" + guid.serial + "_VID_" + std::to_string(guid.vendor) + "_PID_" + std::to_string(guid.product) +"_VERSION_" + std::to_string(guid.version) +"_CRC16_" + std::to_string(guid.crc16);
      }
  
@@ -1229,7 +1435,7 @@ index c89956e..492e484 100644
      bool profiles::get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out) {
          uint16_t cur_buttons = 0;
          float cur_x = 0.0f;
-@@ -397,8 +451,8 @@ namespace recompinput {
+@@ -397,8 +481,8 @@ namespace recompinput {
                  cur_y += recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::Y_AXIS_POS]) - recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::Y_AXIS_NEG]);
              };
              
@@ -1241,10 +1447,23 @@ index c89956e..492e484 100644
              check_buttons(profile_index_kb);
  
 diff --git a/recompui/include/recompui/config.h b/recompui/include/recompui/config.h
-index 38b84f5..7765d72 100644
+index 38b84f5..1ba092d 100644
 --- a/recompui/include/recompui/config.h
 +++ b/recompui/include/recompui/config.h
-@@ -58,6 +58,7 @@ namespace recompui {
+@@ -8,6 +8,12 @@
+ 
+ namespace recompui {
+     namespace config {
++        // Presentation only: groups never change option IDs, indices or storage.
++        struct OptionGroup {
++            std::string name;
++            std::string description;
++            std::vector<std::string> option_ids;
++        };
+         namespace general {
+             inline const std::string id = "general";
+             inline const std::string tab_name = "General";
+@@ -58,6 +64,7 @@ namespace recompui {
                  inline const std::string ar_option = "ar_option";
                  inline const std::string msaa_option = "msaa_option";
                  inline const std::string rr_option = "rr_option";
@@ -1252,7 +1471,7 @@ index 38b84f5..7765d72 100644
                  inline const std::string hpfb_option = "hpfb_option";
                  inline const std::string rr_manual_value = "rr_manual_value";
                  inline const std::string ds_option = "ds_option";
-@@ -82,6 +83,7 @@ namespace recompui {
+@@ -82,6 +89,7 @@ namespace recompui {
          namespace mods {
              inline const std::string id = "mods";
              inline const std::string tab_name = "Mods";
@@ -1260,6 +1479,26 @@ index 38b84f5..7765d72 100644
          }
  
          /**
+@@ -93,7 +101,8 @@ namespace recompui {
+          * @param id  The ID of the config + tab. Also used as the filename for saving/loading (e.g. `<id>.json`).
+          * @param requires_confirmation  Whether the tab requires confirmation before closing. Adds an Apply button at the footer, and if the user tries to switch tabs or close the modal, they will be prompted to confirm or cancel changes.
+          */
+-        recomp::config::Config &create_config_tab(const std::string &name, const std::string &id, bool requires_confirmation);
++        recomp::config::Config &create_config_tab(const std::string &name, const std::string &id, bool requires_confirmation,
++            const std::vector<OptionGroup> &groups = {});
+ 
+         /**
+          * @brief Adds a new tab to the config modal. This is for manually rendering your own tab's UI.
+@@ -123,7 +132,8 @@ namespace recompui {
+         recomp::config::Config &create_general_tab(const GeneralTabOptions& options, const std::string &name = config::general::tab_name);
+         void create_controls_tab(const std::string &name = config::controls::tab_name);
+         recomp::config::Config &create_graphics_tab(const std::string &name = config::graphics::tab_name);
+-        recomp::config::Config &create_sound_tab(const std::string &name = config::sound::tab_name);
++        recomp::config::Config &create_sound_tab(const std::string &name = config::sound::tab_name,
++            const std::vector<OptionGroup> &groups = {});
+         void create_mods_tab(const std::string &name = config::mods::tab_name);
+ 
+         // Must be called after all tabs have been created.
 diff --git a/recompui/include/recompui/recompui.h b/recompui/include/recompui/recompui.h
 index 30c463b..96a639d 100644
 --- a/recompui/include/recompui/recompui.h
@@ -1843,7 +2082,7 @@ index 294c371..c767867 100644
  
  } // namespace recompui
 diff --git a/recompui/src/composites/ui_player_card.cpp b/recompui/src/composites/ui_player_card.cpp
-index 7a75884..1364b87 100644
+index 7a75884..34b0e5e 100644
 --- a/recompui/src/composites/ui_player_card.cpp
 +++ b/recompui/src/composites/ui_player_card.cpp
 @@ -2,9 +2,17 @@
@@ -1864,7 +2103,35 @@ index 7a75884..1364b87 100644
  
  PlayerCard::PlayerCard(
      ResourceId rid,
-@@ -65,62 +73,40 @@ PlayerCard::PlayerCard(
+@@ -30,8 +38,10 @@ PlayerCard::PlayerCard(
+     
+     if (!is_assignment_card) {
+         set_as_navigation_container(NavigationType::GridCol);
+-        set_padding_top(64.0f);
+-        set_padding_bottom(64.0f);
++        // Compact overview cards fit four players without changing the assignment dialog.
++        set_min_width(200.0f);
++        set_padding_top(16.0f);
++        set_padding_bottom(16.0f);
+         auto player_label = context.create_element<Label>(this, "Player " + std::to_string(player_index + 1), LabelStyle::Small);
+     }
+ 
+@@ -41,8 +51,12 @@ PlayerCard::PlayerCard(
+     card->set_flex_direction(FlexDirection::Column);
+     card->set_align_items(AlignItems::Center);
+     card->set_justify_content(JustifyContent::Center);
+-    card->set_width(size);
+-    card->set_height(size);
++    if (is_assignment_card) {
++        card->set_width(size);
++    } else {
++        card->set_width(100.0f, Unit::Percent);
++    }
++    card->set_height(is_assignment_card ? size : static_player_card_height);
+     card->set_border_color(theme::color::BorderSoft);
+     card->set_border_width(theme::border::width, Unit::Dp);
+     card->set_border_radius(theme::border::radius_sm, Unit::Dp);
+@@ -65,62 +79,45 @@ PlayerCard::PlayerCard(
      if (!is_assignment_card) {
          auto player = recompinput::players::get_player(player_index, is_assignment_card);
          update_player_card_icon();
@@ -1889,7 +2156,16 @@ index 7a75884..1364b87 100644
 -                recompinput::profiles::get_input_profile_name(device_profile_index),
 -                std::to_string(device_profile_index)
 -            );
--        }
++        context.create_element<Label>(this, "Input device", LabelStyle::Small);
++        const auto controllers = recompinput::connected_controllers();
++        std::vector<SelectOption> devices{{"Mouse & Keyboard", "keyboard"}};
++        std::string selected_device = player.keyboard_enabled ? "keyboard" : "unassigned";
++        if (!player.controller && !player.keyboard_enabled) devices.emplace_back("Unassigned", "unassigned");
++        for (size_t i = 0; i < controllers.size(); ++i) {
++            const char* name = SDL_GameControllerName(controllers[i]);
++            devices.emplace_back(std::to_string(i + 1) + ": " + (name ? name : "Controller"), std::to_string(i));
++            if (controllers[i] == player.controller) selected_device = std::to_string(i);
+         }
 -
 -        if (has_controller) {
 -            options.emplace_back(
@@ -1907,16 +2183,7 @@ index 7a75884..1364b87 100644
 -            int profile_index = profile_indices[i];
 -            std::string profile_name = recompinput::profiles::get_input_profile_name(profile_index);
 -            options.emplace_back(profile_name, std::to_string(profile_index));
-+        context.create_element<Label>(this, "Input device", LabelStyle::Small);
-+        const auto controllers = recompinput::connected_controllers();
-+        std::vector<SelectOption> devices{{"Mouse & Keyboard", "keyboard"}};
-+        std::string selected_device = player.keyboard_enabled ? "keyboard" : "unassigned";
-+        if (!player.controller && !player.keyboard_enabled) devices.emplace_back("Unassigned", "unassigned");
-+        for (size_t i = 0; i < controllers.size(); ++i) {
-+            const char* name = SDL_GameControllerName(controllers[i]);
-+            devices.emplace_back(std::to_string(i + 1) + ": " + (name ? name : "Controller"), std::to_string(i));
-+            if (controllers[i] == player.controller) selected_device = std::to_string(i);
-         }
+-        }
 -
 -        auto select = context.create_element<Select>(
 -            this,
@@ -1928,6 +2195,11 @@ index 7a75884..1364b87 100644
 -            this->on_select_player_profile(std::stoi(option.value));
 +        auto device_select = context.create_element<Select>(this, devices, selected_device);
 +        device_select->set_width(100.0f, Unit::Percent);
++        // Confine long device names to the value area, leaving the dropdown and arrow visible.
++        auto device_value = device_select->get_element_with_tag_name("selectvalue");
++        device_value.set_right(56.0f);
++        device_value.set_white_space(WhiteSpace::Nowrap);
++        device_value.set_overflow_x(Overflow::Hidden);
 +        device_select->add_change_callback([player_index, controllers](SelectOption& option, int) {
 +            if (option.value == "unassigned") return;
 +            SDL_GameController* controller = option.value == "keyboard" ? nullptr : controllers.at(std::stoul(option.value));
@@ -1957,7 +2229,7 @@ index 7a75884..1364b87 100644
              this->on_edit_profile();
          });
 diff --git a/recompui/src/composites/ui_player_card.h b/recompui/src/composites/ui_player_card.h
-index 8d92aa5..880a2e4 100644
+index 8d92aa5..6c7bf86 100644
 --- a/recompui/src/composites/ui_player_card.h
 +++ b/recompui/src/composites/ui_player_card.h
 @@ -8,6 +8,8 @@
@@ -1969,11 +2241,53 @@ index 8d92aa5..880a2e4 100644
  
  // player index, profile index
  using on_select_player_profile_callback = std::function<void(int, int)>;
+@@ -70,7 +72,8 @@ public:
+     static constexpr float assign_player_card_icon_size = 64.0f;
+ 
+     static constexpr float static_player_card_size = 256.0f;
+-    static constexpr float static_player_card_icon_size = 128.0f;
++    static constexpr float static_player_card_height = 160.0f;
++    static constexpr float static_player_card_icon_size = 96.0f;
+ };
+ 
+ } // namespace recompui
+diff --git a/recompui/src/config/ui_config.cpp b/recompui/src/config/ui_config.cpp
+index 6c84c05..507e2b3 100644
+--- a/recompui/src/config/ui_config.cpp
++++ b/recompui/src/config/ui_config.cpp
+@@ -56,15 +56,16 @@ namespace recompui {
+         });
+     }
+ 
+-    recomp::config::Config &config::create_config_tab(const std::string &name, const std::string &id, bool requires_confirmation) {
++    recomp::config::Config &config::create_config_tab(const std::string &name, const std::string &id, bool requires_confirmation,
++        const std::vector<OptionGroup> &groups) {
+         configs.push_back(std::make_pair(id, recomp::config::Config(name, id, requires_confirmation)));
+         recomp::config::Config &new_config = configs.back().second;
+         config::create_tab(
+             name,
+             id,
+             // Create contents
+-            [id](recompui::ContextId context, Element* parent) {
+-                context.create_element<ConfigPageOptionsMenu>(parent, get_config_ptr(id), true);
++            [id, groups](recompui::ContextId context, Element* parent) {
++                context.create_element<ConfigPageOptionsMenu>(parent, get_config_ptr(id), true, groups);
+             },
+             // Can close
+             [id, name](TabCloseContext close_context) {
 diff --git a/recompui/src/config/ui_config_page_controls.cpp b/recompui/src/config/ui_config_page_controls.cpp
-index f379a6f..95a6c5b 100644
+index f379a6f..00dafc4 100644
 --- a/recompui/src/config/ui_config_page_controls.cpp
 +++ b/recompui/src/config/ui_config_page_controls.cpp
-@@ -46,7 +46,8 @@ GameInputRow::GameInputRow(
+@@ -8,6 +8,7 @@
+ #include "elements/ui_select.h"
+ #include "recompinput/profiles.h"
+ #include "recompui/config.h"
++#include <algorithm>
+ 
+ namespace recompui {
+ 
+@@ -46,7 +47,8 @@ GameInputRow::GameInputRow(
      set_width(100.0f, Unit::Percent);
      // Have to set height here for the scroll buffer to work.
      // Otherwise it fails to calculate the correct size (RmlUI issue)
@@ -1983,7 +2297,7 @@ index f379a6f..95a6c5b 100644
  
      set_padding_top(4.0f);
      set_padding_right(16.0f);
-@@ -62,11 +63,19 @@ GameInputRow::GameInputRow(
+@@ -62,11 +64,19 @@ GameInputRow::GameInputRow(
  
      set_debug_id("GameInputRow (" + input_ctx.name + ")");
  
@@ -2008,7 +2322,7 @@ index f379a6f..95a6c5b 100644
      // TODO: whitespace nowrap impl
  
      auto bindings_container = context.create_element<Element>(this, 0, "div", false);
-@@ -170,7 +179,7 @@ void GameInputRow::focus_on_first_binding() {
+@@ -170,7 +180,7 @@ void GameInputRow::focus_on_first_binding() {
  ConfigPageControls::ConfigPageControls(ResourceId rid, Element *parent) : ConfigPage(rid, parent) {
      controls_page = this;
  
@@ -2017,41 +2331,146 @@ index f379a6f..95a6c5b 100644
      this->max_num_players = multiplayer_enabled ? recompinput::players::get_max_number_of_players() : 1;
      multiplayer_view_mappings = !multiplayer_enabled;
  
-@@ -381,11 +390,9 @@ void ConfigPageControls::render_body_players() {
+@@ -217,6 +227,9 @@ void ConfigPageControls::create_game_input_contexts() {
+ void ConfigPageControls::process_event(const Event &e) {
+     switch (e.type) {
+     case EventType::Update:
++        if (set_current_profile_index()) {
++            update_index++;
++        }
+         if (awaiting_binding && !recompinput::binding::is_binding()) {
+             awaiting_binding = false;
+             update_control_mappings();
+@@ -237,10 +250,13 @@ void ConfigPageControls::process_event(const Event &e) {
+ }
+ 
+ void ConfigPageControls::force_update() {
++    // Device reassignment can happen while a binding scan is active.
++    set_current_profile_index();
+     update_index++;
+ }
+ 
+ void ConfigPageControls::render_all() {
++    set_current_profile_index();
+     render_header();
+     render_body();
+     render_footer();
+@@ -373,66 +389,40 @@ void ConfigPageControls::render_body_players() {
+     // Top/bottom padding is within the player cards so that controller nav puts them more into view.
+     body_left->set_padding_top(0.0f);
+     body_left->set_padding_bottom(0.0f);
+-    body_left->set_padding_right(64.0f);
+-    body_left->set_padding_left(64.0f);
++    body_left->set_padding_right(32.0f);
++    body_left->set_padding_left(32.0f);
+     body_left->set_as_navigation_container(NavigationType::GridCol);
+     body_left->set_position(Position::Relative);
+     body_left->set_height_auto();
      body_left->set_max_height(100.0f, Unit::Percent);
      body_left->set_overflow_y(Overflow::Auto);
  
 -    bool make_fakes = max_num_players > 4;
 -
-     recompui::Element *player_grid = nullptr;
+-    recompui::Element *player_grid = nullptr;
 -    // Grid supports groups of 4
 -    for (int i = 0; i < max_num_players; i += 4) {
-+    // Two cards per row leave room for names on smaller launcher windows.
-+    for (int i = 0; i < max_num_players; i += 2) {
-         player_grid = context.create_element<Element>(body_left, 0, "div", false);
-         player_grid->set_as_navigation_container(NavigationType::GridRow);
-         player_grid->set_display(Display::Flex);
-@@ -399,17 +406,11 @@ void ConfigPageControls::render_body_players() {
-         // The player cards still need the padding for controller nav visibility.
-         player_grid->set_margin_bottom(-64.0f);
- 
+-        player_grid = context.create_element<Element>(body_left, 0, "div", false);
+-        player_grid->set_as_navigation_container(NavigationType::GridRow);
+-        player_grid->set_display(Display::Flex);
+-        player_grid->set_flex_direction(FlexDirection::Row);
+-        player_grid->set_justify_content(JustifyContent::Center);
+-        player_grid->set_align_items(AlignItems::Center);
+-        player_grid->set_width(100.0f, Unit::Percent);
+-        player_grid->set_height_auto();
+-        player_grid->set_gap(64.0f);
+-        // Remove extra margin already added as padding from player cards.
+-        // The player cards still need the padding for controller nav visibility.
+-        player_grid->set_margin_bottom(-64.0f);
+-
 -        for (int j = i; j < i + 4; j++) {
 -            if (!make_fakes && j >= max_num_players) {
-+        for (int j = i; j < i + 2; j++) {
-+            if (j >= max_num_players) {
-                 break;
-             }
- 
+-                break;
+-            }
+-
 -            if (make_fakes && j >= 4 && j >= max_num_players) {
 -                auto fake = context.create_element<Element>(player_grid);
 -                fake->set_width(PlayerCard::static_player_card_size, Unit::Dp);
 -                continue;
 -            }
 -
-             auto player_card = context.create_element<PlayerCard>(
-                 player_grid,
-                 j,
-@@ -473,6 +474,37 @@ void ConfigPageControls::render_footer() {
+-            auto player_card = context.create_element<PlayerCard>(
+-                player_grid,
+-                j,
+-                false
+-            );
+-            player_card->set_on_select_profile_callback([this](int player_index, int profile_index) {
+-                this->on_select_player_profile(player_index, profile_index);
+-            });
+-            player_card->set_on_edit_profile_callback([this](int player_index) {
+-                this->on_edit_player_profile(player_index);
+-            });
+-            player_cards.push_back(player_card);
+-            if (i == 0 && j == 0) {
+-                player_card->set_as_primary_focus(true);
+-            }
++    // Keep all players visible; GridRow preserves matching-control navigation across cards.
++    auto player_grid = context.create_element<Element>(body_left, 0, "div", false);
++    player_grid->set_as_navigation_container(NavigationType::GridRow);
++    player_grid->set_display(Display::Flex);
++    player_grid->set_flex_direction(FlexDirection::Row);
++    player_grid->set_flex_wrap(FlexWrap::NoWrap);
++    player_grid->set_justify_content(JustifyContent::Center);
++    player_grid->set_align_items(AlignItems::FlexStart);
++    player_grid->set_width(100.0f, Unit::Percent);
++    player_grid->set_height_auto();
++    player_grid->set_gap(24.0f);
++
++    for (int i = 0; i < max_num_players; ++i) {
++        auto player_card = context.create_element<PlayerCard>(player_grid, i, false);
++        player_card->set_on_select_profile_callback([this](int player_index, int profile_index) {
++            this->on_select_player_profile(player_index, profile_index);
++        });
++        player_card->set_on_edit_profile_callback([this](int player_index) {
++            this->on_edit_player_profile(player_index);
++        });
++        player_cards.push_back(player_card);
++        if (i == 0) {
++            player_card->set_as_primary_focus(true);
+         }
+     }
+ 
+-    // Retain 64px bottom margin on the last row.
+-    if (player_grid != nullptr) {
+-        player_grid->set_margin_bottom(0.0f);
+-    }
+-
+     if (queue_selected_player_profile_edit_focus) {
+         queue_selected_player_profile_edit_focus = false;
+         if (selected_player >= 0 && selected_player < static_cast<int>(player_cards.size())) {
+@@ -442,18 +432,16 @@ void ConfigPageControls::render_body_players() {
+ }
+ 
+ void ConfigPageControls::on_select_player_profile(int player_index, int profile_index) {
+-    auto& assigned_player = recompinput::players::get_player(player_index);
+     recompinput::InputDevice device = recompinput::players::get_player_input_device(player_index);
+-    if (device != recompinput::InputDevice::COUNT) {
+-        recompinput::profiles::set_input_profile_for_player(player_index, profile_index, device);
++    if (recompinput::profiles::select_input_profile_for_player(player_index, profile_index, device)) {
++        force_update();
+     }
+ }
+ 
+ void ConfigPageControls::on_edit_player_profile(int player_index) {
+     selected_player = player_index;
+-    recompinput::InputDevice device = recompinput::players::get_player_input_device(player_index);
+-    if (device != recompinput::InputDevice::COUNT) {
+-        selected_profile_index = recompinput::profiles::get_input_profile_for_player(player_index, device);
++    set_current_profile_index();
++    if (selected_profile_index >= 0) {
+         multiplayer_view_mappings = true;
+         queue_first_game_input_row_focus = true;
+         force_update();
+@@ -473,6 +461,38 @@ void ConfigPageControls::render_footer() {
      {
          auto footer_left = footer->get_left();
          footer_left->clear_children();
@@ -2060,8 +2479,9 @@ index f379a6f..95a6c5b 100644
 +            const auto device = get_player_input_device();
 +            const auto player = recompinput::players::get_player(selected_player);
 +            std::vector<SelectOption> options;
-+            auto add_profile = [&options](int index) {
-+                if (index < 0) return;
++            auto add_profile = [&options, device](int index) {
++                if (index < 0 || index >= recompinput::profiles::get_input_profile_count() ||
++                    recompinput::profiles::get_input_profile_device(index) != device) return;
 +                const auto value = std::to_string(index);
 +                for (const auto& option : options) if (option.value == value) return;
 +                options.emplace_back(recompinput::profiles::get_input_profile_name(index), value);
@@ -2081,14 +2501,347 @@ index f379a6f..95a6c5b 100644
 +            auto select = context.create_element<Select>(footer_left, options, std::to_string(selected_profile_index));
 +            select->set_enabled(device != recompinput::InputDevice::COUNT);
 +            select->add_change_callback([this](SelectOption& option, int) {
-+                selected_profile_index = std::stoi(option.value);
-+                on_select_player_profile(selected_player, selected_profile_index);
-+                force_update();
++                if (can_edit_current_profile()) {
++                    on_select_player_profile(selected_player, std::stoi(option.value));
++                }
 +            });
 +        }
          if (!multiplayer_enabled) {
              keyboard_toggle = context.create_element<IconToggle>(footer_left, "icons/Cont.svg", "icons/Keyboard.svg", ToggleSize::Large);
              keyboard_toggle->set_checked(single_player_show_keyboard_mappings);
+@@ -487,6 +507,7 @@ void ConfigPageControls::render_footer() {
+         footer_right->clear_children();
+         auto reset_to_defaults_button = context.create_element<Button>(footer_right, "Reset to defaults", ButtonStyle::Warning);
+         reset_to_defaults_button->add_pressed_callback([this]() {
++            if (!this->can_edit_current_profile()) return;
+             recompinput::profiles::reset_profile_bindings(this->selected_profile_index, this->get_player_input_device());
+             this->update_control_mappings();
+         });
+@@ -560,19 +581,74 @@ void ConfigPageControls::render_control_mappings() {
+     }
+ }
+ 
+-void ConfigPageControls::set_current_profile_index() {
+-    if (!multiplayer_enabled) {
+-        selected_profile_index = single_player_show_keyboard_mappings
++bool ConfigPageControls::set_current_profile_index() {
++    const auto device = get_player_input_device();
++    SDL_GameController *controller = nullptr;
++    int profile_index = -1;
++    if (multiplayer_enabled) {
++        if (selected_player >= 0 && static_cast<size_t>(selected_player) < max_num_players &&
++            device != recompinput::InputDevice::COUNT) {
++            profile_index = recompinput::profiles::get_input_profile_for_player(selected_player, device);
++            if (device == recompinput::InputDevice::Controller) {
++                controller = recompinput::players::get_player(selected_player).controller;
++                if (multiplayer_view_mappings) {
++                    const auto connected = recompinput::connected_controllers();
++                    // SDL may have closed the handle before slot reconciliation.
++                    // Leave the editor before its footer queries this device.
++                    if (!controller || std::find(connected.begin(), connected.end(), controller) == connected.end()) {
++                        profile_index = -1;
++                    }
++                }
++            }
++        }
++    } else {
++        profile_index = single_player_show_keyboard_mappings
+             ? recompinput::profiles::get_sp_keyboard_profile_index()
+             : recompinput::profiles::get_sp_controller_profile_index();
+     }
++
++    if (profile_index < 0 || profile_index >= recompinput::profiles::get_input_profile_count() ||
++        recompinput::profiles::get_input_profile_device(profile_index) != device) {
++        profile_index = -1;
++    }
++
++    // The editor, scanner and gameplay must use the same current assignment.
++    // Compare the controller handle without dereferencing a disconnected device.
++    const bool changed = selected_profile_index != profile_index ||
++        selected_profile_player != selected_player || selected_profile_device != device ||
++        selected_profile_controller != controller;
++    if (changed && awaiting_binding) {
++        recompinput::binding::stop_scanning();
++        awaiting_binding = false;
++        awaiting_binding_for_menu_action_button = false;
++    }
++    selected_profile_index = profile_index;
++    selected_profile_player = selected_player;
++    selected_profile_device = device;
++    selected_profile_controller = controller;
++    if (multiplayer_enabled && profile_index < 0) {
++        multiplayer_view_mappings = false;
++    }
++    return changed;
++}
++
++bool ConfigPageControls::can_edit_current_profile() {
++    if (set_current_profile_index()) {
++        update_index++;
++    }
++    // Ignore a queued click from the previous layout until its rows are rebuilt.
++    return selected_profile_index >= 0 && should_show_mappings() && last_update_index == update_index;
+ }
+ 
+ void ConfigPageControls::update_control_mappings() {
+     if (!multiplayer_enabled) {
+         selected_player = 0;
+-        set_current_profile_index();
+-    } else if (!multiplayer_view_mappings) {
++    }
++    if (set_current_profile_index()) {
++        update_index++;
++        return;
++    }
++    if (selected_profile_index < 0 || !should_show_mappings()) {
+         return;
+     }
+ 
+@@ -639,6 +715,7 @@ recompinput::InputDevice ConfigPageControls::get_player_input_device() {
+ }
+ 
+ void ConfigPageControls::on_bind_click(recompinput::GameInput game_input, int input_index) {
++    if (!can_edit_current_profile()) return;
+     recompinput::InputDevice device = get_player_input_device();
+ 
+     recompinput::binding::start_scanning(this->selected_player, game_input, input_index, device);
+@@ -647,6 +724,7 @@ void ConfigPageControls::on_bind_click(recompinput::GameInput game_input, int in
+ }
+ 
+ void ConfigPageControls::on_clear_or_reset_game_input(recompinput::GameInput game_input, bool reset) {
++    if (!can_edit_current_profile()) return;
+     if (!reset) {
+         recompinput::profiles::clear_input_binding(selected_profile_index, game_input);
+     } else {
+diff --git a/recompui/src/config/ui_config_page_controls.h b/recompui/src/config/ui_config_page_controls.h
+index dd8ff24..595dad3 100644
+--- a/recompui/src/config/ui_config_page_controls.h
++++ b/recompui/src/config/ui_config_page_controls.h
+@@ -96,6 +96,9 @@ protected:
+ 
+     int selected_player = 0;
+     int selected_profile_index = -1;
++    int selected_profile_player = -1;
++    recompinput::InputDevice selected_profile_device = recompinput::InputDevice::COUNT;
++    SDL_GameController *selected_profile_controller = nullptr;
+     size_t max_num_players;
+ 
+     bool multiplayer_enabled;
+@@ -183,7 +186,8 @@ private:
+ 
+     void create_game_input_contexts();
+ 
+-    void set_current_profile_index();
++    bool set_current_profile_index();
++    bool can_edit_current_profile();
+ 
+     void render_all();
+ 
+diff --git a/recompui/src/config/ui_config_page_options_menu.cpp b/recompui/src/config/ui_config_page_options_menu.cpp
+index 6ba64e2..45a4344 100644
+--- a/recompui/src/config/ui_config_page_options_menu.cpp
++++ b/recompui/src/config/ui_config_page_options_menu.cpp
+@@ -7,7 +7,8 @@ ConfigPageOptionsMenu::ConfigPageOptionsMenu(
+     ResourceId rid,
+     Element *parent,
+     recomp::config::Config *config,
+-    bool is_internal
++    bool is_internal,
++    const std::vector<recompui::config::OptionGroup> &groups
+ ) : ConfigPage(rid, parent, Events(EventType::Hover, EventType::Update, EventType::MenuAction)),
+     config(config),
+     is_internal(is_internal)
+@@ -15,12 +16,12 @@ ConfigPageOptionsMenu::ConfigPageOptionsMenu(
+     ContextId context = recompui::get_current_context();
+     set_as_navigation_container(NavigationType::Vertical);
+ 
+-    render_config_options();
++    render_config_options(groups);
+     description_container = context.create_element<Element>(body->get_right(), 0, "p", true);
+     description_container->set_typography(theme::Typography::Body);
+     description_container->set_line_height(28.0f);
+     description_container->set_padding(8.0f);
+-    set_description_text("");
++    set_description_text(group_description());
+ 
+     if (config->requires_confirmation) {
+         add_footer();
+@@ -104,7 +105,7 @@ void ConfigPageOptionsMenu::process_event(const Event &e) {
+     case EventType::Hover: {
+         bool active = std::get<EventHover>(e.variant).active;
+         if (!active) {
+-            set_description_text("");
++            set_description_text(group_description());
+         }
+         break;
+     }
+@@ -154,7 +155,26 @@ void ConfigPageOptionsMenu::on_set_option_value(const std::string &option_id, re
+     }
+ }
+ 
+-void ConfigPageOptionsMenu::render_config_options() {
++std::string ConfigPageOptionsMenu::group_description() const {
++    return active_option_group < option_group_descriptions.size()
++        ? option_group_descriptions[active_option_group] : std::string{};
++}
++
++void ConfigPageOptionsMenu::select_option_group(size_t index) {
++    if (index >= option_group_containers.size()) {
++        return;
++    }
++    active_option_group = index;
++    for (size_t i = 0; i < option_group_containers.size(); ++i) {
++        // Hide the parent, not its controls: a later config update must not
++        // expose a control from an inactive group or lose its latest value.
++        option_group_containers[i]->set_display(i == index ? Display::Block : Display::None);
++    }
++    description_option_id.clear();
++    set_description_text(group_description());
++}
++
++void ConfigPageOptionsMenu::render_config_options(const std::vector<recompui::config::OptionGroup> &groups) {
+     ContextId context = recompui::get_current_context();
+     Element *body_left = get_body()->get_left();
+     body_left->clear_children();
+@@ -181,13 +201,13 @@ void ConfigPageOptionsMenu::render_config_options() {
+             this->on_set_option_value(option_id, value);
+         };
+         auto schema = config->get_config_schema();
+-        for (size_t i = 0; i < schema.options.size(); i++) {
++        const auto render_option = [&](size_t i, Element *option_parent) {
+             auto &config_option = schema.options[i];
+             ConfigOptionElement *element = nullptr;
+             switch (config_option.type) {
+                 case recomp::config::ConfigOptionType::Enum: {
+                     element = context.create_element<ConfigOptionEnum>(
+-                        body_left_scroll,
++                        option_parent,
+                         config_option.id,
+                         i,
+                         config,
+@@ -198,7 +218,7 @@ void ConfigPageOptionsMenu::render_config_options() {
+                 }
+                 case recomp::config::ConfigOptionType::Number: {
+                     element = context.create_element<ConfigOptionNumber>(
+-                        body_left_scroll,
++                        option_parent,
+                         config_option.id,
+                         i,
+                         config,
+@@ -209,7 +229,7 @@ void ConfigPageOptionsMenu::render_config_options() {
+                 }
+                 case recomp::config::ConfigOptionType::String: {
+                     element = context.create_element<ConfigOptionString>(
+-                        body_left_scroll,
++                        option_parent,
+                         config_option.id,
+                         i,
+                         config,
+@@ -220,7 +240,7 @@ void ConfigPageOptionsMenu::render_config_options() {
+                 }
+                 case recomp::config::ConfigOptionType::Bool: {
+                     element = context.create_element<ConfigOptionBool>(
+-                        body_left_scroll,
++                        option_parent,
+                         config_option.id,
+                         i,
+                         config,
+@@ -236,7 +256,58 @@ void ConfigPageOptionsMenu::render_config_options() {
+             element->update_disabled();
+             element->update_hidden();
+             config_option_elements.push_back(element);
++        };
++        if (groups.empty()) {
++            for (size_t i = 0; i < schema.options.size(); ++i) {
++                render_option(i, body_left_scroll);
++            }
++            return;
++        }
++
++        auto selector = context.create_element<Radio>(add_header()->get_left());
++        selector->set_gap(12.0f);
++        std::vector<bool> placed(schema.options.size(), false);
++        const auto render_group = [&](const std::string &name, const std::string &description,
++                                      const std::vector<size_t> &indices) {
++            if (indices.empty()) {
++                return;
++            }
++            auto container = context.create_element<Element>(body_left_scroll, 0, "div", false);
++            container->set_as_navigation_container(NavigationType::Vertical);
++            container->set_display(option_group_containers.empty() ? Display::Block : Display::None);
++            option_group_containers.push_back(container);
++            option_group_descriptions.push_back(description);
++            selector->add_option(name);
++            for (size_t index : indices) {
++                render_option(index, container);
++            }
++        };
++        for (const auto &group : groups) {
++            std::vector<size_t> indices;
++            for (const auto &id : group.option_ids) {
++                for (size_t i = 0; i < schema.options.size(); ++i) {
++                    if (!placed[i] && schema.options[i].id == id) {
++                        placed[i] = true;
++                        indices.push_back(i);
++                        break;
++                    }
++                }
++            }
++            render_group(group.name, group.description, indices);
+         }
++        // Future options remain accessible even if their layout is not listed.
++        std::vector<size_t> remaining;
++        for (size_t i = 0; i < placed.size(); ++i) {
++            if (!placed[i]) remaining.push_back(i);
++        }
++        render_group("Other", "Additional settings.", remaining);
++        selector->add_index_changed_callback([this](uint32_t index) { select_option_group(index); });
++        selector->set_focus_callback([this](bool active) {
++            if (active) {
++                description_option_id.clear();
++                set_description_text(group_description());
++            }
++        });
+     }
+ }
+ 
+diff --git a/recompui/src/config/ui_config_page_options_menu.h b/recompui/src/config/ui_config_page_options_menu.h
+index 49e05db..8b6ab0d 100644
+--- a/recompui/src/config/ui_config_page_options_menu.h
++++ b/recompui/src/config/ui_config_page_options_menu.h
+@@ -6,6 +6,7 @@
+ #include "elements/ui_button.h"
+ #include "librecomp/config.hpp"
+ #include "librecomp/mods.hpp"
++#include "recompui/config.h"
+ 
+ namespace recompui {
+     class ConfigPageOptionsMenu : public ConfigPage {
+@@ -23,8 +24,13 @@ namespace recompui {
+     private:
+         on_option_hover_t bound_on_option_hover;
+         set_option_value_t bound_set_option_value;
++        std::vector<Element*> option_group_containers;
++        std::vector<std::string> option_group_descriptions;
++        size_t active_option_group = 0;
+ 
+-        void render_config_options();
++        void render_config_options(const std::vector<recompui::config::OptionGroup> &groups);
++        void select_option_group(size_t index);
++        std::string group_description() const;
+         void render_confirmation_footer();
+         void on_option_hover(const std::string &option_id);
+         void on_set_option_value(const std::string &option_id, recomp::config::ConfigValueVariant value);
+@@ -36,7 +42,8 @@ namespace recompui {
+             ResourceId rid,
+             Element *parent,
+             recomp::config::Config *config,
+-            bool is_internal = false
++            bool is_internal = false,
++            const std::vector<recompui::config::OptionGroup> &groups = {}
+         );
+         virtual ~ConfigPageOptionsMenu() = default;
+     };
 diff --git a/recompui/src/config/ui_config_tab_graphics.cpp b/recompui/src/config/ui_config_tab_graphics.cpp
 index 4fdf81f..f3f6949 100644
 --- a/recompui/src/config/ui_config_tab_graphics.cpp
@@ -2200,6 +2953,22 @@ index 4fdf81f..f3f6949 100644
  
              config.add_enum_option(
                  graphics::options::msaa_option,
+diff --git a/recompui/src/config/ui_config_tab_sound.cpp b/recompui/src/config/ui_config_tab_sound.cpp
+index ecdd7cc..f7f8da3 100644
+--- a/recompui/src/config/ui_config_tab_sound.cpp
++++ b/recompui/src/config/ui_config_tab_sound.cpp
+@@ -22,9 +22,9 @@ namespace config {
+         return get_sound_config_number_value<double>(sound::options::main_volume);
+     }
+ 
+-    recomp::config::Config &create_sound_tab(const std::string &name) {
++    recomp::config::Config &create_sound_tab(const std::string &name, const std::vector<OptionGroup> &groups) {
+         created_sound_config = true;
+-        recomp::config::Config &config = recompui::config::create_config_tab(name, sound::id, false);
++        recomp::config::Config &config = recompui::config::create_config_tab(name, sound::id, false, groups);
+ 
+         config.add_percent_number_option(
+             sound::options::main_volume,
 diff --git a/recompui/src/core/ui_context.cpp b/recompui/src/core/ui_context.cpp
 index e99229a..cf397a4 100644
 --- a/recompui/src/core/ui_context.cpp
@@ -2270,6 +3039,18 @@ index b057f46..25ab708 100644
      last_input_device = current_device;
      last_input_profile = current_profile;
  
+diff --git a/recompui/src/elements/ui_select.cpp b/recompui/src/elements/ui_select.cpp
+index e289e9e..ea5c482 100644
+--- a/recompui/src/elements/ui_select.cpp
++++ b/recompui/src/elements/ui_select.cpp
+@@ -58,7 +58,6 @@ namespace recompui {
+         case EventType::Click:
+             break;
+         case EventType::Hover:
+-            printf("Option hovered: %s\n", option.text.c_str());
+             set_style_enabled(hover_state, std::get<EventHover>(e.variant).active && is_enabled());
+             break;
+         case EventType::Enable:
 diff --git a/recompui/src/elements/ui_text_input.h b/recompui/src/elements/ui_text_input.h
 index 52282a7..b1c7b2c 100644
 --- a/recompui/src/elements/ui_text_input.h

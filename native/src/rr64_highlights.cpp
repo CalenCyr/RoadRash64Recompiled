@@ -1,10 +1,13 @@
 #include "rr64_highlights.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_highlight_audio.hpp"
 #include "rr64_highlight_recording.hpp"
 #include "rr64_highlight_pose.hpp"
 #include "rr64_highlight_weapon.hpp"
+#include "rr64_highlight_traffic.hpp"
 #include "rr64_highlight_timeline.hpp"
 #include "rr64_highlight_camera.hpp"
+#include "rr64_highlight_render_boundary.hpp"
 #include "rr64_highlight_network.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_prediction_replay.hpp"
@@ -146,9 +149,10 @@ struct State {
     unsigned char *memory = nullptr;
     bool racing = false, ended = false, holding = false, playing = false, disabled = false;
     bool draw = false, online = false, host = false, audio_stopped = false;
+    bool traffic_drawn = false;
     unsigned round = 0, capture_epoch = ~0u, capture_clock = 0;
     bool capture_enrolled = false;
-    bool block_dispatch = false;
+    bool block_dispatch = false, finish_pending = false;
     std::uint64_t tick = 0, last_time = 0, elapsed = 0;
     Clock::time_point started{}, waiting{};
     std::span<const Clip> playlist{};
@@ -221,17 +225,49 @@ void finish(State &s) {
             f.local.scale, unsigned(f.local.normalized), f.local.root[0], f.local.root[1], f.local.root[2]);
     }
     s.replay_failures = {};
-    if (s.replay_detailed || s.replay_coarse || s.replay_rejected) {
+    if (rr64::diagnostics::routine_enabled() &&
+        (s.replay_detailed || s.replay_coarse || s.replay_rejected)) {
         std::fprintf(stderr, "[highlights] Replay detail: tier0=%llu coarse=%llu rejected=%llu.\n",
                      static_cast<unsigned long long>(s.replay_detailed),
                      static_cast<unsigned long long>(s.replay_coarse),
                      static_cast<unsigned long long>(s.replay_rejected));
-        s.replay_detailed = s.replay_coarse = s.replay_rejected = 0;
     }
+    s.replay_detailed = s.replay_coarse = s.replay_rejected = 0;
     s.holding = false;
     s.playing = false;
+    s.finish_pending = false;
     s.cursor = {};
 }
+void report_clips(const State &s) {
+    // The scan only describes already selected clips. Keep it entirely out of
+    // ordinary race completion; it does not validate or select replay poses.
+    if (!rr64::diagnostics::routine_enabled()) {
+        return;
+    }
+    std::fprintf(stderr, "[highlights] Sealed %zu crash clips; race results fixed.\n",
+                 s.playlist.size());
+    std::array<std::uint64_t, 2> detailed{}, coarse{};
+    for (const auto &clip : s.playlist) {
+        for (const auto &frame : clip.frames) {
+            for (const auto &racer : frame.racers) {
+                if (!racer.active) continue;
+                for (unsigned kind = 0; kind < 2; ++kind) {
+                    const auto &pose = kind ? racer.rider_pose : racer.bike_pose;
+                    if (pose.valid) {
+                        ++(pose.lod == 0 ? detailed[kind] : coarse[kind]);
+                    }
+                }
+            }
+        }
+    }
+    std::fprintf(stderr, "[highlights] Recorded clip detail: bike tier0=%llu coarse=%llu; rider tier0=%llu coarse=%llu.\n",
+                 static_cast<unsigned long long>(detailed[0]), static_cast<unsigned long long>(coarse[0]),
+                 static_cast<unsigned long long>(detailed[1]), static_cast<unsigned long long>(coarse[1]));
+    std::fprintf(stderr, "[highlights] Recording continuity: recovery-cuts=%llu identity-cuts=%llu.\n",
+                 static_cast<unsigned long long>(s.recovery_cuts),
+                 static_cast<unsigned long long>(s.identity_cuts));
+}
+
 void select_clips(State &s) {
     unsigned count = 0;
     for (const auto &original : s.recorder->seal()) {
@@ -351,11 +387,13 @@ void reset() noexcept {
     std::lock_guard lock(s.mutex);
     end_actor();
     highlight_camera::end(s.memory);
+    highlight_camera::reset(s.memory);
     s.writes.restore();
     reset_weapon_scratch();
     s.memory = nullptr;
-    s.racing = s.ended = s.holding = s.playing = s.draw = s.block_dispatch = false;
+    s.racing = s.ended = s.holding = s.playing = s.draw = s.block_dispatch = s.finish_pending = false;
     s.audio_stopped = false;
+    s.traffic_drawn = false;
     s.playlist = {};
     s.tick = s.last_time = 0;
     s.preceding_speed = {};
@@ -390,11 +428,8 @@ bool render_rider_anchors(unsigned slot, std::array<float, 3> &bike,
     attached = (r.crash_flags & (BikeAttached | RiderAttached)) == (BikeAttached | RiderAttached);
     return true;
 }
-} // namespace rr64::highlights
 
-extern "C" int rr64_highlights_wait(unsigned char *m, unsigned mode) {
-    using namespace rr64;
-    using namespace highlights;
+static int wait_for_results(unsigned char *m, unsigned mode, bool native_blocked) {
     if (!m || prediction::active())
         return 0;
     auto &s = state();
@@ -408,13 +443,18 @@ extern "C" int rr64_highlights_wait(unsigned char *m, unsigned mode) {
             (!status.connected || !status.authoritative || status.host_disconnected))
             return 0;
         if (!s.racing || s.memory != m || s.round != status.game_setup.revision) {
+            // Prewarm owned traffic resources at race entry, never at a crash
+            // or on the graphics worker. Failure retains native presentation.
+            prepare_traffic(m);
+            highlight_camera::reset(nullptr);
             s.racing = true;
-            s.ended = s.holding = s.playing = false;
+            s.ended = s.holding = s.playing = s.finish_pending = false;
             s.audio_stopped = false;
             s.memory = m;
             s.round = status.game_setup.revision;
             s.online = status.active;
             s.host = status.is_host;
+            s.cursor = {};
             s.tick = s.last_time = 0;
             s.preceding_speed = {};
             s.recording_links = {};
@@ -436,6 +476,7 @@ extern "C" int rr64_highlights_wait(unsigned char *m, unsigned mode) {
         // Native mode39 is an intervening transition; retain its completed
         // race until results arrives. Menus/new game images cancel it.
         if (mode != 0x39) {
+            highlight_camera::reset(m);
             s.racing = false;
             s.ended = false;
             finish(s);
@@ -443,6 +484,19 @@ extern "C" int rr64_highlights_wait(unsigned char *m, unsigned mode) {
         return 0;
     }
     if (status.host_disconnected || (s.online && !status.connected)) {
+        highlight_camera::reset(m);
+        finish(s);
+        return 0;
+    }
+    if (s.finish_pending) {
+        // The graphics worker draws before this gate. Keep the final replay
+        // through the skipped-results tick, then release all native producers
+        // together so they prepare the next ordinary draw. Online barriers
+        // must not leave presentation released while its update is still held.
+        if (native_blocked) {
+            s.block_dispatch = true;
+            return 1;
+        }
         finish(s);
         return 0;
     }
@@ -453,24 +507,7 @@ extern "C" int rr64_highlights_wait(unsigned char *m, unsigned mode) {
             select_clips(s);
             s.holding = s.playing = duration(s.playlist) > 0;
             s.started = Clock::now();
-            std::fprintf(stderr, "[highlights] Sealed %zu crash clips; race results fixed.\n",
-                         s.playlist.size());
-            std::array<std::uint64_t, 2> detailed{}, coarse{};
-            for (const auto &clip : s.playlist)
-                for (const auto &frame : clip.frames)
-                    for (const auto &racer : frame.racers)
-                        if (racer.active)
-                            for (unsigned kind = 0; kind < 2; ++kind) {
-                                const auto &pose = kind ? racer.rider_pose : racer.bike_pose;
-                                if (pose.valid)
-                                    ++(pose.lod == 0 ? detailed[kind] : coarse[kind]);
-                            }
-            std::fprintf(stderr, "[highlights] Recorded clip detail: bike tier0=%llu coarse=%llu; rider tier0=%llu coarse=%llu.\n",
-                         static_cast<unsigned long long>(detailed[0]), static_cast<unsigned long long>(coarse[0]),
-                         static_cast<unsigned long long>(detailed[1]), static_cast<unsigned long long>(coarse[1]));
-            std::fprintf(stderr, "[highlights] Recording continuity: recovery-cuts=%llu identity-cuts=%llu.\n",
-                         static_cast<unsigned long long>(s.recovery_cuts),
-                         static_cast<unsigned long long>(s.identity_cuts));
+            report_clips(s);
             trace_trajectories(s, status);
         }
         if (s.online) {
@@ -492,7 +529,7 @@ extern "C" int rr64_highlights_wait(unsigned char *m, unsigned mode) {
     read_u16(m, engine::globals::controller_pressed_buttons, pressed);
     if (pressed & 0x8000) {
         if (!s.online)
-            finish(s);
+            s.finish_pending = true;
         else if (s.host)
             netplay::host_skip_highlights();
     }
@@ -515,23 +552,37 @@ extern "C" int rr64_highlights_wait(unsigned char *m, unsigned mode) {
         if (s.host)
             netplay::host_begin_highlights();
         const auto playback = netplay::highlight_status();
-        s.playing = playback.stage == highlight_network::Stage::Playing;
-        s.elapsed = playback.elapsed_us;
         if (playback.stage == highlight_network::Stage::Finished ||
-            (!s.playing && Clock::now() - s.waiting > std::chrono::seconds(65)))
-            finish(s);
+            (playback.stage != highlight_network::Stage::Playing &&
+             Clock::now() - s.waiting > std::chrono::seconds(65))) {
+            s.finish_pending = true;
+        } else {
+            s.playing = playback.stage == highlight_network::Stage::Playing;
+            s.elapsed = playback.elapsed_us;
+        }
     } else if (s.playing) {
         s.elapsed =
             std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - s.started).count();
     }
-    if (s.playing) {
-        s.cursor = locate(s.playlist, s.elapsed);
-        if (!s.cursor.valid || !sample(s.playlist[s.cursor.clip], s.cursor.source_us, *s.shown))
-            finish(s);
+    if (s.playing && (!s.finish_pending || !s.cursor.valid)) {
+        const auto next = locate(s.playlist, s.elapsed);
+        if (next.valid && sample(s.playlist[next.clip], next.source_us, *s.shown)) {
+            s.cursor = next;
+        } else {
+            // Failed sampling leaves shown unchanged. Retain the last valid
+            // camera/sample until the same coordinated results handoff.
+            s.playing = s.cursor.valid;
+            s.finish_pending = true;
+        }
     }
     // Consume the skip edge on this frame; it must not also activate the
     // normal results screen's A Continue action underneath the replay.
     return 1;
+}
+} // namespace rr64::highlights
+
+extern "C" int rr64_highlights_wait(unsigned char *m, unsigned mode) {
+    return rr64::highlights::wait_for_results(m, mode, false);
 }
 
 extern "C" int rr64_highlights_frame_gate(unsigned char *m, unsigned mode, void *context) {
@@ -539,7 +590,7 @@ extern "C" int rr64_highlights_frame_gate(unsigned char *m, unsigned mode, void 
     // finish mode before publishing footage, even on the first results frame.
     // Highlights must observe disconnection even if online is holding updates.
     const bool online_wait = rr64_online_wait_for_race(m, mode) != 0;
-    const bool replay_wait = rr64_highlights_wait(m, mode) != 0;
+    const bool replay_wait = rr64::highlights::wait_for_results(m, mode, online_wait) != 0;
     auto &s = rr64::highlights::state();
     std::lock_guard lock(s.mutex);
     // Holding skips native bike updates, including stale brake-loop expiry.
@@ -716,16 +767,16 @@ extern "C" void rr64_highlights_capture(unsigned char *m) {
             !floats(m, l.bike + 0x244, r.bike_rotation) ||
             !floats(m, l.rider + 0x164, r.rider_rotation))
             return;
-        // The original update has prepared these native graphs. Reading their
-        // held poses here includes off-camera AI, whose nodes may never reach
-        // 11CC0. Far/hidden animation may be held by the original engine; its
-        // exact pose and current tier are still genuine recorded state.
-        capture_entity(m, l.bike, 1, r.bike_pose);
-        capture_entity(m, l.rider, 2, r.rider_pose);
-        capture_weapon(m, l.rider, r.held_weapon);
-        // Private preparation precedes this capture on the cached update path.
-        copy_detail(m, i, word(m, l.bike + 8), word(m, l.rider + 8), r.bike_pose, r.rider_pose,
-                    &r.held_weapon);
+        // The dispatcher waits for the drawing worker before this update;
+        // private preparation publishes synchronously before capture. Prefer
+        // its current validated pair; absent/stale pairs retain stock poses,
+        // including held off-camera animation and the current weapon state.
+        if (!copy_detail(m, i, word(m, l.bike + 8), word(m, l.rider + 8), r.bike_pose,
+                         r.rider_pose, &r.held_weapon)) {
+            capture_entity(m, l.bike, 1, r.bike_pose);
+            capture_entity(m, l.rider, 2, r.rider_pose);
+            capture_weapon(m, l.rider, r.held_weapon);
+        }
         Vec3 velocity{};
         if (floats(m, l.bike + 0x178, velocity)) {
             float speed = 0;
@@ -759,8 +810,11 @@ extern "C" void rr64_highlights_draw_begin(unsigned char *m) {
     if (draw_lock)
         return;
     s.draw = false;
-    if (!s.holding || !s.playing || m != s.memory || !s.cursor.valid)
+    s.traffic_drawn = false;
+    if (!s.holding || !s.playing || m != s.memory || !s.cursor.valid) {
+        rr64_highlight_render_begin(m, 0);
         return;
+    }
     // The native update and graphics worker share guest memory. Keep the
     // selected sample immutable until this complete draw restores its bytes.
     s.mutex.lock();
@@ -820,11 +874,22 @@ extern "C" void rr64_highlights_draw_begin(unsigned char *m) {
     highlight_camera::View view;
     if (highlight_camera::make_view(subject.rider_origin, forward, s.cursor.angle, view))
         highlight_camera::begin(m, view);
+    // Carry the camera cut with its submitted graphics, including the world
+    // rebase. A renderer-side read of live replay state can see a later frame.
+    rr64_highlight_render_begin(m, highlight_camera::active()
+        ? 1u + unsigned(s.cursor.clip) * 3u + s.cursor.angle : 0u);
 }
 extern "C" void rr64_highlights_camera_origin(unsigned char *m) {
     auto &s = rr64::highlights::state();
     if (s.draw)
         rr64::highlights::floats(m, 0x800D69F8, s.camera_origin);
+}
+extern "C" void rr64_highlights_traffic_draw(unsigned char *m) {
+    using namespace rr64::highlights;
+    auto &s = state();
+    std::lock_guard lock(s.mutex);
+    if (s.draw && s.playing && s.memory == m && s.shown && !s.traffic_drawn)
+        s.traffic_drawn = draw_traffic(m, s.shown->traffic, s.shown->time_us);
 }
 extern "C" unsigned rr64_highlights_lod(unsigned char *m, unsigned node, unsigned original) {
     using namespace rr64::highlights;
@@ -950,6 +1015,10 @@ extern "C" unsigned rr64_highlights_hidden(unsigned char *m, unsigned node, unsi
         return !(r.active && (rider_actor ? r.rider_pose.valid : r.bike_pose.valid));
     }
     if (word(m, node) == 4) {
+        // The owned historical pass is complete before scene actors draw.
+        // Suppress terminal traffic only after that pass succeeds.
+        if (s.traffic_drawn)
+            return 1;
         const unsigned entity = word(m, node + 4), id = word(m, entity + 4);
         for (const auto &car : s.shown->traffic)
             if (car.active && car.id == id && car.kind == word(m, entity))
@@ -965,6 +1034,7 @@ extern "C" void rr64_highlights_draw_end(unsigned char *m, void *context) {
     auto &s = state();
     std::lock_guard lock(s.mutex);
     end_actor();
+    rr64_highlight_render_end(m);
     if (s.draw) {
         rr64::highlight_camera::end(m);
         s.writes.restore();

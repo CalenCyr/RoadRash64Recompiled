@@ -1,7 +1,7 @@
-# Road Rash 64 Recompiled 1.4.1 — Experimental Linux download
+# Road Rash 64 Recompiled 1.4.3 — Experimental Linux download
 
 This native Linux package builds on CalenCyr's contribution and the current
-1.4.1 source. Select your own supported Road Rash 64 USA v1.0 ROM at startup.
+1.4.3 source. Select your own supported Road Rash 64 USA v1.0 ROM at startup.
 The optional texture mod is a separate release download. The AppImage contains a
 native MK64 importer with its own Python/NumPy runtime. Importing requires your
 own supported Mario Kart 64 USA ROM. Neither ROM nor generated course data is
@@ -23,7 +23,8 @@ FFmpeg player or codec package is not required to use this download.
 Use **Settings > Mods > MK64 Race Pack > Import MK64 ROM** for the optional course
 pack. Generated tracks are stored beside the writable AppImage; the importer
 itself stays inside the image. No Python or compiler installation is needed.
-Both platforms use converter `1.0.1-c39`; corrected RC4–RC6 packs stay compatible.
+Both platforms use converter `1.0.1-c40`; existing c40 packs stay compatible.
+Reimport older packs with the bundled converter before playing.
 
 This integration is intended for community testing. The contributor reported
 Fedora and Steam Deck testing of their earlier fork; that does not establish
@@ -39,7 +40,7 @@ Use GCC 12 or newer with its matching C++20 standard library. Clang 14 with the
 older/mixed libraries failed during validation and is not the documented recipe.
 
 GCC 12 is the initial Linux packaging baseline, not a requirement to use only
-that version, and it is not the Windows compiler. The current Windows candidate
+that version, and it is not the Windows compiler. The current Windows release
 build uses Visual Studio's ClangCL 19.1.5. GCC 16.2 is available as of August 2026,
 but this project has not yet validated a GCC 16 package. Compiler age alone does
 not establish the cause of a crash, network desynchronization or a performance
@@ -69,7 +70,7 @@ and run `scripts/test_linux_audio.sh`. This is not a player/runtime dependency.
 The archive's redistribution materials include bundled-library identities, notices
 and corresponding sources. FFmpeg is built as minimal shared libraries; replacing
 them is possible by extracting the AppImage and rebuilding compatible libraries.
-The exact FFmpeg configuration is in native/CMakeLists.txt. Do not publish a
+The exact FFmpeg configuration is in native/cmake/Dependencies.cmake. Do not publish a
 repackaged binary without updating its source and license materials.
 
 Course-enabled packages reject a missing importer manifest. The packager verifies

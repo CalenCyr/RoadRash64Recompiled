@@ -1,4 +1,5 @@
 #include "rr64_experimental_course.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_mk64_item_render.hpp"
 #include "rr64_mk64_item_material.hpp"
 #include "rr64_mk64_item_audio.hpp"
@@ -653,8 +654,10 @@ void load_selection() noexcept {
         course_music::select_course(id);
         const bool music_enabled = local_race_options::course_music_enabled(id);
         course_music::set_enabled(music_enabled);
-        std::fprintf(stderr, "[RR64-COURSE-MUSIC] course=%s enabled=%u bank=%u\n",
-                     id.c_str(), unsigned(music_enabled), unsigned(course_music::available()));
+        if (rr64::diagnostics::routine_enabled()) {
+            std::fprintf(stderr, "[RR64-COURSE-MUSIC] course=%s enabled=%u bank=%u\n",
+                         id.c_str(), unsigned(music_enabled), unsigned(course_music::available()));
+        }
     }
 }
 void load_stock() noexcept {
@@ -919,11 +922,13 @@ void initialize() {
         catalogue.menu.push_back({"mk64", "MK64", c.id, c.name, c.preview, 128, 78, 0, 0});
     recomp::set_rom_contents(std::move(combined));
     installed_flag.store(true, std::memory_order_release);
-    std::fprintf(stderr,
-                 "[race-pack] Loaded catalogue: %zu courses, %u native textures, "
-                 "source_scale=%.6g, identity=%s\n",
-                 catalogue.courses.size(), catalogue.texture_count, catalogue.source_to_world_scale,
-                 race_pack::hex_digest(catalogue.digest).c_str());
+    if (rr64::diagnostics::routine_enabled()) {
+        std::fprintf(stderr,
+                     "[race-pack] Loaded catalogue: %zu courses, %u native textures, "
+                     "source_scale=%.6g, identity=%s\n",
+                     catalogue.courses.size(), catalogue.texture_count, catalogue.source_to_world_scale,
+                     race_pack::hex_digest(catalogue.digest).c_str());
+    }
 }
 } // namespace rr64::experimental_course
 

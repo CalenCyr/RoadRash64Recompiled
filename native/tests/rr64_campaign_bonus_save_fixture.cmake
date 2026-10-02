@@ -12,6 +12,7 @@ add_custom_command(OUTPUT "${_rr64_bonus_save_fixture}"
     VERBATIM)
 add_executable(RR64CampaignBonusSaveSmoke EXCLUDE_FROM_ALL
     tests/rr64_campaign_bonus_save_smoke.cpp src/rr64_campaign_bonus_save.cpp
+    src/rr64_campaign_completion.cpp
     "${_rr64_bonus_save_fixture}")
 target_compile_features(RR64CampaignBonusSaveSmoke PRIVATE cxx_std_20)
 target_include_directories(RR64CampaignBonusSaveSmoke PRIVATE

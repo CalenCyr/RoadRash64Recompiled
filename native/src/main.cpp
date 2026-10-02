@@ -7,9 +7,15 @@
 #include "rr64_local_players.hpp"
 #include "rr64_local_race_options.hpp"
 #include "rr64_character_preferences.hpp"
+#include "rr64_rider_skins.hpp"
+#include "rr64_rider_skin_mod_ui.hpp"
+#include "rr64_rider_skin_preferences.hpp"
+#include "rr64_rider_skin_render.hpp"
+#include "rr64_rider_skin_diagnostics.hpp"
 #include "rr64_race_end_trace.hpp"
 #include "composites/ui_player_card.h"
 #include "rr64_log_batch.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_presentation_options.hpp"
 #include "rr64_master_volume.hpp"
 #include "rr64_rival_engine_config.hpp"
@@ -105,6 +111,7 @@
 #include "rr64_actor_render_diagnostics.hpp"
 #include "rr64_world_terrain.hpp"
 #include "rr64_world_objects.hpp"
+#include "rr64_highlight_traffic.hpp"
 #include "rr64_world_render.hpp"
 #include "rr64_world_camera.hpp"
 #include "rr64_achievement_audio.hpp"
@@ -132,7 +139,7 @@
 #include "rr64_experimental_course.hpp"
 #endif
 
-constexpr const char* kVersion = "1.4.2";
+constexpr const char* kVersion = "1.4.3";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -165,8 +172,14 @@ std::vector<recomp::GameEntry> supported_games = {
         .decompression_routine = nullptr,
         .has_compressed_code = false,
         .entrypoint_address = get_entrypoint_address(),
-        .entrypoint = recomp_entrypoint,
+        .entrypoint = [](uint8_t* memory, recomp_context* context) {
+            // Mod content is loaded after on_init, before this entrypoint.
+            rr64::rider_skins::begin_session();
+            recomp_entrypoint(memory, context);
+        },
         .on_init_callback = [](uint8_t* memory, recomp_context*) {
+            rr64::rider_skins::prepare_session();
+            rr64::rider_skins::reset_render_session();
             rr64::offline_modifiers::reset(memory);
             rr64_local_bike_profiles_reset();
             rr64_online_bike_profiles_reset();
@@ -176,6 +189,7 @@ std::vector<recomp::GameEntry> supported_games = {
             rr64::experimental_course::initialize();
 #endif
             rr64::world::terrain_reset_session(); rr64::world::objects_reset_session();
+            rr64::highlights::reset_traffic_session();
         },
     },
 };
@@ -370,11 +384,7 @@ const char* forced_graphics_api_name() {
 
 // Detailed performance reports are a developer opt-in, not release disk traffic.
 bool detailed_diagnostics_enabled() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("RR64_DIAGNOSTICS");
-        return value && std::strcmp(value, "1") == 0;
-    }();
-    return enabled;
+    return rr64::diagnostics::detailed_enabled();
 }
 thread_local rr64::LogBatch* g_diagnostic_batch = nullptr;
 void write_runtime_log(std::string_view text) {
@@ -737,10 +747,31 @@ void update_gfx(void*) {
     // active. rr64_netplay internally throttles packet intervals.
     rr64::netplay::update();
 
-    // Aggregate presentation timing off the renderer thread. This adds only
-    // atomic counters to the hot path and leaves enough evidence in the normal
-    // runtime log to identify a late-session pacing regression.
+    // The remaining work only drains opt-in reports, not game or network state.
+    if (!detailed_diagnostics_enabled()) { return; }
+    // Aggregate presentation timing off the renderer thread.
     const auto now = std::chrono::steady_clock::now();
+    if (rr64::rider_skins::preview_trace_enabled()) {
+        rr64::rider_skins::PreviewTrace sample;
+        // At most 128 records per process; no formatting/file I/O on the
+        // native render worker and no extra per-frame disk flushing.
+        while (rr64::rider_skins::take_preview_trace(sample)) {
+            rr64_log("[RR64-SKIN-PREVIEW] reason=%u root=%08X appearance=%u mode=%u handler=%08X epoch=%u gfx=%u pool=%08X head=%08X base=%08X active=%08X capacity=%u start=%08X end=%08X commands=%u rejected=%08X replacements=%u list=%08X dropped=%u\n",
+                sample.reason,sample.root,sample.appearance,sample.mode,sample.handler,sample.epoch,
+                sample.gfx,sample.pool,sample.head,sample.base,sample.active_base,sample.capacity,
+                sample.start,sample.end,sample.commands,sample.rejected_opcode,sample.replacements,
+                sample.list,rr64::rider_skins::preview_trace_dropped());
+            for (unsigned i=0;i<4;++i)
+                rr64_log("[RR64-SKIN-PREVIEW] root=%08X slot=%u choice=%u donor=%u header=%08X\n",
+                    sample.root,i,sample.choices[i],sample.donors[i],sample.headers[i]);
+            for (const auto &actor:sample.actors) if (actor[0])
+                rr64_log("[RR64-SKIN-PREVIEW] root=%08X actor=%08X type=%u entity=%08X slot=%u graph=%08X\n",
+                    sample.root,actor[0],actor[1],actor[2],actor[3],actor[4]);
+            for (unsigned i=0;i<sample.image_count;++i)
+                rr64_log("[RR64-SKIN-PREVIEW] root=%08X image=%08X address=%08X\n",
+                    sample.root,sample.images[i][0],sample.images[i][1]);
+        }
+    }
     static bool previous_gameplay_feedback=false;
     static auto boundary_log_at=std::chrono::steady_clock::time_point::max();
     const bool gameplay_feedback=rr64_is_gameplay_feedback_active()!=0;
@@ -1321,11 +1352,11 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
         g_audio_playback_started = true;
         rr64_log("[RR64-AUDIO] Playback started with %u frames queued.\n", queued_after_frames);
     }
-    const rr64::audio::QueueObservation observation = g_audio_queue_monitor.observe(
-        queued_before_frames,
-        queued_after_frames,
-        std::span<const std::int16_t>(swapped.data(), swapped.size()));
     if (FILE* trace = audio_trace_file()) {
+        const rr64::audio::QueueObservation observation = g_audio_queue_monitor.observe(
+            queued_before_frames,
+            queued_after_frames,
+            std::span<const std::int16_t>(swapped.data(), swapped.size()));
         std::fprintf(trace, "%llu,%u,%u,%u,%u,%u,%llu,%llu,%u,%u,%u,%u,%u,%u,%u\n",
             static_cast<unsigned long long>(observation.sequence),
             observation.sample_rate,
@@ -1348,6 +1379,7 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
             std::fflush(trace);
         }
     }
+    if (!detailed_diagnostics_enabled()) { return; }
     static std::atomic_uint64_t buffer_sequence{0};
     const uint64_t sequence = buffer_sequence.fetch_add(1, std::memory_order_relaxed) + 1;
     // Keep diagnostics out of the steady-state audio producer. rr64_log flushes
@@ -1389,7 +1421,7 @@ void set_frequency(uint32_t frequency) {
     if (frequency == 0 || frequency == g_audio_rate) {
         return;
     }
-    std::fprintf(stderr, "[RR64] Audio frequency -> %" PRIu32 " Hz\n", frequency);
+    rr64_log("[RR64] Audio frequency -> %" PRIu32 " Hz\n", frequency);
     if (!reset_audio(frequency)) {
         recompui::message_box("Road Rash 64: failed to reset the host audio device.");
     }
@@ -1865,73 +1897,6 @@ bool get_input_with_trace(int controller_num, uint16_t* buttons, float* x, float
     return got_response;
 }
 
-void configure_right_stick_c_buttons() {
-    const int profile_index = recompinput::profiles::get_sp_controller_profile_index();
-    if (profile_index < 0 || recompinput::profiles::is_input_profile_custom(profile_index)) {
-        return;
-    }
-
-    bool changed = false;
-    const recompinput::InputField stale_binding =
-        recompinput::InputField::controller_analog(SDL_CONTROLLER_AXIS_LEFTY, false);
-    const recompinput::InputField right_stick_binding =
-        recompinput::InputField::controller_analog(SDL_CONTROLLER_AXIS_RIGHTX, true);
-    const recompinput::InputField current_primary = recompinput::profiles::get_input_binding(
-        profile_index,
-        recompinput::GameInput::C_RIGHT,
-        0);
-
-    // Early bootstrap builds accidentally persisted C-Right as left-stick up.
-    // Restore the intended right-stick direction when that exact stale default
-    // is encountered.
-    if (current_primary == stale_binding) {
-        recompinput::profiles::set_input_binding(
-            profile_index,
-            recompinput::GameInput::C_RIGHT,
-            0,
-            right_stick_binding);
-        changed = true;
-    }
-
-    struct SecondaryCBinding {
-        recompinput::GameInput input;
-        SDL_GameControllerButton button;
-    };
-    constexpr std::array secondary_bindings = {
-        SecondaryCBinding{recompinput::GameInput::C_LEFT, SDL_CONTROLLER_BUTTON_Y},
-        SecondaryCBinding{recompinput::GameInput::C_RIGHT, SDL_CONTROLLER_BUTTON_B},
-        SecondaryCBinding{recompinput::GameInput::C_UP, SDL_CONTROLLER_BUTTON_RIGHTSTICK},
-        SecondaryCBinding{recompinput::GameInput::C_DOWN, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER},
-    };
-
-    // Road Rash uses the C-buttons for directional attacks. Keep those inputs
-    // exclusively on the right analog stick and remove the generic frontend's
-    // duplicate face/shoulder-button shortcuts.
-    for (const SecondaryCBinding& binding : secondary_bindings) {
-        const recompinput::InputField expected_button =
-            recompinput::InputField::controller_digital(binding.button);
-        const recompinput::InputField current_secondary =
-            recompinput::profiles::get_input_binding(profile_index, binding.input, 1);
-        if (current_secondary == expected_button) {
-            recompinput::profiles::set_input_binding(
-                profile_index,
-                binding.input,
-                1,
-                recompinput::InputField{});
-            changed = true;
-        }
-    }
-
-    if (!changed) {
-        return;
-    }
-
-    const std::filesystem::path controls_path =
-        recompui::file::get_app_folder_path() / "controls.json";
-    const bool saved = recompinput::profiles::save_controls_config(controls_path);
-    rr64_log("[RR64-INPUT] Configured C-buttons for right-stick-only input; saved=%d.\n", saved ? 1 : 0);
-}
-
 std::string get_game_thread_name(const OSThread* thread) {
     if (thread == nullptr) {
         return "[Road Rash 64] unknown";
@@ -2064,7 +2029,18 @@ void init_recompui_config() {
     rr64_log("[RR64-CONFIG] Creating Controls tab.\n");
     recompui::config::create_controls_tab();
     rr64_log("[RR64-CONFIG] Creating Sound tab.\n");
-    auto& sound_config = recompui::config::create_sound_tab("Audio");
+    // Group only the presentation; all existing values still live in sound.json.
+    auto& sound_config = recompui::config::create_sound_tab("Audio", {
+        {"Game Audio", "Adjust the overall game volume and nearby rival engines.",
+            {recompui::config::sound::options::main_volume, rr64::rival_engine::enabled_option,
+             rr64::rival_engine::volume_option}},
+        {"Music", "Adjust music volume or choose your soundtrack. MK64 course music is selected in race options.",
+            {"custom_music_volume", "custom_music_track"}},
+        {"Voice Chat", "Hear nearby riders during online races. Set up your input in Microphone.",
+            {kProximityVoiceEnabledOption, "rr64_voice_volume", "rr64_voice_flyby"}},
+        {"Microphone", "Choose your voice input, then adjust its level and activation threshold.",
+            {"rr64_microphone", "rr64_mic_mute", "rr64_mic_gain", "rr64_mic_threshold"}}
+    });
     sound_config.add_option_change_callback(recompui::config::sound::options::main_volume,
         [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
             g_master_volume_gain.store(rr64::audio::volume_gain(std::get<double>(value)), std::memory_order_relaxed);
@@ -2082,7 +2058,7 @@ void init_recompui_config() {
     sound_config.add_bool_option(
         kProximityVoiceEnabledOption,
         "Proximity Voice Chat",
-        "Directional voice during online races: nearby riders are clear and distant riders fade out. Configure your microphone below. Lobby and single-player audio are never transmitted.",
+        "Directional voice during online races: nearby riders are clear and distant riders fade out. Configure your input in the Microphone section. Lobby and single-player audio are never transmitted.",
         true
     );
     sound_config.add_option_change_callback(
@@ -2104,6 +2080,7 @@ void init_recompui_config() {
     rr64::mk64_import::configure(course_importer,
         recomp::get_config_path() / supported_games[0].stored_filename());
     rr64::race_pack_mod_ui::install();
+    rr64::rider_skin_mod_ui::install();
     rr64_log("[RR64-CONFIG] Creating Mods tab.\n");
     recompui::config::create_mods_tab("Mods");
     // Keep optional offline cheats at the end of the settings navigation.
@@ -2133,7 +2110,7 @@ void init_recompui_config() {
     apply_draw_distance(std::get<double>(recompui::config::get_graphics_config().get_option_value("rr64_draw_distance")));
     g_master_volume_gain.store(rr64::audio::volume_gain(recompui::config::sound::get_main_volume()));
     rr64::netplay::configure({});
-    configure_right_stick_c_buttons();
+    // Controls owns loaded bindings; never rewrite a user's layout at startup.
 
     rr64_log("[RR64-STAGE] RecompFrontend configuration initialized and finalized.\n");
 }
@@ -2247,6 +2224,7 @@ void on_launcher_init(recompui::LauncherMenu* menu) {
     rr64::online_menu::initialize_ui();
     rr64::local_race_options::initialize(recompui::file::get_app_folder_path());
     rr64::character_preferences::initialize(recompui::file::get_app_folder_path());
+    rr64::rider_skin_preferences::initialize(recompui::file::get_app_folder_path());
     rr64::achievements::initialize_toast_ui();
 }
 
@@ -2290,6 +2268,7 @@ void on_ui_update() {
     rr64::race_pack_mod_ui::update();
     rr64::local_race_options::flush();
     rr64::character_preferences::flush();
+    rr64::rider_skin_preferences::flush();
     static const bool lap_trace_enabled = [] {
         const auto flag = [](const char* name) {
             const char* value = std::getenv(name);
@@ -2395,6 +2374,7 @@ GuestQueueCounters* find_queue_counters(unsigned int address) {
 
 extern "C" void rr64_record_guest_queue_wait(unsigned int address,
     unsigned long long nanoseconds) {
+    if (!detailed_diagnostics_enabled()) { return; }
     if (auto* slot = find_queue_counters(address)) {
         record_stage_sample(slot->timing, nanoseconds);
     }
@@ -2402,6 +2382,7 @@ extern "C" void rr64_record_guest_queue_wait(unsigned int address,
 
 extern "C" void rr64_record_external_queue_event(unsigned int address,
     unsigned int outcome, unsigned long long nanoseconds) {
+    if (!detailed_diagnostics_enabled()) { return; }
     if (outcome >= 3) { return; }
     if (auto* slot = find_queue_counters(address)) {
         slot->external_outcomes[outcome].fetch_add(1, std::memory_order_relaxed);

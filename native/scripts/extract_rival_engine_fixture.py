@@ -19,7 +19,8 @@ names=['func_800571DC','func_80059648','func_800597A0','func_80058600',
        'func_8001A250','func_8001295C','func_80080450','func_800826E8',
        'func_80082798','func_800823AC','func_800806B4','func_80080768',
        'func_800807C0','func_80080820','func_80080890','func_8005980C',
-       'func_80083408','func_80083210','func_800817C0','n_alEnvmixerPull']
+       'func_80083408','func_80083210','func_800817C0','n_alEnvmixerPull',
+       'func_800129F8','func_8001291C','func_8004F348']
 functions={}
 all_functions={}
 for path in a.generated.glob('funcs_*.c'):
@@ -56,6 +57,16 @@ code=functions.pop('n_alEnvmixerPull')
 body=code.split('L_800850D0:',1)[1].split('L_8008511C:',1)[0]
 functions['rival_native_pan_coefficients']='RECOMP_FUNC void rival_native_pan_coefficients(uint8_t* rdram,recomp_context* ctx) {\nuint64_t hi=0,lo=0,result=0;\n'+body+'\n}\n'
 names[names.index('n_alEnvmixerPull')]='rival_native_pan_coefficients'
+# Original traffic relative-position/velocity calculation, including its native
+# projection, ROM coefficient and clamp. This independently verifies the rival
+# Doppler adaptation without embedding a copy of its C++ formula in the test.
+traffic=all_functions['func_80057B3C']
+body=traffic.split('    // 0x80057D48:',1)[1].split('    // 0x80057DB8:',1)[0]
+functions['rival_native_traffic_doppler']=(
+    'RECOMP_FUNC void rival_native_traffic_doppler(uint8_t* rdram,recomp_context* ctx) {\n'
+    'uint64_t hi=0,lo=0,result=0;int c1cs=0;\n'
+    '    // 0x80057D48:'+body+'\n; // The extracted sequence ends on a branch label.\n}\n')
+names.append('rival_native_traffic_doppler')
 # Unhooked native producer proves the AI gate and exact bike-state pitch curve.
 stock=[]
 for name in ('func_800571DC','func_80059648','func_8005980C'):
@@ -65,8 +76,14 @@ for name in ('func_800571DC','func_80059648','func_8005980C'):
     for n in ('func_800571DC','func_80059648','func_8005980C'):
         code=re.sub(r'\b'+n+r'\b','stock_'+n,code)
     stock.append(code)
+# Observe actual native entry points without replacing their allocation,
+# update or stop bodies. The disabled-path regression proves these stay idle.
+for name in ('func_800571DC','func_80080450','func_80082798','func_800806B4',
+             'func_800807C0','func_80080820','func_80080890'):
+    functions[name]=functions[name].replace('{',
+        '{\n    rr64_rival_engine_fixture_call(0x'+name[-8:]+'u);',1)
 calls=set(re.findall(r'^\s+(\w+)\(rdram, ctx\);',''.join(functions.values())+''.join(stock),re.M))
-decls='\n'.join('void '+n+'(unsigned char*,recomp_context*);' for n in sorted(calls|set(names)|{'stock_'+n for n in ('func_800571DC','func_80059648','func_8005980C')} ) if not n.startswith('rr64_'))
+decls='void rr64_rival_engine_fixture_call(unsigned);\n'+'\n'.join('void '+n+'(unsigned char*,recomp_context*);' for n in sorted(calls|set(names)|{'stock_'+n for n in ('func_800571DC','func_80059648','func_8005980C')} ) if not n.startswith('rr64_'))
 a.output.parent.mkdir(parents=True,exist_ok=True)
 main=(a.config.parent.parent/'native/src/main.cpp').read_text()
 queue=main.split('void queue_samples(int16_t* audio_data, size_t sample_count)',1)[1]

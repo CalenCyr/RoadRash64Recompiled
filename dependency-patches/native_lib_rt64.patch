@@ -530,10 +530,33 @@ index cf05674..223ab7f 100644
 \ No newline at end of file
 +};
 diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
-index 785de27..cf5d869 100644
+index 785de27..83b5eae 100644
 --- a/src/hle/rt64_application.cpp
 +++ b/src/hle/rt64_application.cpp
-@@ -327,7 +327,10 @@ namespace RT64 {
+@@ -3,6 +3,7 @@
+ //
+ 
+ #include "rt64_application.h"
++#include "rt64_rr64_pipeline_diagnostics.h"
+ #include "rhi/rt64_render_hooks.h"
+ 
+ #include <cinttypes>
+@@ -199,9 +200,11 @@ namespace RT64 {
+ 
+         // Print device information to console.
+         RenderDeviceDescription deviceDescription = device->getDescription();
+-        fprintf(stdout, "Device Name: %s\n", deviceDescription.name.c_str());
+-        fprintf(stdout, "Device Vendor: 0x%X\n", deviceDescription.vendor);
+-        fprintf(stdout, "Driver Version: 0x%" PRIx64 "\n", deviceDescription.driverVersion);
++        if (RR64PipelineDiagnostics::enabled()) {
++            fprintf(stdout, "Device Name: %s\n", deviceDescription.name.c_str());
++            fprintf(stdout, "Device Vendor: 0x%X\n", deviceDescription.vendor);
++            fprintf(stdout, "Driver Version: 0x%" PRIx64 "\n", deviceDescription.driverVersion);
++        }
+ 
+         // Detect if the application should use hardware resolve or not.
+         bool usesHardwareResolve = (userConfig.hardwareResolve != UserConfiguration::HardwareResolve::Disabled);
+@@ -327,7 +330,10 @@ namespace RT64 {
          // where the wait() will take far more time than expected and cause stuttering. While this seems to work fine everywhere else,
          // we stick to the pre-plume approach to be safe.
          if (device->getCapabilities().presentWait) {
@@ -546,10 +569,10 @@ index 785de27..cf5d869 100644
          }
  
 diff --git a/src/hle/rt64_game_frame.cpp b/src/hle/rt64_game_frame.cpp
-index 87392d0..f9766e8 100644
+index 87392d0..965b788 100644
 --- a/src/hle/rt64_game_frame.cpp
 +++ b/src/hle/rt64_game_frame.cpp
-@@ -5,11 +5,468 @@
+@@ -5,11 +5,469 @@
  #include "common/rt64_math.h"
  
  #include "rt64_game_frame.h"
@@ -560,6 +583,7 @@ index 87392d0..f9766e8 100644
 +#include "rt64_rr64_translation_rejection.h"
 +#include "rt64_rr64_matching_evidence.h"
 +#include "rt64_rr64_static_world_motion.h"
++#include "rt64_rr64_camera_boundary.h"
 +
 +#include <array>
 +#include <cmath>
@@ -1018,7 +1042,7 @@ index 87392d0..f9766e8 100644
      // GameFrame
      
      bool GameFrame::areFramebufferPairsCompatible(const WorkloadQueue &workloadQueue, const GameIndices::FramebufferPair &first, const GameIndices::FramebufferPair &second) {
-@@ -77,6 +534,8 @@ namespace RT64 {
+@@ -77,6 +535,8 @@ namespace RT64 {
          assert(indicesCount > 0);
  
          matched = false;
@@ -1027,12 +1051,32 @@ index 87392d0..f9766e8 100644
          perspectiveScenes.clear();
          orthographicScenes.clear();
          workloads.clear();
-@@ -256,6 +715,35 @@ namespace RT64 {
+@@ -256,6 +716,55 @@ namespace RT64 {
          tileInterpolationUsed = false;
          lookAtInterpolationUsed = false;
          matched = true;
 +        rr64InterpolationCompatible = true;
 +        rr64GeometryRejectionReasons = 0;
++        // The marker travels in the submitted projection command. Reject the
++        // whole pair before world-ID matching: camera-only rejection would
++        // still interpolate sector-relative terrain/actors across the cut.
++        if (RR64CameraBoundary::changed(workloadQueue, *this, prevFrame)) {
++            if (RR64PipelineDiagnostics::enabled()) {
++                static unsigned boundaryReports = 0;
++                if (boundaryReports++ < 32u) {
++                    std::fprintf(stderr, "[RR64-CAMERA-CUT] previous=%08X current=%08X native-endpoint=1\n",
++                        RR64CameraBoundary::phase(workloadQueue, prevFrame).id,
++                        RR64CameraBoundary::phase(workloadQueue, *this).id);
++                }
++            }
++            matched = false;
++            rr64InterpolationCompatible = false;
++            rr64GeometryRejectionReasons = 1u;
++            frameMap.clear();
++            frameMap.workloads.resize(workloadQueue.workloads.size());
++            velocityUploaderUsed = false;
++            return;
++        }
 +        const bool rr64Guard = RR64FramePacing::stablePresentationEnabled() &&
 +            !workloads.empty() && workloadQueue.workloads[workloads.front()].presentationScene.raceActive;
 +        const bool rr64TranslationRejected = RR64TranslationRejection::reject(rr64Guard, *this, prevFrame, workloadQueue);
@@ -1063,7 +1107,7 @@ index 87392d0..f9766e8 100644
  
          thread_local std::unordered_map<uint32_t, ModifiedBuffers> workloadsModified;
          workloadsModified.clear();
-@@ -271,7 +759,7 @@ namespace RT64 {
+@@ -271,7 +780,7 @@ namespace RT64 {
              workloadMap.mapped = true;
  
              Workload &curWorkload = workloadQueue.workloads[workloads[w]];
@@ -1072,7 +1116,7 @@ index 87392d0..f9766e8 100644
              workloadMap.viewProjections.clear();
              workloadMap.viewProjections.resize(curWorkload.drawData.viewProjTransforms.size());
              workloadMap.transforms.clear();
-@@ -288,6 +776,13 @@ namespace RT64 {
+@@ -288,6 +797,13 @@ namespace RT64 {
              workloadMap.prevLookAtMapped.resize(prevWorkload.drawData.rspLookAt.size());
  
              buildTransformIdMap(curWorkload, curWorkload.transformIdMap, curWorkload.transformIgnoredIds);
@@ -1086,7 +1130,7 @@ index 87392d0..f9766e8 100644
  
              // Retrieve the matching maps for the current and previous workload.
              GameFrameMap::WorkloadMap &curWorkloadMap = frameMap.workloads[workloads[w]];
-@@ -331,10 +826,26 @@ namespace RT64 {
+@@ -331,10 +847,26 @@ namespace RT64 {
          thread_local std::vector<MatchCandidate> matchCandidates;
          thread_local std::vector<bool> curScenesMatched;
          thread_local std::vector<bool> prevScenesMatched;
@@ -1114,7 +1158,7 @@ index 87392d0..f9766e8 100644
                  const GameIndices::Projection curFirstProj = curScenes[i].projections[0];
                  const Workload &curWorkload = workloadQueue.workloads[curFirstProj.workloadIndex];
                  const FramebufferPair &curFbPair = curWorkload.fbPairs[curFirstProj.fbPairIndex];
-@@ -342,13 +853,16 @@ namespace RT64 {
+@@ -342,13 +874,16 @@ namespace RT64 {
                  const hlslpp::float4x4 &curViewTransform = curWorkload.drawData.viewTransforms[curProj.transformsIndex];
                  const hlslpp::float4x4 &curProjTransform = curWorkload.drawData.projTransforms[curProj.transformsIndex];
                  for (uint32_t j = 0; j < prevScenes.size(); j++) {
@@ -1132,7 +1176,7 @@ index 87392d0..f9766e8 100644
                  }
              }
  
-@@ -366,14 +880,37 @@ namespace RT64 {
+@@ -366,14 +901,37 @@ namespace RT64 {
                      continue;
                  }
  
@@ -1173,7 +1217,7 @@ index 87392d0..f9766e8 100644
  
          if (!workloadsModified.empty()) {
              thread_local std::vector<BufferUploader::Upload> uploads;
-@@ -398,7 +935,8 @@ namespace RT64 {
+@@ -398,7 +956,8 @@ namespace RT64 {
          }
      }
  
@@ -1183,7 +1227,7 @@ index 87392d0..f9766e8 100644
          if (curScene.projections.empty() || prevScene.projections.empty()) {
              return;
          }
-@@ -516,10 +1054,36 @@ namespace RT64 {
+@@ -516,10 +1075,36 @@ namespace RT64 {
          transformCheckSet.clear();
          tileCheckSet.clear();
          lookAtCheckSet.clear();
@@ -1222,7 +1266,7 @@ index 87392d0..f9766e8 100644
              for (auto prevIt = prevRange.first; prevIt != prevRange.second; prevIt++) {
                  const GameIndices::Projection &curProjIndices = curScene.projections[curIt.second.sceneProjIndex];
                  const Workload &curWorkload = workloadQueue.workloads[curProjIndices.workloadIndex];
-@@ -533,7 +1097,19 @@ namespace RT64 {
+@@ -533,7 +1118,19 @@ namespace RT64 {
                  const GameCall &prevCall = prevProj.gameCalls[prevIt->second.callIndex];
                  const uint32_t curWorldMatrixCount = (curCall.callDesc.maxWorldMatrix - curCall.callDesc.minWorldMatrix) + 1;
                  const uint32_t prevWorldMatrixCount = (prevCall.callDesc.maxWorldMatrix - prevCall.callDesc.minWorldMatrix) + 1;
@@ -1243,7 +1287,7 @@ index 87392d0..f9766e8 100644
                      for (uint32_t w = 0; w < curWorldMatrixCount; w++) {
                          const uint32_t curWorldMatrix = curCall.callDesc.minWorldMatrix + w;
                          const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curWorldMatrix];
-@@ -542,6 +1118,11 @@ namespace RT64 {
+@@ -542,6 +1139,11 @@ namespace RT64 {
                          const uint32_t prevGroupIndex = prevWorkload.drawData.worldTransformGroups[prevWorldMatrix];
                          const TransformGroup &prevGroup = prevWorkload.drawData.transformGroups[prevGroupIndex];
                          if ((curGroup.matrixId == prevGroup.matrixId) && ((curGroup.matrixId == G_EX_ID_AUTO) || ((curGroup.matrixId != G_EX_ID_IGNORE) && (curGroup.ordering == G_EX_ORDER_AUTO)))) {
@@ -1255,7 +1299,7 @@ index 87392d0..f9766e8 100644
                              transformCheckSet.emplace(curWorldMatrix, prevWorldMatrix);
                          }
                      }
-@@ -572,6 +1153,24 @@ namespace RT64 {
+@@ -572,6 +1174,24 @@ namespace RT64 {
                      lookAtCheckSet.emplace(curLookAtIndex, prevLookAtIndex);
                  }
              }
@@ -1280,7 +1324,7 @@ index 87392d0..f9766e8 100644
          }
  
          // Compute all the differences between transforms and insert them into a vector that will be sorted according to the differences.
-@@ -588,22 +1187,79 @@ namespace RT64 {
+@@ -588,22 +1208,79 @@ namespace RT64 {
  
              TransformMatchResult matchResult = computeTransformMatch(curTransform, firstCurViewProj, prevTransform, firstPrevViewProj, prevRigidBody);
              if (matchResult.valid) {
@@ -1367,7 +1411,7 @@ index 87392d0..f9766e8 100644
          }
  
          if (!modifiedBuffers.empty()) {
-@@ -720,6 +1376,11 @@ namespace RT64 {
+@@ -720,6 +1397,11 @@ namespace RT64 {
          const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curTransformIndex];
          const TransformGroup &curGroup = curWorkload.drawData.transformGroups[curGroupIndex];
          curTransformMap.rigidBody.updateLinear(prevTransform, curTransform, curGroup.positionInterpolation);
@@ -1379,7 +1423,7 @@ index 87392d0..f9766e8 100644
          curTransformMap.rigidBody.updateAngular(prevTransform, curTransform, curGroup.rotationInterpolation, curGroup.scaleInterpolation, curGroup.skewInterpolation);
          curTransformMap.rigidBody.updatePerspective(prevTransform, curTransform, curGroup.perspectiveInterpolation);
          curTransformMap.rigidBody.updateDecomposition(curTransform, curGroup.decompose);
-@@ -1039,4 +1700,4 @@ namespace RT64 {
+@@ -1039,4 +1721,4 @@ namespace RT64 {
          }
      }
      */
@@ -4825,7 +4869,7 @@ index e842dcc..cc2a440 100644
                      prevProjTransform = lerpMatrix(adjustedPrevProj, curProjTransform, p.prevFrameWeight);
                  }
 diff --git a/src/render/rt64_texture_cache.cpp b/src/render/rt64_texture_cache.cpp
-index 0848f3e..0d4d198 100644
+index 0848f3e..d55b0da 100644
 --- a/src/render/rt64_texture_cache.cpp
 +++ b/src/render/rt64_texture_cache.cpp
 @@ -13,6 +13,7 @@
@@ -4846,7 +4890,28 @@ index 0848f3e..0d4d198 100644
          fileSystemStreamResolvedPaths.clear();
  
          usedTexturePoolSize = 0;
-@@ -1306,7 +1310,28 @@ namespace RT64 {
+@@ -313,14 +317,16 @@ namespace RT64 {
+             textureDimensions = cachedTextureDimensions[textureIndex];
+         }
+ 
+-        // Remove the existing entry from the list if it exists.
++        // Keep the existing LRU node on warm hits instead of reallocating it.
+         AccessList::iterator listIt = listIterators[textureIndex];
+         if (listIt != accessList.end()) {
+-            accessList.erase(listIt);
++            listIt->second = submissionFrame;
++            accessList.splice(accessList.begin(), accessList, listIt);
++        }
++        else {
++            accessList.push_front({ textureIndex, submissionFrame });
+         }
+ 
+-        // Push a new access entry to the front of the list and store the new iterator.
+-        accessList.push_front({ textureIndex, submissionFrame });
+         listIterators[textureIndex] = accessList.begin();
+         return true;
+     }
+@@ -1306,7 +1312,28 @@ namespace RT64 {
                  if (it != fsResolvedPaths.end()) {
                      // Stop searching for replacements as soon as we find one.
                      resolvedPaths.emplace_back(it->second);
@@ -4876,7 +4941,7 @@ index 0848f3e..0d4d198 100644
                  }
              }
          }
-@@ -1467,6 +1492,7 @@ namespace RT64 {
+@@ -1467,6 +1494,7 @@ namespace RT64 {
  
          std::vector<std::unique_ptr<FileSystem>> fileSystems;
          std::vector<std::unordered_map<uint64_t, ReplacementResolvedPath>> fileSystemResolvedPaths;
@@ -4884,7 +4949,7 @@ index 0848f3e..0d4d198 100644
          std::vector<uint32_t> fileSystemHashVersions;
          std::vector<std::unordered_set<std::string>> fileSystemStreamSets;
          for (const ReplacementDirectory &replacementDirectory : replacementDirectories) {
-@@ -1479,6 +1505,7 @@ namespace RT64 {
+@@ -1479,6 +1507,7 @@ namespace RT64 {
  
                  fileSystems.emplace_back(std::move(fileSystem));
                  fileSystemResolvedPaths.emplace_back();
@@ -4892,7 +4957,7 @@ index 0848f3e..0d4d198 100644
                  fileSystemHashVersions.emplace_back();
                  fileSystemStreamSets.emplace_back();
              }
-@@ -1493,6 +1520,7 @@ namespace RT64 {
+@@ -1493,6 +1522,7 @@ namespace RT64 {
                  textureMap.replacementMap.fileSystemIsDirectory = (replacementDirectories.size() == 1);
                  fileSystems.emplace_back(std::move(fileSystem));
                  fileSystemResolvedPaths.emplace_back();
@@ -4900,7 +4965,7 @@ index 0848f3e..0d4d198 100644
                  fileSystemHashVersions.emplace_back();
                  fileSystemStreamSets.emplace_back();
              }
-@@ -1518,7 +1546,7 @@ namespace RT64 {
+@@ -1518,7 +1548,7 @@ namespace RT64 {
                          db = json::parse(databaseBytes.begin(), databaseBytes.end(), nullptr, true);
  
                          if (db.config.hashVersion <= TMEMHasher::CurrentHashVersion) {
@@ -4909,7 +4974,7 @@ index 0848f3e..0d4d198 100644
                              fileSystemHashVersions[i] = db.config.hashVersion;
                              knownHashVersions.insert(db.config.hashVersion);
  
-@@ -1560,6 +1588,7 @@ namespace RT64 {
+@@ -1560,6 +1590,7 @@ namespace RT64 {
          uint32_t fileSystemCount = uint32_t(fileSystems.size());
          textureMap.replacementMap.fileSystems = std::move(fileSystems);
          textureMap.replacementMap.fileSystemResolvedPaths = std::move(fileSystemResolvedPaths);

@@ -1,6 +1,6 @@
 # Clean-install MK64 pack import
 
-Candidate36 implements a native action on the ordinary **MK64 Race Pack** entry
+Introduced in Candidate36, the native import action remains on the ordinary **MK64 Race Pack** entry
 in **Settings → Mods**. A missing pack displays **Import MK64 ROM**; an installed
 pack displays **Reimport MK64 ROM**. The normal enable/disable toggle remains.
 The player selects the supported Road Rash 64 ROM in the launcher first, then
@@ -12,7 +12,10 @@ install development tools. It accepts supported z64/v64/n64 byte orders and
 checks the whole normalized ROM before reading its course data. The generated
 mod is cached locally; there is no repeated ROM selection on ordinary launches.
 
-Current verification status: native UI integration and Windows ON/OFF builds
+1.4.3 bundles converter `1.0.1-c40` for both platforms. Existing c40 packs
+remain compatible; reimport older packs with the bundled converter.
+
+Initial Candidate36 verification (historical): native UI integration and Windows ON/OFF builds
 pass. A full ROM-only conversion passed 2,043 comparisons and the native loader.
 The frozen Windows converter then ran through the actual native import worker
 from an unrelated Unicode directory with only its bundled runtime available.

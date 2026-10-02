@@ -8,9 +8,9 @@ Enable Custom Cop Mode to add the cop bike to selection. Choosing it limits the 
 
 Custom Cop also shows **AI Cops**, default **Off**: only human players become
 cops, and AI slots use regular racers. Turn it On to permit native AI cops.
-The online host selects this setting for everyone; all peers need the same new
-build (protocol 36). This addition has passed offline checks and awaits gameplay
-verification.
+The online host selects this setting for everyone; all peers need the same
+1.4.3 build (protocol 66). Online behavior remains experimental; offline
+checks do not establish live mode parity.
 
 Default controls:
 
@@ -23,4 +23,4 @@ Siren and voice start off. Weapon Trick, Eject and Spoke Jam can be rebound in C
 
 Cops aim to bust racers before they finish. A yellow Bust’ em! cue announces pursuit, and the HUD counts busts. Busting every opposing racer displays COPS WIN! before the original results. All-cop combinations do not automatically win. Both sides retain normal bike health; a genuine bust eliminates a racer, while voluntary eject alone does not. Healthy mounted human cops can roam without route-separation relocation; ordinary crash recovery remains.
 
-Known limits: online behavior is experimental; these custom rules apply to local play. The reported missing slow body-roll appearance remains unresolved and deferred. The Windows cleanup candidate was accepted in user testing. The Linux integration is experimental and has not been gameplay-tested.
+Online behavior remains experimental; these custom rules apply to local play. Linux gameplay and hardware coverage remain limited.

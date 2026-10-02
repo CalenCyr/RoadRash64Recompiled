@@ -2,6 +2,8 @@
 
 #ifdef __cplusplus
 namespace rr64::rival_engine {
+void set_enabled(bool value) noexcept;
+bool get_enabled() noexcept;
 void set_volume_percent(double value) noexcept;
 double get_volume_percent() noexcept;
 }
@@ -12,6 +14,7 @@ void rr64_rival_engine_frame(unsigned char *, void *);
 void rr64_rival_engine_gate(unsigned char *, void *);
 int rr64_rival_engine_gain(unsigned char *, void *);
 void rr64_rival_engine_threshold(unsigned char *, void *);
+void rr64_rival_engine_pitch(unsigned char *, void *);
 void rr64_rival_engine_mode(unsigned char *, void *, unsigned);
 void rr64_rival_engine_recovery(unsigned char *, void *, unsigned);
 void rr64_rival_engine_audio_reset();

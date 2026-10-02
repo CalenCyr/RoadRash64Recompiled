@@ -1,4 +1,5 @@
 #include "rr64_world_objects.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_world_camera.hpp"
 #include "rr64_local_world_window.hpp"
 #include "rr64_world_frustum.hpp"
@@ -135,9 +136,11 @@ bool initialize(Cache &c, unsigned char *m) {
     c.stats.cached_models = unsigned(c.assets.models.size());
     c.stats.cached_placements = unsigned(c.assets.placements.size());
     c.stats.cached_bytes = 2u * (bytes + 4u * frame_bytes);
-    std::fprintf(stderr,
-                 "[RR64-WORLD] object cache models=%u placements=%u bytes=%u triangle-batches=1\n",
-                 c.stats.cached_models, c.stats.cached_placements, c.stats.cached_bytes);
+    if (rr64::diagnostics::routine_enabled()) {
+        std::fprintf(stderr,
+                     "[RR64-WORLD] object cache models=%u placements=%u bytes=%u triangle-batches=1\n",
+                     c.stats.cached_models, c.stats.cached_placements, c.stats.cached_bytes);
+    }
     return true;
 }
 bool context(unsigned char *m, unsigned &slot, unsigned &gfx, unsigned &epoch, unsigned &pointer,

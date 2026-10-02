@@ -19,6 +19,11 @@ void func_8005F070(unsigned char*, recomp_context*);
 void func_80015A90(unsigned char*, recomp_context*);
 void func_800167BC(unsigned char*, recomp_context*);
 void guPerspective(unsigned char*, recomp_context*);
+// This producer oracle keeps the native distance decision. Presentation-only
+// traffic range extension is exercised separately by its own fixture.
+int rr64_traffic_within_draw_distance(unsigned char*, unsigned, unsigned, unsigned, int original) {
+    return original;
+}
 }
 namespace {
 using namespace rr64::engine;
@@ -233,6 +238,7 @@ void camera_case(unsigned slot,bool fr1,bool enabled,bool unsupported=false,unsi
         if(extended&&expected_norm==0)expected_norm=1;
         check(actual_norm==expected_norm&&actual_norm!=0,"large far-plane perspective normalization stays usable");
         check(bool(rr64_world_camera_ready(m,source,slot))==extended,"camera readiness requires an accepted current producer");
+        check(bool(rr64_world_camera_native_ready(m,source,slot))==!unsupported,"native camera readiness accepts the actual producer independently of extended-world admission");
         Matrix4x4Snapshot p{},v{};check(decode_n64_matrix(m,projection,p)&&decode_n64_matrix(m,view,v),"camera banks decode");
         const std::array<float,4> point{4*scale,80*scale,2*scale,1};std::array<float,4> eye{},clip{};
         for(unsigned col=0;col<4;++col)for(unsigned row=0;row<4;++row)eye[col]+=point[row]*v.values[row*4+col];
@@ -241,15 +247,52 @@ void camera_case(unsigned slot,bool fr1,bool enabled,bool unsupported=false,unsi
     }
     if(extended) {
         check(std::abs(depth[0]-depth[1])<0.00002f&&std::abs(depth[0]-depth[2])<0.00002f,"all three extended banks agree on world-point depth");
-        write_u32(m,0x800A1830u,18u+slot);
-        check(!rr64_world_camera_ready(m,2u,slot),"a later visual epoch cannot reuse old long-range camera readiness");
+    }
+    write_u32(m,0x800A1830u,18u+slot);
+    check(!rr64_world_camera_ready(m,2u,slot),"a later visual epoch cannot reuse old long-range camera readiness");
+    check(!rr64_world_camera_native_ready(m,2u,slot),"a later visual epoch cannot reuse old native camera readiness");
+    ++cases;
+}
+void camera_freshness_case(bool enabled) {
+    auto memory=seed(4u,100,0);auto* m=memory.data();
+    check(rr64_world_camera_native_ready(m,2u,0u),"original producer establishes source-2 camera readiness");
+    auto other=memory;
+    check(!rr64_world_camera_native_ready(other.data(),2u,0u),"copied guest bytes do not transfer camera producer identity");
+    check(!rr64_world_camera_native_ready(m,3u,0u)&&!rr64_world_camera_native_ready(m,2u,2u),"invalid camera bank or slot refuses readiness");
+    for(unsigned bad=0;bad<6;++bad) {
+        write_u32(m,0x800A1830u,100u+bad);
+        recomp_context ctx{};bind_context(ctx,false);ctx.r18=2u;ctx.r22=0u;
+        ctx.f4.fl=bad==0?1.0f:10.0f;ctx.f8.fl=bad==1?0.0f:10.0f;ctx.f6.fl=9000.0f;
+        rr64_world_camera_far(m,&ctx);
+        check(!rr64_world_camera_native_ready(m,2u,0u),"far arguments alone never publish a finished camera");
+        write_float(m,stack+0x10u,bad==2?11.0f:10.0f);
+        write_float(m,stack+0x14u,bad==3?ctx.f6.fl+1.0f:ctx.f6.fl);
+        write_u16(m,0x800b73f0u,1u);
+        if(bad==4)write_u32(m,0x800A1830u,200u+bad);
+        if(bad!=5)rr64_world_camera_normalization(m,&ctx);
+        check(!rr64_world_camera_native_ready(m,2u,0u)&&!rr64_world_camera_ready(m,2u,0u),"invalid, mismatched, stale or unfinished producer cannot publish either readiness");
+    }
+    if(!enabled) {
+        write_u32(m,0x800A1830u,300u);
+        recomp_context ctx{};bind_context(ctx,false);ctx.r18=2u;ctx.r22=0u;
+        ctx.f4.fl=10;ctx.f8.fl=10;ctx.f6.fl=9000;
+        write_float(m,stack+0x10u,10);write_float(m,stack+0x14u,9000);write_u16(m,0x800b73f0u,0u);
+        const auto before=memory;
+        rr64_world_camera_far(m,&ctx);rr64_world_camera_normalization(m,&ctx);
+        check(!rr64_world_camera_native_ready(m,2u,0u),"native zero normalization is refused without changing camera policy");
+        check(memory==before&&ctx.f6.fl==9000,"disabled world camera observation never changes guest memory or far distance");
     }
     ++cases;
 }
 }
 int main(int argc,char** argv) {
     const bool disabled=argc>1&&std::strcmp(argv[1],"--disabled")==0;
+#ifdef _WIN32
     _putenv_s("RR64_WORLD_DISTANCE",disabled?"0":"1");
+#else
+    setenv("RR64_WORLD_DISTANCE",disabled?"0":"1",1);
+#endif
+    camera_freshness_case(!disabled);
     if(disabled) {
         auto memory=seed(3u,900,0);auto* m=memory.data();register_actor(m);roots(m,3u,false);const auto before=memory;
         recomp_context ctx{};bind_context(ctx,false);rr64_world_begin_draw(m);

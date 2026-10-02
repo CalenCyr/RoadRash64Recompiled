@@ -7,8 +7,10 @@ the existing eight Insanity tracks. The latest clarification preserves the
 original ending after Level 5: these are optional bonus races to keep playing
 afterward, with no replacement or second mandatory ending. This new extension
 supersedes the guard-only proposal and the brief proposal to move the ending.
-Implemented for 1.4.2. Native offline tests pass; full live bonus-campaign
-completion and save/load acceptance remain pending.
+Implemented for 1.4.2. A September 29 player report exposed a save-cache
+regression missed by the original offline tests; see the correction below.
+Full live bonus-campaign completion and corrected save/load acceptance remain
+pending.
 
 The transition must retain ordinary Levels 1–5 and allow completed Level 5 saves
 to continue. The Insanity bike purchase/Join flow must keep valid bike ownership
@@ -91,6 +93,45 @@ extension; the original completed campaign remains usable.
 
 Profile `+20` is the original gang category assigned by Join, rather than the
 difficulty setting. Native ending rewards continue to use that category.
+
+## September 29 save-cache and label correction
+
+The 1.4.2 Pak writer stores the complete 256-byte file, including the bonus
+extension. However, the extension cache was cleared at entry to native scan
+`800207DC`. That routine returns immediately when the native profile cache is
+valid. Repeated menu scans and selected load `80020ECC` therefore erased the
+bonus identity without rereading its extension. The native base profile then
+loaded as Level 5, retaining the purchased bike and remaining money.
+
+Resetting extension metadata now occurs at `80020858`, after the native
+cache/error early returns, only when a real scan begins. The native new-profile
+initializer also leaves the Pak cache valid; its hook now resets only live
+bonus results, preserving the matching saved-slot extensions. Genuine rescans
+still invalidate removed/replaced records, and extensions remain bound to the
+exact native profile and their integrity tag.
+
+All three save-slot label formatters (load, save and overwrite) display Level 6
+for a validated bonus slot. Only the formatting argument changes. Shared slot
+metadata remains at the compatible base chapter because other consumers use
+it for native race-tier unlocking; changing that shared value would grant an
+unrelated tier.
+
+The previous save fixture replaced the entire native scan with a stub that
+always reread files, hiding its cache-hit path. The expanded fixture executes
+the complete native scan and error/invalidation routines against a simulated
+Pak device. It covers first scan, repeated menu scans, selected load, New Game
+followed by cached load, six independent slots, ordinary saves, corrupt tails,
+and failed I/O. The separate label fixture executes the original metadata and
+all three formatter/unlock instruction sequences, checking that native unlocks
+and profile bytes remain unchanged.
+
+Keep affected saves and backups. An untouched 1.4.2 bonus save retains its
+extension and should load correctly with this fix. If the player subsequently
+overwrote the save after it fell back to Level 5, the ordinary save path cleared
+that extension; its bonus race counters cannot be reconstructed from that file
+alone. Do not recommend deleting an older save, automatically promote every
+completed Level 5 profile, or promise free rejoining through the purchase UI.
+The reporter's actual save file has not been inspected.
 
 ## Verification boundary
 

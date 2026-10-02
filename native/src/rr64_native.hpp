@@ -1,5 +1,8 @@
 #pragma once
+#include "rr64_rider_skin_menu.hpp"
+#include "rr64_rider_skin_render.hpp"
 #include "rr64_campaign_completion.hpp"
+#include "rr64_terrain_graphics_pool.hpp"
 #include "rr64_campaign_bonus_save.hpp"
 #include "rr64_roaming_route.hpp"
 #include "rr64_race_end_trace.hpp"
@@ -10,6 +13,7 @@
 #include "rr64_highlights.hpp"
 #include "rr64_rival_engine.hpp"
 #include "rr64_highlight_camera.hpp"
+#include "rr64_highlight_render_boundary.hpp"
 #include "rr64_offline_modifiers.hpp"
 #include "rr64_offline_modifiers_bikes.hpp"
 #ifdef RR64_EXPERIMENTAL_COURSE
@@ -181,7 +185,6 @@ void rr64_custom_cop_ai_pool(unsigned char *memory, void *context);
 unsigned int rr64_audio_timeline_epoch();
 void rr64_set_maximum_view_distance_enabled(int enabled);
 int rr64_is_maximum_view_distance_enabled();
-unsigned int rr64_maximum_view_distance_map_range(unsigned int original_bits);
 unsigned int rr64_traffic_render_visibility(unsigned char *rdram, unsigned int node,
                                             unsigned int stock_hidden);
 unsigned int rr64_terrain_unload_decision(unsigned char *rdram, unsigned int cell,

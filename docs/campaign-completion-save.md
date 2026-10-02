@@ -1,5 +1,30 @@
 # Completed Big Game saves and Insanity selection
 
+## October 1 — show the original ending once
+
+The original results screen (`73054`, branch `7327C`) tests whether every track
+in the current chapter is qualified. In Level 5 it enters ending mode `38` each
+time that condition holds, including when replaying completed races for money.
+
+The result initializer (`72E74`) now snapshots whether the original campaign was
+already complete **before** its native prize and qualification writes. A newly
+earned final qualification retains the original ending, credits, reward and
+Save Game return. Subsequent Level 5 results use the ordinary campaign return,
+without another ending or completion award. Payouts, repeat-prize divisors,
+inventory, bike selection and cash remain native.
+
+Completion comes from all eight original Level 5 qualification nibbles in the
+saved profile (`+50`), so existing completed saves retain this behavior after
+restarting. The transient results-screen decision is rebuilt at each result
+initialization; it is not the persistent source of completion. No save format,
+sidecar, achievement requirement or automatic save is added. Optional Level 6
+progress and its existing backward-compatible save extension are unchanged.
+
+The focused fixtures exercise first completion on each of the eight tracks,
+repeat wins and losses, saturated counters, unchanged native cash/bike data,
+legacy native Pak loading, and separate-process reloads. Visual confirmation
+still requires a user-authorized game test.
+
 Private September 26 follow-up. No game was launched for these changes.
 
 ## Completion save

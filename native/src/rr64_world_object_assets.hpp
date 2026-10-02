@@ -59,4 +59,10 @@ bool build_object_assets(std::span<const std::uint8_t> rom, ObjectAssets &output
 bool build_object_assets(std::span<const std::uint8_t> rom, ObjectAssets &output,
                          std::string &error, bool batch_triangles, bool compile_packets) noexcept;
 
+// Compile only these original resource-table indices, in the supplied order.
+// Uses the same native material/child writers; does not parse course placements.
+bool build_object_model_assets(std::span<const std::uint8_t> rom,
+                               std::span<const unsigned> resources, ObjectAssets &output,
+                               std::string &error) noexcept;
+
 } // namespace rr64::world

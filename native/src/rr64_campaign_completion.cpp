@@ -8,6 +8,10 @@ namespace {
 using namespace rr64::engine;
 constexpr unsigned profile = 0x800D6A40u;
 unsigned char *ending_return = nullptr;
+// Per-result decision, derived from the native saved completion counters before
+// the prize routine changes them. No separate unlock or save-file flag is needed.
+unsigned char *results_memory = nullptr;
+bool completed_before_award = false;
 unsigned word(unsigned char *m, unsigned address) {
     unsigned value = 0;
     read_u32(m, address, value);
@@ -40,6 +44,19 @@ void unlock(unsigned char *m, unsigned record) {
     if (word(m, record + 0x3C) == 5)
         tier(m, 6);
 }
+}
+
+extern "C" void rr64_campaign_results_begin(unsigned char *m) {
+    results_memory = m;
+    completed_before_award = m && word(m, profile + 0x3C) == 4 && completed(m, profile);
+}
+
+extern "C" int rr64_campaign_repeat_completion(unsigned char *m) {
+    // 73054 runs every frame while the results are shown. Retain this decision
+    // until the next 72E74 initialization; the first newly earned ending stays
+    // available until the player accepts it. Every race re-reads saved progress.
+    return m && results_memory == m && completed_before_award &&
+           word(m, profile + 0x3C) == 4 && completed(m, profile);
 }
 
 extern "C" unsigned rr64_campaign_ending_exit(unsigned char *m, unsigned original) {

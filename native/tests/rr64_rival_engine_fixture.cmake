@@ -17,5 +17,6 @@ add_custom_command(OUTPUT "${_rr64_rival_fixture}"
 add_executable(RR64RivalEngineSmoke EXCLUDE_FROM_ALL tests/rr64_rival_engine_smoke.cpp
     src/rr64_rival_engine.cpp src/rr64_online_audio.cpp "${_rr64_rival_fixture}")
 target_compile_features(RR64RivalEngineSmoke PRIVATE cxx_std_20)
+target_compile_definitions(RR64RivalEngineSmoke PRIVATE RR64_RIVAL_ENGINE_TEST_TRACE=1)
 target_include_directories(RR64RivalEngineSmoke PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src" "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include")

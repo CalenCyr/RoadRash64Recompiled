@@ -1,4 +1,5 @@
 #include "rr64_voice_chat.hpp"
+#include "rr64_diagnostic_options.hpp"
 
 #include <algorithm>
 #include <array>
@@ -135,7 +136,9 @@ bool ensure_capture() {
     g_capture_failure_reported = false;
     g_next_capture_attempt={};
     SDL_PauseAudioDevice(g_capture_device, 0);
-    std::fprintf(stderr, "[RR64-VOICE] Race microphone active at 48 kHz mono.\n");
+    if (rr64::diagnostics::routine_enabled()) {
+        std::fprintf(stderr, "[RR64-VOICE] Race microphone active at 48 kHz mono.\n");
+    }
     return true;
 }
 
@@ -320,7 +323,7 @@ void configure(recomp::config::Config &config){
         const auto index=static_cast<unsigned>(g_devices.size());g_devices.emplace_back(name);
         choices.emplace_back(index,"device:"+g_devices.back(),g_devices.back());
     }
-    config.add_enum_option("rr64_microphone","Microphone",
+    config.add_enum_option("rr64_microphone","Input Device",
         "Select your voice input. Connect microphones before opening the game; restart to refresh this list. System Default follows your operating system. If a saved device is unavailable at startup, select it again when reconnected.",choices,0u);
     config.add_bool_option("rr64_mic_mute","Mute Microphone","Stops microphone capture without muting other players.",false);
     config.add_number_option("rr64_mic_gain","Microphone Gain","Input level in percent. Lower this if your voice distorts.",0,200,5,0,false,100);
@@ -354,7 +357,9 @@ void update() {
             reset_codecs();
             clear_playback();
             g_race_active = false;
-            std::fprintf(stderr, "[RR64-VOICE] Race microphone stopped.\n");
+            if (rr64::diagnostics::routine_enabled()) {
+                std::fprintf(stderr, "[RR64-VOICE] Race microphone stopped.\n");
+            }
         }
         return;
     }

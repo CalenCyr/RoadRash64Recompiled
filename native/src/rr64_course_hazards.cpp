@@ -1,4 +1,5 @@
 #include "rr64_course_hazards.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_highlights.hpp"
 #include "rr64_course_hazard_motion.hpp"
 #include "rr64_course_hazard_render.hpp"
@@ -122,19 +123,21 @@ extern "C" void rr64_course_hazards_step(unsigned char *memory) {
         live.simulation.reset(*course);
         live.initialized = true;
         live.previous = live.presented = live.simulation.state();
-        std::array<unsigned, static_cast<unsigned>(Kind::Sign) + 1> families{};
-        for (const auto &definition : course->definitions)
-            ++families[static_cast<unsigned>(definition.kind)];
-        unsigned kinds = 0;
-        for (const auto count : families)
-            kinds += count != 0;
-        std::fprintf(stderr,
-                     "[course-actors] initialized actors=%zu kinds=%u shared-clock=30Hz "
-                     "moles=%u penguins=%u chomps=%u particles=%u world-scale=%.6f\n",
-                     course->definitions.size(), kinds, families[static_cast<unsigned>(Kind::Mole)],
-                     families[static_cast<unsigned>(Kind::Penguin)],
-                     families[static_cast<unsigned>(Kind::Chomp)],
-                     families[static_cast<unsigned>(Kind::Smoke)], course->source_to_world_scale);
+        if (rr64::diagnostics::routine_enabled()) {
+            std::array<unsigned, static_cast<unsigned>(Kind::Sign) + 1> families{};
+            for (const auto &definition : course->definitions)
+                ++families[static_cast<unsigned>(definition.kind)];
+            unsigned kinds = 0;
+            for (const auto count : families)
+                kinds += count != 0;
+            std::fprintf(stderr,
+                         "[course-actors] initialized actors=%zu kinds=%u shared-clock=30Hz "
+                         "moles=%u penguins=%u chomps=%u particles=%u world-scale=%.6f\n",
+                         course->definitions.size(), kinds, families[static_cast<unsigned>(Kind::Mole)],
+                         families[static_cast<unsigned>(Kind::Penguin)],
+                         families[static_cast<unsigned>(Kind::Chomp)],
+                         families[static_cast<unsigned>(Kind::Smoke)], course->source_to_world_scale);
+        }
     }
     live.elapsed = elapsed;
     live.remainder += dt;

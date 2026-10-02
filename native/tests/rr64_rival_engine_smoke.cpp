@@ -34,6 +34,9 @@ void do_break(std::uint32_t vram) {
 namespace {
 std::atomic<unsigned long long> allocations{0};
 unsigned checks=0, native_pan=0;int highlights=0;
+std::array<unsigned,3> scans{};
+std::array<unsigned,7> native_calls{};
+unsigned rules_queries=0;
 rr64::netplay::PhysicsRules rules{};
 constexpr unsigned actors=0x800D8570,stack=0x807FF000,pool_base=0x80600000;
 constexpr unsigned bank=0x800C1510,voice_stride=0x13C;
@@ -96,6 +99,7 @@ void reset(unsigned effect_count=16,unsigned humans=1){
         position(s,s?1000.f+float(s):0,0);call(func_800597A0,bike(s));
     }
     rr64::rival_engine::set_volume_percent(35);
+    rr64::rival_engine::set_enabled(true);
 }
 unsigned start_native(unsigned effect=0xEF,unsigned priority=100){auto c=context(effect);c.r5=100;c.r6=128;c.r7=0;put(stack+16,priority);func_80080450(m,&c);return unsigned(c.r2);}
 void child_voice(unsigned parent){auto c=context(parent);c.r5=rr64::engine::guest_address(0x807E0300);m[0x7E0300^3]=0x80;m[0x7E0301^3]=0xEF;func_80083408(m,&c);check(c.r29==rr64::engine::guest_address(stack),"native child allocator restores stack");}
@@ -115,7 +119,13 @@ void operator delete(void*p) noexcept {std::free(p);}
 void operator delete(void*p,std::size_t) noexcept {std::free(p);}
 void* operator new[](std::size_t n){return ::operator new(n);}
 void operator delete[](void*p) noexcept {std::free(p);}
-namespace rr64::netplay {PhysicsRules get_physics_rules(){return rules;}}
+namespace rr64::netplay {PhysicsRules get_physics_rules(){++rules_queries;return rules;}}
+extern "C" void rr64_rival_engine_test_scan(unsigned kind){++scans.at(kind);}
+extern "C" void rr64_rival_engine_fixture_call(unsigned address){
+    constexpr std::array<unsigned,7> functions{0x800571dc,0x80080450,0x80082798,0x800806b4,0x800807c0,0x80080820,0x80080890};
+    for(unsigned i=0;i<functions.size();++i)if(functions[i]==address){++native_calls[i];return;}
+    check(false,"unexpected native fixture trace entry");
+}
 extern "C" int rr64_highlights_presenting(){return highlights;}
 extern "C" void _nsqrtf(unsigned char*,recomp_context*c){c->f0.fl=std::sqrt(c->f12.fl);}
 extern "C" void func_80087070(unsigned char*,recomp_context*){}
@@ -125,6 +135,8 @@ extern "C" void func_80056F48(unsigned char*,recomp_context*){}
 extern "C" void func_80057578(unsigned char*,recomp_context*){}
 extern "C" void func_800576D4(unsigned char*,recomp_context*){}
 extern "C" void func_80057860(unsigned char*,recomp_context*){}
+
+#include "rr64_rival_doppler_cases.hpp"
 
 int main(int argc,char**argv){
     check(argc==2,"private ROM argument");std::ifstream input(argv[1],std::ios::binary);
@@ -137,6 +149,15 @@ int main(int argc,char**argv){
     // Keep the bank initialized without opening its sample bank or a device.
     put(bank+0x10,0);m=nullptr;reset();
     check(rr64::rival_engine::get_volume_percent()==35,"default rival volume");
+    check(rr64::rival_engine::get_enabled(),"rival engines default enabled");
+    rr64::rival_engine::set_enabled(false);position(1,8,0);
+    const auto first_scans=scans;
+    const auto first_calls=native_calls;
+    const auto first_rules=rules_queries;
+    frames();
+    check(active()==0 && scans==first_scans && native_calls==first_calls && rules_queries==first_rules,
+          "disabled first race frame never prepares a rival or requests a voice");
+    rr64::rival_engine::set_enabled(true);
     for(double bad:{-5.,200.,double(NAN)}){rr64::rival_engine::set_volume_percent(bad);check(rr64::rival_engine::get_volume_percent()>=0&&rr64::rival_engine::get_volume_percent()<=100,"bounded volume setting");}
     // Negative control proves the native dispatcher excludes AI engines.
     reset();position(1,8,0);call(stock_func_8005980C,bike(1));check(active()==0,"stock AI gate has no engine");
@@ -153,10 +174,32 @@ int main(int argc,char**argv){
     position(1,-8,0);frames();check(word(cache(1))==handle,"crossing listener retains engine handle");
     const auto left=coefficients(effective_pan(row_for(handle)));check(left[0]>left[1],"left source reaches physical left coefficient");
     const auto near_gain=half(row_for(handle)+0x9E);position(1,-60,0);frames();check(half(row_for(handle)+0x9E)<near_gain,"distance reduces native engine gain");
-    position(1,-200,0);frames();check(active()==0,"out-of-range engine fades and releases");
+    position(1,-400,0);frames();check(active()==0,"out-of-range engine fades and releases");
     // Clock-based fades are monotonic and do not allocate a second voice.
     reset();position(1,0,15);unsigned old_gain=0;for(unsigned i=0;i<5;++i){frame(.01f);auto h=word(cache(1));check(row_for(h)&&half(row_for(h)+0x9E)>=old_gain,"fade in monotonic");old_gain=half(row_for(h)+0x9E);check(active()==1,"fade keeps one engine voice");}
     rr64::rival_engine::set_volume_percent(0);frames();check(active()==0,"zero slider fades to disabled");
+    // Feature-off is stronger than zero volume: one native stop request, then
+    // no listeners/profiles/rules, producers, mixer updates or allocations.
+    reset();position(1,8,0);call(func_8005980C,bike(0));const auto own_engine=word(cache(0));
+    frames();const auto owned_handle=word(cache(1)),owned_parent=row_for(owned_handle);
+    child_voice(owned_parent);check(active()==3,"off fixture owns parent and child beside local engine");
+    rr64::rival_engine::set_enabled(false);
+    const auto before_child=active();child_voice(owned_parent);
+    check(active()==before_child,"disabled queued owned child cannot allocate before cleanup");
+    frame(1.f/60.f,false);
+    check(row_for(owned_handle) && word(row_for(owned_handle)+0x10)!=~0u,
+          "feature off requests immediate native owned-loop stop without waiting for volume fade");
+    settle_releases();check(active()==1 && row_for(own_engine),"off cleanup removes owned parent/children and preserves own engine");
+    const auto quiet_scans=scans;
+    const auto quiet_native=native_calls;
+    const auto quiet_rules=rules_queries;
+    const auto quiet_allocations=allocations.load();
+    frames(120);
+    check(scans==quiet_scans && rules_queries==quiet_rules,"disabled frames skip listener, bike, profile and online-rules processing");
+    check(native_calls==quiet_native && allocations.load()==quiet_allocations,"disabled frames make no native voice start/update/allocation or host allocation calls");
+    const auto unrelated=start_native();check(row_for(unrelated) && row_for(own_engine),"disabled setting preserves shared player samples and unrelated effects");
+    rr64::rival_engine::set_enabled(true);frames();
+    check(active()==3 && row_for(word(cache(1))) && word(cache(0))==own_engine && row_for(unrelated),"reenable restores one rival without duplicating own engine or unrelated sounds");
     // Start cues take a different native early-return path than steady loops.
     reset();put(bike(1),12);position(1,8,0);scalar(0x800A1818,0);scalar(0x800A1820,0);frame();
     check(row_for(word(cache(1)))!=0,"native start cue can begin quietly");
@@ -169,6 +212,10 @@ int main(int argc,char**argv){
     reset(8);std::array<unsigned,4> protected_handles{};for(auto &h:protected_handles)h=start_native();
     position(1,0,5);frames();check(active()==4&&word(cache(1))==0,"four free voices reserved");
     for(auto h:protected_handles)check(row_for(h)!=0,"native impact handles survive admission denial");
+    auto release=context(protected_handles[0]);release.r5=0;func_800806B4(m,&release);
+    settle_releases();frames();
+    check(active()==4&&row_for(word(cache(1))),"rival retries admission after an effect releases");
+    for(unsigned i=1;i<protected_handles.size();++i)check(row_for(protected_handles[i])!=0,"retry preserves remaining original effects");
     reset(8);for(unsigned i=0;i<3;++i)start_native();for(unsigned s=1;s<5;++s)position(s,0,float(s));frames();check(active()==4&&managed()==1,"last admissible engine leaves four free effect voices");
     // Stop is a request, not a free row: a queued release must count against admission.
     auto pending=word(cache(1));auto c=context(pending);c.r5=0;func_800806B4(m,&c);
@@ -184,6 +231,9 @@ int main(int argc,char**argv){
     const std::array<unsigned,4> human_handles={word(cache(0)),word(cache(1)),word(cache(2)),word(cache(3))};
     position(13,301,5);frames();check(active()==5&&row_for(word(cache(13))),"AI uses closest of four listeners once");
     for(unsigned s=0;s<4;++s)check(word(cache(s))==human_handles[s],"local multiplayer native engine unchanged");
+    rr64::rival_engine::set_enabled(false);frame();
+    check(active()==4,"local multiplayer off removes managed AI only");
+    for(unsigned s=0;s<4;++s){call(func_8005980C,bike(s));check(word(cache(s))==human_handles[s],"off keeps each split-screen player's normal own engine");}
     // Online human opponents are positional and their original dispatcher is gated.
     for(bool replicated:{false,true})for(unsigned local=0;local<(replicated?14u:4u);++local){
         reset();rules.active=rules.connected=true;rules.phase=rr64::netplay::Phase::Race;rules.local_slot=local;rules.replicated_riders=replicated;
@@ -192,6 +242,12 @@ int main(int argc,char**argv){
         call(func_8005980C,bike(remote));check(active()==0,"online remote original producer gated");
         call(func_8005980C,bike(own));const auto own_handle=word(cache(own));frames();
         check(active()==2&&word(cache(own))==own_handle,"online local native plus one remote managed engine");
+        rr64::rival_engine::set_enabled(false);frame();
+        call(func_8005980C,bike(remote));call(func_8005980C,bike(own));frames();
+        check(active()==1 && word(cache(own))==own_handle && !row_for(word(cache(remote))),
+              "off keeps online remote native dispatcher suppressed for every ownership mapping");
+        rr64::rival_engine::set_enabled(true);frames();
+        check(active()==2 && word(cache(own))==own_handle,"online reenable restores one managed remote and no duplicate own engine");
         auto private_memory=memory;auto private_ctx=context();const auto before=memory;
         {rr64::prediction::ReplayScope replay;rr64_rival_engine_frame(private_memory.data(),&private_ctx);rr64_rival_engine_mode(private_memory.data(),&private_ctx,0);rr64_rival_engine_gate(private_memory.data(),&private_ctx);}
         check(private_memory==before&&memory==before,"private replay cannot produce, stop or alter live engine state");
@@ -214,13 +270,72 @@ int main(int argc,char**argv){
         if(mode==8){auto ctx=context();rr64_rival_engine_mode(m,&ctx,0);put(rr64::engine::globals::pending_mode,0);}
         frames();check(active()==1&&row_for(sound),"disabled/dead/paused/highlight/menu/recovery cleanup preserves unrelated effect");
     }
-    // Pitch and sample choice are the original bike-state algorithm.
-    for(unsigned type:{0u,12u,15u,16u})for(float rpm:{10.f,150.f,400.f}){
-        reset();put(bike(1),type);position(1,8,0);scalar(bike(1)+0x498,rpm);frames();auto managed_row=row_for(word(cache(1)));check(managed_row!=0,"bike profile engine audible");
-        const auto effect=half(managed_row+0xA6);const auto pitch=value(managed_row+0x30);
-        put(bike(2),type);put(actor(2)+8,2);scalar(bike(2)+0x498,rpm);call(stock_func_800571DC,bike(2));auto native_row=row_for(word(cache(2)));
-        check(native_row&&half(native_row+0xA6)==effect&&value(native_row+0x30)==pitch,"managed engine reuses exact native sample and pitch");
+    // The original table has 32 model entries, including later choppers,
+    // Scooter, both Insanity bikes and cop variants. Reserved model 22 points
+    // at unrelated packed data and must never enter the native producer.
+    for(unsigned type=0;type<32;++type){
+        reset();put(bike(0),type);put(bike(1),25);position(1,8,0);frames();
+        check(row_for(word(cache(1)))!=0,"every local model remains a listener, including reserved model");
     }
+    for(unsigned type:{22u,32u,0xFFFFFFFFu}){
+        reset();put(bike(1),type);position(1,8,0);put(bike(2),26);position(2,10,0);frames();
+        check(!row_for(word(cache(1)))&&row_for(word(cache(2)))&&active()==1,"invalid source profile cannot silence a valid rival");
+    }
+    for(unsigned bad:{0u,0x800A4981u,0x90000000u}){
+        reset();put(0x800A4B48,bad);position(1,8,0);put(bike(2),26);position(2,10,0);frames();
+        check(!row_for(word(cache(1)))&&row_for(word(cache(2))),"malformed source table entry leaves local listener intact");
+    }
+    for(unsigned offset=0;offset<16;offset+=4){
+        reset();put(word(0x800A4B48)+offset,word(bank));position(1,8,0);frames();
+        check(active()==0,"each authored effect index is checked before native playback");
+    }
+
+    // Use actual RPM branches: values below 1000 only exercise idle. At 100%
+    // and close distance the native per-model gain must equal a local engine.
+    // Still positions make the optional Doppler contribution exactly zero.
+    for(unsigned type=0;type<32;++type)for(unsigned phase=0;phase<4;++phase){
+        if(type==22)continue;
+        reset();rr64::rival_engine::set_volume_percent(100);position(1,8,0);
+        for(unsigned slot:{1u,2u}){
+            put(bike(slot),type);scalar(bike(slot)+0xC,6000);
+            scalar(bike(slot)+0x490,phase==1?3500.f:phase==2?4000.f:500.f);
+            scalar(bike(slot)+0x494,phase==1?4000.f:0.f);
+            scalar(bike(slot)+0x498,phase==1?3000.f:phase==2?3500.f:1000.f);
+        }
+        put(actor(2)+8,2);
+        if(phase==3){scalar(0x800A1818,0);scalar(0x800A1820,0);}
+        frames();const auto managed_row=row_for(word(cache(1)));
+        check(managed_row!=0,"all valid bike models play through idle acceleration coast and start");
+        const auto effect=half(managed_row+0xA6),gain=half(managed_row+0x9E);
+        const auto pitch=value(managed_row+0x30);
+        const auto profile=word(0x800A4B48+type*4);
+        const unsigned expected_offset=phase==3?0:phase==1?8:phase==2?12:value(profile+0x24)>0?4:12;
+        check(effect==word(profile+expected_offset),"engine branch selects its authored model sample");
+        call(stock_func_800571DC,bike(2));const auto native_row=row_for(word(cache(2)));
+        check(native_row&&half(native_row+0xA6)==effect&&value(native_row+0x30)==pitch,"managed engine retains exact native model sample and stationary pitch");
+        check(half(native_row+0x9E)==gain,"maximum close rival gain equals same model local engine");
+        if(phase==3){
+            // The fixture models worker completion, not sample rendering: end
+            // each start cue and verify the real producer enters its loop.
+            for(unsigned slot:{1u,2u}){auto end=context(word(cache(slot)));end.r5=0;func_800806B4(m,&end);}
+            settle_releases();scalar(0x800A1818,10);frames();call(stock_func_800571DC,bike(2));
+            const auto loop=row_for(word(cache(1))),original=row_for(word(cache(2)));
+            const unsigned idle_offset=value(profile+0x24)>0?4:12;
+            check(loop&&original&&half(loop+0xA6)==word(profile+idle_offset)&&half(original+0xA6)==half(loop+0xA6),"every completed start cue transitions to the correct model loop");
+        }
+    }
+    // Retain nearby detail and extend useful range without increasing voices.
+    unsigned preceding_gain=0;
+    for(float distance:{0.f,8.f,12.f,60.f,130.f,200.f,300.f,320.f,400.f}){
+        reset();rr64::rival_engine::set_volume_percent(100);position(1,distance,0);frames();
+        const auto voice=row_for(word(cache(1))),gain=voice?half(voice+0x9E):0;
+        if(distance<=12)check(gain>0&&(!preceding_gain||gain==preceding_gain),"close range retains full local-equivalent level");
+        else check(gain<=preceding_gain,"extended distance curve fades monotonically");
+        if(distance==130||distance==200)check(gain>0,"rival stays audible beyond the previous range");
+        if(distance>=320)check(!voice,"extended range ends in released silence");
+        preceding_gain=gain;
+    }
+    test_rival_doppler_cases();
     // Bounded producer benchmark: real fourteen-racer/four-view scan and
     // actual native memory operations; no sound device, IO or allocator calls.
     reset(16,4);for(unsigned s=0;s<14;++s)position(s,float(s),5);frames();

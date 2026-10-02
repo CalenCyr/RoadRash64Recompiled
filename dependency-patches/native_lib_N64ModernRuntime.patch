@@ -77,19 +77,19 @@ index 0195f2b..8c82d68 100644
  #include <ultramodern/ultramodern.hpp>
  
 diff --git a/librecomp/src/cont.cpp b/librecomp/src/cont.cpp
-index 7ad6c21..5856b33 100644
+index 7ad6c21..69d43e2 100644
 --- a/librecomp/src/cont.cpp
 +++ b/librecomp/src/cont.cpp
-@@ -1,5 +1,8 @@
+@@ -1,4 +1,8 @@
  #include "ultramodern/ultramodern.hpp"
- 
++#include "ultramodern/rr64_scheduler_diagnostics.hpp"
++
 +#include <array>
 +#include <cstdio>
-+
+ 
  #include "helpers.hpp"
  
- #define MAXCONTROLLERS 4
-@@ -45,16 +48,44 @@ extern "C" void osContStartReadData_recomp(uint8_t* rdram, recomp_context* ctx)
+@@ -45,16 +49,44 @@ extern "C" void osContStartReadData_recomp(uint8_t* rdram, recomp_context* ctx)
  extern "C" void osContGetReadData_recomp(uint8_t* rdram, recomp_context* ctx) {
      PTR(OSContPad) data = _arg<0, PTR(OSContPad)>(rdram, ctx);
  
@@ -111,7 +111,7 @@ index 7ad6c21..5856b33 100644
 +        dummy_data[2].err_no,
 +        dummy_data[3].err_no,
 +    };
-+    if (current_errors != previous_errors) {
++    if (ultramodern::rr64_diagnostics::enabled() && current_errors != previous_errors) {
 +        std::fprintf(
 +            stderr,
 +            "[RR64-CONT] read errors=(%u,%u,%u,%u)\n",
@@ -136,11 +136,42 @@ index 7ad6c21..5856b33 100644
          }
      }
  }
+diff --git a/librecomp/src/heap.cpp b/librecomp/src/heap.cpp
+index f84ac71..2c7bcb2 100644
+--- a/librecomp/src/heap.cpp
++++ b/librecomp/src/heap.cpp
+@@ -3,6 +3,7 @@
+ #include "librecomp/addresses.hpp"
+ #include "librecomp/overlays.hpp"
+ #include "librecomp/helpers.hpp"
++#include "ultramodern/rr64_scheduler_diagnostics.hpp"
+ 
+ static uint32_t heap_offset;
+ 
+@@ -37,7 +38,9 @@ void recomp::init_heap(uint8_t* rdram, uint32_t address) {
+     heap_offset = address - 0x80000000U;
+     size_t heap_size = recomp::mem_size - heap_offset;
+ 
+-    printf("Initializing recomp heap at offset 0x%08X with size 0x%08X\n", heap_offset, static_cast<uint32_t>(heap_size));
++    if (ultramodern::rr64_diagnostics::enabled()) {
++        printf("Initializing recomp heap at offset 0x%08X with size 0x%08X\n", heap_offset, static_cast<uint32_t>(heap_size));
++    }
+ 
+     o1heapInit(&rdram[heap_offset], heap_size);
+ }
 diff --git a/librecomp/src/mods.cpp b/librecomp/src/mods.cpp
-index 0f7de83..3f18d26 100644
+index 0f7de83..9dc5aec 100644
 --- a/librecomp/src/mods.cpp
 +++ b/librecomp/src/mods.cpp
-@@ -613,7 +613,7 @@ recomp::mods::ModLoadError recomp::mods::ModContext::load_mod(recomp::mods::ModH
+@@ -10,6 +10,7 @@
+ #include "librecomp/patcher.hpp"
+ #include "recompiler/context.h"
+ #include "recompiler/live_recompiler.h"
++#include "ultramodern/rr64_scheduler_diagnostics.hpp"
+ 
+ static bool read_json(std::ifstream input_file, nlohmann::json &json_out) {
+     if (!input_file.good()) {
+@@ -613,7 +614,7 @@ recomp::mods::ModLoadError recomp::mods::ModContext::load_mod(recomp::mods::ModH
      mod.section_load_addresses.clear();
  
      // Check that the mod's minimum recomp version is met.
@@ -149,7 +180,7 @@ index 0f7de83..3f18d26 100644
          error_param = mod.manifest.minimum_recomp_version.to_string();
          return ModLoadError::MinimumRecompVersionNotMet;
      }
-@@ -636,6 +636,27 @@ void recomp::mods::ModContext::register_embedded_mod(const std::string &mod_id,
+@@ -636,6 +637,27 @@ void recomp::mods::ModContext::register_embedded_mod(const std::string &mod_id,
      embedded_mod_bytes.emplace(mod_id, mod_bytes);
  }
  
@@ -177,7 +208,7 @@ index 0f7de83..3f18d26 100644
  void recomp::mods::ModContext::register_deprecated_mod(const std::string& mod_id, DeprecationStatus deprecation_status, const Version &maximum_version) {
      deprecated_mods[mod_id].status = deprecation_status;
      deprecated_mods[mod_id].maximum_version = maximum_version;
-@@ -795,6 +816,9 @@ void recomp::mods::ModContext::dirty_mod_configuration_thread_process() {
+@@ -795,6 +817,9 @@ void recomp::mods::ModContext::dirty_mod_configuration_thread_process() {
  }
  
  std::vector<recomp::mods::ModOpenErrorDetails> recomp::mods::ModContext::scan_mod_folder(const std::filesystem::path& mod_folder) {
@@ -187,7 +218,27 @@ index 0f7de83..3f18d26 100644
      std::vector<recomp::mods::ModOpenErrorDetails> ret{};
      std::error_code ec;
      close_mods();
-@@ -845,6 +869,7 @@ std::vector<recomp::mods::ModOpenErrorDetails> recomp::mods::ModContext::scan_mo
+@@ -816,7 +841,9 @@ std::vector<recomp::mods::ModOpenErrorDetails> recomp::mods::ModContext::scan_mo
+             is_mod = true;
+         }
+         if (is_mod) {
+-            printf("Opening mod " PATHFMT "\n", mod_path.path().stem().c_str());
++            if (ultramodern::rr64_diagnostics::enabled()) {
++                printf("Opening mod " PATHFMT "\n", mod_path.path().stem().c_str());
++            }
+             std::string open_error_param;
+             ModOpenError open_error = open_mod_from_path(mod_path, open_error_param, supported_content_types, requires_manifest);
+ 
+@@ -824,7 +851,7 @@ std::vector<recomp::mods::ModOpenErrorDetails> recomp::mods::ModContext::scan_mo
+                 ret.emplace_back(mod_path.path(), open_error, open_error_param);
+             }
+         }
+-        else {
++        else if (ultramodern::rr64_diagnostics::enabled()) {
+             printf("Skipping non-mod " PATHFMT PATHFMT "\n", mod_path.path().stem().c_str(), mod_path.path().extension().c_str());
+         }
+     }
+@@ -845,6 +872,7 @@ std::vector<recomp::mods::ModOpenErrorDetails> recomp::mods::ModContext::scan_mo
  }
  
  void recomp::mods::ModContext::load_mods_config() {
@@ -195,7 +246,7 @@ index 0f7de83..3f18d26 100644
      std::unordered_set<std::string> config_enabled_mods;
      std::vector<std::string> config_mod_order;
      std::vector<bool> opened_mod_is_known;
-@@ -881,6 +906,13 @@ void recomp::mods::ModContext::load_mods_config() {
+@@ -881,6 +909,13 @@ void recomp::mods::ModContext::load_mods_config() {
              enable_mod(mod_id, true, false);
          }
      }
@@ -209,7 +260,7 @@ index 0f7de83..3f18d26 100644
  }
  
  void recomp::mods::ModContext::rebuild_mod_order_lookup() {
-@@ -1047,6 +1079,42 @@ void recomp::mods::ModContext::enable_mod(const std::string& mod_id, bool enable
+@@ -1047,6 +1082,42 @@ void recomp::mods::ModContext::enable_mod(const std::string& mod_id, bool enable
          return;
      }
  
@@ -252,11 +303,22 @@ index 0f7de83..3f18d26 100644
      if (enabled) {
          bool was_enabled = enabled_mods.emplace(mod_id).second;
  
+@@ -1621,7 +1692,9 @@ std::vector<recomp::mods::ModLoadErrorDetails> recomp::mods::ModContext::load_mo
+                 active_mods.push_back(mod_index);
+                 loaded_mods_by_id.emplace(mod.manifest.mod_id, mod_index);
+ 
+-                printf("Loading mod %s\n", mod.manifest.mod_id.c_str());
++                if (ultramodern::rr64_diagnostics::enabled()) {
++                    printf("Loading mod %s\n", mod.manifest.mod_id.c_str());
++                }
+                 std::string load_error_param;
+                 ModLoadError load_error = load_mod(mod, load_error_param);
+ 
 diff --git a/librecomp/src/pak.cpp b/librecomp/src/pak.cpp
-index 0be1513..9facf31 100644
+index 0be1513..32d232b 100644
 --- a/librecomp/src/pak.cpp
 +++ b/librecomp/src/pak.cpp
-@@ -1,51 +1,476 @@
+@@ -1,51 +1,479 @@
 +#include <algorithm>
 +#include <array>
 +#include <cstdint>
@@ -269,6 +331,7 @@ index 0be1513..9facf31 100644
 +
  #include "ultramodern/ultra64.h"
  #include "ultramodern/ultramodern.hpp"
++#include "ultramodern/rr64_scheduler_diagnostics.hpp"
  
  #include "recomp.h"
  #include "helpers.hpp"
@@ -393,8 +456,10 @@ index 0be1513..9facf31 100644
 +
 +    if (loaded) {
 +        g_files = std::move(loaded_files);
-+        std::fprintf(stderr, "[RR64-PFS] Loaded virtual Controller Pak: %s\n", path.string().c_str());
-+    } else {
++        if (ultramodern::rr64_diagnostics::enabled()) {
++            std::fprintf(stderr, "[RR64-PFS] Loaded virtual Controller Pak: %s\n", path.string().c_str());
++        }
++    } else if (ultramodern::rr64_diagnostics::enabled()) {
 +        std::fprintf(stderr, "[RR64-PFS] Starting with an empty virtual Controller Pak: %s\n", path.string().c_str());
 +    }
  }

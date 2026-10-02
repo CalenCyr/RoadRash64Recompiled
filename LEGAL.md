@@ -17,3 +17,9 @@ A separate optional release download contains the Road Rash 64 Remastered Editio
 Existing local achievement badges are retained and credited to the RetroAchievements set and badge contributors. Some depict original game imagery. They and the optional texture mod have separate artwork provenance; a statement that the package excludes ROMs and imported course assets must not be read as claiming it contains no game-derived imagery.
 
 For attribution corrections or rights concerns, contact the repository maintainer through the repository's contact options. Do not upload disputed game files publicly as evidence.
+
+More Characters is a separate optional pack of authored, AI-assisted fan skins.
+It contains no replacement meshes or extracted ROM textures. Character names,
+designs and likenesses retain their own rights and are not relicensed by the
+project's software license; see CREDITS.md. Native geometry and animations remain
+loaded from the player's Road Rash 64 ROM.

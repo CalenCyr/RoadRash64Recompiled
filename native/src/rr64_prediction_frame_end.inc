@@ -12,6 +12,7 @@ bool replay_native_streaming(Resources &resources,const StreamingInput &input,co
         return fail_frame("streaming entry unavailable");
     ReplayScope scope;
     if(!scope.valid())return fail_frame("streaming scope invalid");
+    TerrainStreamingScope terrain_scope(input.bounded_terrain);
     struct Binding {
         Binding(Resources &r){frame_resources=&r;frame_blocks=2000000;}
         ~Binding(){frame_resources=nullptr;frame_blocks=0;}
@@ -63,6 +64,7 @@ bool replay_native_order(Resources &resources,const FrameInput &input){
         // legitimate race/recovery transitions with a second derived result.
         return true;
     }catch(const Resources::Invalid &e){return fail_frame(e.what());}
+     catch(const rr64::online_terrain::CollisionUnavailable &e){return fail_frame(e.what());}
      catch(const Resources::Blocked&){return fail_frame("order resource wait blocked");}
 }
 bool replay_native_frame(Resources& resources,const FrameInput& input,FrameOutput& output){
@@ -127,6 +129,8 @@ bool replay_native_frame(Resources& resources,const FrameInput& input,FrameOutpu
                                 completed.items))return fail_frame("historical item completion unavailable");
         output=completed;return true;
     }catch(const Resources::Invalid &error){return fail_frame(error.what());}
+     // Missing historical wall data discards only this correction transaction.
+     catch(const rr64::online_terrain::CollisionUnavailable &error){return fail_frame(error.what());}
      catch(const Resources::Blocked&){return fail_frame("private resource wait blocked");}
 }
 } // rr64::prediction

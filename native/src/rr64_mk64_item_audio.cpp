@@ -27,6 +27,13 @@ struct Voice {
     float gain = 0, target = 0, pan = 0;
     bool active = false;
 };
+struct MixVoice {
+    Voice *voice;
+    const Sample *sample;
+    double step;
+    std::array<float, 2> pan;
+    float volume;
+};
 std::array<Sample, sound_count> samples;
 std::array<Voice, voice_capacity> voices;
 std::array<Event, queue_capacity> queue;
@@ -337,20 +344,41 @@ void mix_audio(std::span<std::int16_t> stereo, unsigned rate, float sfx_volume,
         voice_count.store(0, std::memory_order_relaxed);
         return;
     }
+    // Events are consumed before mixing, and bank_mutex holds the samples and
+    // voice parameters stable for this entire buffer. Prepare only occupied
+    // slots in their original order so sample accumulation stays identical.
+    std::array<MixVoice, voice_capacity> mixing;
+    unsigned mixing_count = 0;
+    for (auto &voice : voices) {
+        if (!voice.active)
+            continue;
+        const auto &sample = samples[unsigned(voice.sound)];
+        const std::array<float, 2> pan = sample.channels == 2
+                                             ? std::array{1.f, 1.f}
+                                             : std::array{std::sqrt((1.f - voice.pan) * .5f),
+                                                          std::sqrt((1.f + voice.pan) * .5f)};
+        mixing[mixing_count++] = {&voice, &sample, double(sample.rate) / rate, pan,
+                                  voice.sound == Sound::StarMusic ? music_volume * .6f
+                                                                  : sfx_volume * .35f};
+    }
+    const double seconds = 1.0 / rate;
+    const float smoothing = std::min(1.f, 90.f / rate);
     for (std::size_t frame = 0; frame < stereo.size() / 2; ++frame) {
         std::array<float, 2> addition{};
-        for (auto &voice : voices) {
+        for (unsigned slot = 0; slot < mixing_count; ++slot) {
+            const auto &mix = mixing[slot];
+            auto &voice = *mix.voice;
             if (!voice.active)
                 continue;
-            const auto &sample = samples[unsigned(voice.sound)];
+            const auto &sample = *mix.sample;
             if (!sample.frames) {
                 voice.active = false;
                 continue;
             }
-            const bool loops = sample.loop != no_loop, song = voice.sound == Sound::StarMusic;
-            voice.age += 1.0 / rate;
+            const bool loops = sample.loop != no_loop;
+            voice.age += seconds;
             const float desired = loops && voice.age > .15 ? 0 : voice.target;
-            voice.gain += (desired - voice.gain) * std::min(1.f, 90.f / rate);
+            voice.gain += (desired - voice.gain) * smoothing;
             if (loops && desired == 0 && voice.gain < .0001f) {
                 voice.active = false;
                 continue;
@@ -372,13 +400,10 @@ void mix_audio(std::span<std::int16_t> stereo, unsigned rate, float sfx_volume,
                 const unsigned source_channel = sample.channels == 2 ? channel : 0;
                 const float first = sample.pcm[index * sample.channels + source_channel];
                 const float second = sample.pcm[next * sample.channels + source_channel];
-                const float pan = sample.channels == 2
-                                      ? 1.f
-                                      : std::sqrt((1.f + (channel ? voice.pan : -voice.pan)) * .5f);
-                addition[channel] += (first + (second - first) * fraction) * voice.gain * pan *
-                                     (song ? music_volume * .6f : sfx_volume * .35f);
+                addition[channel] += (first + (second - first) * fraction) * voice.gain *
+                                     mix.pan[channel] * mix.volume;
             }
-            voice.cursor += double(sample.rate) / rate;
+            voice.cursor += mix.step;
         }
         // Dedicated headroom for simultaneous items; native effects retain
         // their own allocation and samples. Saturation is the last boundary.

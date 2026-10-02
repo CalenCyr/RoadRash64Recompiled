@@ -10,6 +10,13 @@ extern "C" void fixture_material_call_bike(unsigned char *, recomp_context *);
 extern "C" void fixture_material_call_rider(unsigned char *, recomp_context *);
 extern "C" unsigned fixture_material_resolve(unsigned, const unsigned *, bool);
 
+// This fixture continues testing the unchanged material effect fallback for
+// stock actors. Rider-skin rendering has its own native-caller fixture target.
+extern "C" unsigned rr64_rider_skin_actor_call(unsigned char* m, unsigned node,
+                                               unsigned list, unsigned call, unsigned) {
+    return rr64_mk64_items_actor_call(m,node,list,call);
+}
+
 namespace {
 using rr64::mk64_items::MaterialCommand;
 unsigned checks = 0, allocations = 0, allocation_cursor = 0x06aa8330;

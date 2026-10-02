@@ -1,12 +1,32 @@
 #include "rr64_roaming_route.hpp"
+#include "rr64_experimental_course_route.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_prediction_rules.hpp"
 #include <cstdio>
 #include <vector>
 #include <cmath>
 #include <limits>
-namespace { rr64::netplay::Status session; }
-namespace rr64::netplay { Status get_status(){return session;} }
+namespace {
+rr64::netplay::Status session;
+rr64::experimental_course::RouteData imported_route;
+bool imported_active=false,custom_cop=false;
+constexpr unsigned route_heap=0x80200000;
+}
+namespace rr64::netplay {
+Status get_status(){return session;}
+PhysicsRules get_physics_rules(){return {};}
+}
+namespace rr64::experimental_course {
+bool active() noexcept { return imported_active; }
+const RouteData* route_data() noexcept { return &imported_route; }
+}
+extern "C" int rr64_custom_cop_enabled() { return custom_cop; }
+extern "C" int rr64_custom_cop_is_player(unsigned char*,unsigned) { return 0; }
+// Allocation is independent of race rules; supply the validated free block.
+extern "C" void func_8001BDF8(unsigned char*,recomp_context* c) {
+    c->r2=rr64::engine::guest_address(route_heap+8);
+}
+extern "C" void func_8001C084(unsigned char*,recomp_context*) {}
 extern "C" void func_8006736C(unsigned char*,recomp_context*);
 extern "C" void func_800674C4(unsigned char*,recomp_context*);
 extern "C" void func_80066D70(unsigned char*,recomp_context*);
@@ -228,6 +248,53 @@ int main() {
     put(0x800D763C,0);
     put(0x800A6540,0xFFFFFFFF);
     check(!rr64_roaming_recovery_point(m,&c),"malformed route count rejected");
+    // Install a real closed imported route before executing the game's lap
+    // calculation. A forced lap flag used to finish Tag riders after one lap.
+    std::array<unsigned char,11*16> records{};
+    const float x[11]={0,50,100,150,200,100,0,50,100,150,200};
+    for(unsigned i=0;i<11;++i) {
+        auto* record=records.data()+i*16;
+        record[0]=i==10?3:(i&1)?4:1;record[4]=record[5]=1;
+        unsigned bits;std::memcpy(&bits,&x[i],4);
+        for(unsigned b=0;b<4;++b) record[8+b]=static_cast<unsigned char>(bits>>(24-b*8));
+    }
+    imported_route.records_be=records.data();imported_route.byte_count=records.size();
+    imported_route.record_count=11;imported_route.wrap_segment=imported_route.finish_segment=6;
+    imported_route.prior_laps_required=2;imported_route.lap_period=400;
+    imported_route.lap_threshold=450;imported_route.finish_threshold=1250;
+    imported_route.finish_parameter=.5f;imported_route.finish[0]=50;
+    imported_route.native_laps=true;imported_active=true;
+    constexpr unsigned descriptor=0x80110000;
+    put(0x800D7620,descriptor);put(0x800BBD00,route_heap);
+    put(route_heap,4096);write_u16(m,route_heap+4,8);
+    write_s8(m,route_heap+6,0);write_s8(m,route_heap+7,0);
+    put(route_heap+4104,0);write_s8(m,route_heap+4110,1);
+    for(bool cop: {false,true}) for(unsigned type=1;type<=8;++type) {
+        custom_cop=cop;
+        const bool point_mode=type==6 || type==7;
+        const unsigned laps=type==4?6:type==3 || type==8?2:0;
+        put(0x8009EAE4,type);put(0x800D8524,cop?8:type);
+        put(0x800A6544,0);write_u16(m,0x800D7680,point_mode?0:1);
+        check(rr64_experimental_course_build_route(m,&c)==1,"imported route installs in each native mode");
+        std::uint16_t lap_enabled=0;read_u16(m,0x800D7680,lap_enabled);
+        check(lap_enabled==(!point_mode || cop),"imported route retains native point-mode lap flag");
+        check(get(0x800D7644)==laps && val(0x800D7634)==450+laps*400,
+              "imported route retains each mode's required lap count");
+        set_progress(6,.6f,400);put(state+0x58,0);
+        const float distance=evaluate_lap();
+        const bool retains_laps=!point_mode || cop;
+        check(get(state+4)==unsigned(retains_laps) && std::abs(distance-(retains_laps?460:60))<.001f,
+              "native finish crossing retains laps only for finish-based modes");
+        check(get(state+0x58)==unsigned(type==6 && !cop),
+              "native Deathmatch lap awards a point and Tag lap awards none");
+        if(type==7 && !cop)
+            check(!(distance>=val(0x800D7634) && get(state+4)>get(0x800D7644)),
+                  "imported Tag lap cannot trigger native finish eligibility");
+        rr64::experimental_course::restore_descriptor(m);
+        read_u16(m,0x800D7680,lap_enabled);
+        check(lap_enabled==!point_mode,"stock return restores original lap flag");
+    }
+    imported_active=custom_cop=false;
     std::printf("Roaming route: %u checks, %u failures\n",tests,failed);
     return failed?1:0;
 }

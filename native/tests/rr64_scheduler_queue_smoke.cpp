@@ -270,6 +270,13 @@ void run_next_thread_and_wait(RDRAM_ARG1) {
 } // namespace ultramodern
 
 int main() {
+    // This fixture asserts the optional observations as well as queue behavior.
+    // Enable them explicitly; normal player processes leave them disabled.
+#ifdef _WIN32
+    if (_putenv_s("RR64_DIAGNOSTICS", "1") != 0) return 2;
+#else
+    if (setenv("RR64_DIAGNOSTICS", "1", 1) != 0) return 2;
+#endif
     for (unsigned path = 0; path < 3; ++path) test_delivery_path(path);
     test_jam_and_destination();
     for (const auto queue : {MainQueue, ViQueue}) {

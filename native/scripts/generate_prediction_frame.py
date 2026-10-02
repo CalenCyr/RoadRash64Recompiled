@@ -56,6 +56,14 @@ parts.append('using NativeFunction=void(*)(uint8_t*,recomp_context*);\nNativeFun
 parts.extend('case 0x'+a+':return '+n+';' for a,n in sorted(addresses.items()) if n in seen)
 parts.append('default:{char reason[96];std::snprintf(reason,sizeof(reason),"unregistered native replay callback %08x",static_cast<unsigned>(address));throw Resources::Invalid(reason);}}}')
 for text in [*(functions[n] for n in sorted(seen)),prefix,order]:
+    # Terrain cache readiness is captured with each historical streaming
+    # event. Never initialize/query today's renderer from a private image.
+    text = text.replace('rr64_terrain_streaming_range(rdram, ctx->f4.u32l)',
+                        'private_terrain_streaming_range(ctx->f4.u32l)')
+    text = text.replace('rr64_terrain_pool_require(rdram, 2u, (unsigned)ctx->r16)',
+                        'private_terrain_pool_require(rdram, 2u, (unsigned)ctx->r16)')
+    if 'rr64_terrain_streaming_range(' in text or 'rr64_terrain_pool_require(' in text:
+        raise RuntimeError('New terrain pool hook requires explicit private replay handling')
     # These register-only presentation hooks consult the live peer's listener.
     # Historical simulation keeps the original native gain path and must never
     # read today's network session or cause a live audio service call.
@@ -75,7 +83,7 @@ for text in [*(functions[n] for n in sorted(seen)),prefix,order]:
     # The original private sound path still uses its isolated mixer services.
     text=re.sub(r'if \(rr64_rival_engine_(?:gain|allocate)\(rdram, ctx\)\) return;',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)
-    text=re.sub(r'\brr64_rival_engine_(?:frame|gate|threshold|no_steal|allocated|child_adopt)\(rdram, ctx\);',
+    text=re.sub(r'\brr64_rival_engine_(?:frame|gate|threshold|pitch|no_steal|allocated|child_adopt)\(rdram, ctx\);',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)
     text=re.sub(r'\brr64_rival_engine_(?:mode|recovery)\(rdram, ctx, \(unsigned\)ctx->r(?:4|17)\);',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)

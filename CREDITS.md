@@ -67,3 +67,18 @@ Course music and sound effects are rendered locally from the ROM's original sequ
 | [FFmpeg](https://ffmpeg.org/) | FFmpeg developers and contributors | Linux custom-soundtrack decoding; not part of MK64 course conversion |
 
 Full importer runtime notices are in `tools/mk64-importer/licenses` in the Windows package and `usr/bin/tools/mk64-importer/licenses` inside the Linux AppImage, with supplemental notices in `licenses/mk64-importer`. The Linux runtime also credits the zlib and XZ Utils authors. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for versions and terms, and `scripts/MK64-IMPORTER-NOTICES.md` in the source package for build details. Original game developers, mod creators, upstream researchers and tool authors retain credit for their respective work.
+
+## Optional More Characters skins
+
+More Characters 2.0.5 contains newly authored, AI-assisted diffuse skin textures
+fitted to the native male/female rider models. It supplies no replacement meshes
+or extracted ROM textures. The pack is separate from the game downloads; native
+models and animation still come from the player's Road Rash 64 ROM. Image
+generation and reviewed pixel/UV fitting used OpenAI tools, Python and Pillow.
+
+The character references remain credited to their respective creators and rights
+holders: RuneScape (Jagex), Punisher and Ghost Rider (Marvel), Halo and Gears of
+War (their original teams and rights holders), Doom (id Software), The Legend of
+Zelda (Nintendo), Riddick (its creators and rights holders), and Vin Diesel for
+his likeness. These are unofficial fan interpretations; no endorsement or rights
+to the underlying characters, names or likenesses are claimed.

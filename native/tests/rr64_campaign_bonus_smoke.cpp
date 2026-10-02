@@ -302,14 +302,53 @@ int main(int argc,char** argv) {
         check(word(m,0x800A6680)==(track==7 ? 0:track+1),"bonus sequence selects next course or replay");
     }
     check(results(5)==0x11111111,"all eight bonus qualifications retained");
-    // Original Level 5 still enters the real ending mode and completion hook.
-    set_results(4,0x11111111); completed=advanced=mode=0; postrace_context(c); bonus_native_postrace(m,&c);
-    check(mode==0x38 && completed==1 && advanced==0 && word(m,profile+0x3C)==4,"original Level5 ending/completion changed");
+    // Finish the original campaign from each possible final unqualified track.
+    // The real prize initializer must decide from PRE-award saved progress, not
+    // the newly qualified record later displayed by 73054 each frame.
+    unsigned ending_cases=0;
+    for(unsigned final_track=0;final_track<8;++final_track) {
+        set_results(4,0x11111111u&~(15u<<(final_track*4)));
+        write_u32(m,profile+0x14,20); write_u32(m,profile+0x38,425);
+        write_u32(m,0x800A6680,final_track); write_u32(m,0x800A6684,~0u);
+        c=context(); bonus_native_route(m,&c);
+        const unsigned prize=half(m,descriptor+0xC);
+        write_u32(m,0x80620044,0); c=context(); func_80072E74(m,&c);
+        check(word(m,profile+0x50)==0x11111111,"first final qualification stored natively");
+        check(word(m,profile+0x38)==425+prize+35,"first completion prize remains native");
+        // Several idle result frames must not consume the first ending.
+        write_u16(m,0x8009CDA8,0); completed=advanced=mode=0;
+        for(unsigned frame=0;frame<3;++frame) { postrace_context(c); bonus_native_postrace(m,&c); }
+        check(mode==0 && completed==0,"first ending waits for the player's acceptance");
+        write_u16(m,0x8009CDA8,0x9000); postrace_context(c); bonus_native_postrace(m,&c);
+        check(mode==0x38 && completed==1 && advanced==0 && word(m,profile+0x3C)==4,"first original ending and achievement preserved");
+        check(rr64_campaign_ending_exit(m,1)==0x2F,"original ending returns to save-capable menu");
+        c=context(); func_80073658(m,&c);
+        check(word(m,0x8009E128)==3,"first ending still highlights Save Game");
+        ++ending_cases;
+    }
+    // Farm any original finale race, including failed qualifications and the
+    // saturated counter. Below $60,000 must not suppress its payout or charge
+    // an Insanity bike. The completion route alone changes to the normal menu.
+    for(unsigned track=0;track<8;++track) for(unsigned old:{1u,2u,15u}) for(unsigned place=0;place<4;++place) {
+        const unsigned before=(0x11111111u&~(15u<<(track*4)))|(old<<(track*4));
+        set_results(4,before); write_u32(m,profile+0x14,20); write_u32(m,profile+0x38,425);
+        write_u32(m,0x800A6680,track); write_u32(m,0x800A6684,~0u);
+        c=context(); bonus_native_route(m,&c);
+        write_u32(m,0x80620044,place);
+        auto expected=memory; auto stock=context(); stock_func_80072E74(expected.data(),&stock);
+        c=context(); func_80072E74(m,&c);
+        check(bytes(m,profile,0xF8)==bytes(expected.data(),profile,0xF8),"replay prize, cash, bike, inventory and counters exactly match native");
+        const auto paid=bytes(m,profile,0xF8); completed=advanced=mode=0;
+        postrace_context(c); bonus_native_postrace(m,&c);
+        check(mode==0x2F && completed==0 && advanced==0,"completed original campaign replay must not run ending again");
+        check(bytes(m,profile,0xF8)==paid,"replay routing changed native earnings or inventory");
+        ++ending_cases;
+    }
     for(unsigned missing=0;missing<8;++missing) {
         set_results(4,0x11111111u&~(15u<<(missing*4))); completed=advanced=mode=0;
         postrace_context(c); bonus_native_postrace(m,&c);
         check(mode==0x2F && completed==0 && advanced==0,"incomplete original campaign triggered ending");
     }
     check(bytes(m,0x800A68C8,0x740C-0x68C8)==original_tables,"shared campaign route tables mutated");
-    std::printf("{\"passed\":true,\"checks\":%u,\"nativeDonors\":%u,\"nativeAiCases\":%u,\"nativePrizeCases\":%u,\"gameLaunched\":false}\n",checks,donors,ai_cases,prize_cases);
+    std::printf("{\"passed\":true,\"checks\":%u,\"nativeDonors\":%u,\"nativeAiCases\":%u,\"nativePrizeCases\":%u,\"nativeEndingCases\":%u,\"gameLaunched\":false}\n",checks,donors,ai_cases,prize_cases,ending_cases);
 }

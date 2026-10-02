@@ -21,7 +21,18 @@ using namespace rr64;
 using Vec = std::array<float, 3>;
 constexpr unsigned actors = 0x800d8570, actor_stride = 0x118;
 constexpr unsigned maximum_engines = 3, reserved_effect_voices = 4, voice_stride = 0x13c;
+// The ROM table contains all 32 bike models, including late choppers, the
+// two Insanity bikes and cop variants. Reserved entries still need validation.
+constexpr unsigned engine_profile_count = 32;
+constexpr float full_volume_distance = 12.f, audible_distance = 320.f;
 std::atomic<double> volume_percent{35.0};
+std::atomic<bool> engines_enabled{true};
+#ifdef RR64_RIVAL_ENGINE_TEST_TRACE
+extern "C" void rr64_rival_engine_test_scan(unsigned);
+#define RR64_RIVAL_SCAN(kind) rr64_rival_engine_test_scan(kind)
+#else
+#define RR64_RIVAL_SCAN(kind) ((void)0)
+#endif
 // Each native row has a monotonically assigned handle. A reused row cannot
 // inherit ownership just because its address matches an earlier rival voice.
 std::array<std::atomic<std::uint64_t>, 64> owned_rows{};
@@ -33,16 +44,18 @@ struct VoicePool {
 };
 struct Bike {
     unsigned slot = 14, bike = 0, rider = 0, controller = ~0u;
-    Vec position{};
-    bool ready = false;
+    Vec position{}, velocity{};
+    bool ready = false, motion_valid = false;
 };
 struct Listener {
-    unsigned slot = 14;
-    Vec position{}, forward{};
+    unsigned slot = 14, bike = 0, rider = 0;
+    Vec position{}, forward{}, velocity{};
+    bool attached = false, motion_valid = false;
 };
 struct Engine {
     Bike source{};
-    float gain = 0, pan = 128;
+    Listener listener{};
+    float gain = 0, pan = 128, doppler = 0;
     unsigned handle = ~0u;
 };
 struct Runtime {
@@ -58,8 +71,9 @@ thread_local Runtime runtime;
 struct Scope {
     unsigned char *memory = nullptr;
     void *context = nullptr;
-    unsigned bike = 0;
-    float gain = 0, pan = 128;
+    unsigned bike = 0, slot = 14;
+    gpr stack = 0;
+    float gain = 0, pan = 128, doppler = 0;
 };
 thread_local Scope producer;
 struct Binding {
@@ -134,6 +148,7 @@ bool owned_handle(unsigned char *m, unsigned handle, const VoicePool &p) {
     return false;
 }
 bool read_bike(unsigned char *m, unsigned slot, Bike &out) {
+    RR64_RIVAL_SCAN(1);
     if (slot >= 14)
         return false;
     const unsigned actor = actors + slot * actor_stride;
@@ -152,12 +167,29 @@ bool read_bike(unsigned char *m, unsigned slot, Bike &out) {
         return false;
     b.ready = !half(m, b.bike + engine::bike::drive_control_lockout) &&
               half(m, b.bike + engine::bike::rider_attached);
-    // Original 571DC indexes a ROM-authored bike profile through bike +0.
-    const unsigned type = word(m, b.bike), profile = type < 17 ? word(m, 0x800a4b48 + type * 4) : 0;
-    if (!engine::valid_guest_range(profile, 0x4c))
-        return false;
+    b.motion_valid = vector(m, b.bike + 0x178, b.velocity);
     out = b;
     return true;
+}
+unsigned sound_profile(unsigned char *m, const Bike &bike) {
+    RR64_RIVAL_SCAN(2);
+    // Only sound sources need a playable profile. A local listener must remain
+    // valid even when its bike has a reserved/missing sound-table entry.
+    const unsigned type = word(m, bike.bike);
+    if (type >= engine_profile_count)
+        return 0;
+    const unsigned profile = word(m, 0x800a4b48 + type * 4);
+    const unsigned bank = word(m, 0x800df718);
+    if ((profile & 3) || !engine::valid_guest_range(profile, 0x4c) ||
+        !engine::valid_guest_range(bank, 4))
+        return 0;
+    const unsigned effects = word(m, bank);
+    // Model 22's pointer addresses unrelated packed data in the original ROM.
+    // Validate all four authored engine effects before invoking native 571DC.
+    for (unsigned offset = 0; offset < 16; offset += 4)
+        if (word(m, profile + offset) >= effects)
+            return 0;
+    return profile;
 }
 bool rival(const Bike &b, const netplay::PhysicsRules &rules) {
     if (rules.active) {
@@ -204,6 +236,7 @@ float approach(float current, float target, float maximum) {
 }
 unsigned listeners(unsigned char *m, const netplay::PhysicsRules &rules,
                    std::array<Listener, 4> &out) {
+    RR64_RIVAL_SCAN(0);
     const auto count = rules.active ? 1u : std::clamp(word(m, engine::local_race::humans), 1u, 4u);
     unsigned used = 0;
     for (unsigned i = 0; i < count; ++i) {
@@ -216,12 +249,15 @@ unsigned listeners(unsigned char *m, const netplay::PhysicsRules &rules,
             continue;
         Listener l;
         l.slot = slot;
-        if (!vector(m,
-                    half(m, b.rider + engine::rider::bike_attached)
-                        ? b.bike + engine::bike::body_position
-                        : b.rider + 0x8c,
+        l.bike = b.bike;
+        l.rider = b.rider;
+        l.attached = half(m, b.rider + engine::rider::bike_attached) != 0;
+        if (!vector(m, l.attached ? b.bike + engine::bike::body_position : b.rider + 0x8c,
                     l.position))
             continue;
+        // 36B78 copies bike+178 into rider+98 while attached; after eject the
+        // latter is the body's own integrator velocity, not its abandoned bike.
+        l.motion_valid = vector(m, l.attached ? b.bike + 0x178 : b.rider + 0x98, l.velocity);
         // 1626C stores eye, target and up separately for each view. This follows the
         // camera after an eject, without borrowing the abandoned bike's heading.
         Vec eye{}, target{};
@@ -248,14 +284,58 @@ unsigned listeners(unsigned char *m, const netplay::PhysicsRules &rules,
 }
 struct Candidate {
     Bike source{};
-    float gain = 0, pan = 128, rank = 0;
+    Listener listener{};
+    float gain = 0, pan = 128, rank = 0, doppler = 0;
+    bool doppler_valid = false;
 };
+bool doppler_offset(unsigned char *m, const Bike &b, const Listener &l, float &offset) {
+    if (!b.motion_valid || !l.motion_valid)
+        return false;
+    const float dx = b.position[0] - l.position[0], dy = b.position[1] - l.position[1];
+    const float distance = std::hypot(dx, dy);
+    if (distance < .001f)
+        return false;
+    // Original traffic 57D48..57DB4 uses horizontal radial velocity and these
+    // ROM-authored pitch constants. No physical unit conversion is assumed.
+    float scale = 0, rate = 0, minimum = 0;
+    if (!engine::read_float(m, 0x80005b94, scale) || !std::isfinite(scale) || scale >= 0 ||
+        !engine::read_float(m, 0x80005b98, rate) || !std::isfinite(rate) || rate <= 0 ||
+        !engine::read_float(m, 0x80005b9c, minimum) || !std::isfinite(minimum) || minimum >= 0 ||
+        minimum < -12.f)
+        return false;
+    const float radial =
+        (dx * (b.velocity[0] - l.velocity[0]) + dy * (b.velocity[1] - l.velocity[1])) / distance;
+    const float shifted = (radial * scale) * rate;
+    if (!std::isfinite(shifted))
+        return false;
+    offset = std::clamp(shifted, minimum, -minimum);
+    return true;
+}
+bool continuous_listener(const Listener &before, const Listener &now) {
+    if (before.slot != now.slot || before.bike != now.bike || before.rider != now.rider ||
+        before.attached != now.attached)
+        return false;
+    float distance = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        const float d = now.position[i] - before.position[i];
+        distance += d * d;
+    }
+    return distance <= 80.f * 80.f;
+}
 bool scoped(const Binding &b, unsigned char *m, void *ctx, gpr stack) {
     return b.enabled && b.memory == m && b.context == ctx && b.stack == stack;
 }
 }
 
 namespace rr64::rival_engine {
+void set_enabled(bool value) noexcept {
+    // UI callbacks only publish the preference. Native voice cleanup belongs
+    // on the next game/audio update, never on the UI thread.
+    engines_enabled.store(value, std::memory_order_relaxed);
+}
+bool get_enabled() noexcept {
+    return engines_enabled.load(std::memory_order_relaxed);
+}
 void set_volume_percent(double value) noexcept {
     volume_percent.store(std::isfinite(value) ? std::clamp(value, 0.0, 100.0) : 35.0,
                          std::memory_order_relaxed);
@@ -301,10 +381,34 @@ extern "C" void rr64_rival_engine_threshold(unsigned char *m, void *raw) {
         // close. Rival voices fade through quiet gains; retain integer silence.
         static_cast<recomp_context *>(raw)->f0.fl = 1.f;
 }
+extern "C" void rr64_rival_engine_pitch(unsigned char *m, void *raw) {
+    if (!raw || prediction::active() || producer.memory != m || producer.context != raw ||
+        producer.slot >= 14)
+        return;
+    auto &ctx = *static_cast<recomp_context *>(raw);
+    if (ctx.r29 != producer.stack || static_cast<unsigned>(ctx.r18) != producer.bike ||
+        !std::isfinite(ctx.f20.fl) || !owned_handle(m, word(m, cache(producer.slot)), pool(m)))
+        return;
+    // 571DC recalculates the bike's RPM pitch every call. Add exactly once
+    // before 80890 combines it with the authored sound pitch. Start cues skip
+    // this steady-engine branch and retain their original authored pitch.
+    ctx.f20.fl += producer.doppler;
+}
 extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
     if (!m || !raw || prediction::active())
         return;
     const auto &ctx = *static_cast<recomp_context *>(raw);
+    if (!rr64::rival_engine::get_enabled()) {
+        // Stop owned voices once, including native script children sharing
+        // their handle. Subsequent disabled frames do not read listeners,
+        // bike profiles, voice pools, race rules or sample data.
+        if (runtime.memory == m && runtime.observed && valid_context(ctx)) {
+            auto call = call_context(ctx);
+            call.f_odd = &call.f0.u32h;
+            reset(m, call);
+        }
+        return;
+    }
     if (!valid_context(ctx))
         return;
     auto call = call_context(ctx);
@@ -333,9 +437,10 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
         runtime.admission_start = admitted.load();
         runtime.denial_start = denied.load();
         if (diagnostics())
-            std::fprintf(stderr,
-                         "[RR64-RIVAL-ENGINE] armed volume=%.1f max_voices=3 reserve=4 range=130\n",
-                         rr64::rival_engine::get_volume_percent());
+            std::fprintf(
+                stderr,
+                "[RR64-RIVAL-ENGINE] armed volume=%.1f max_voices=3 reserve=4 range=320 profiles=32\n",
+                rr64::rival_engine::get_volume_percent());
     }
     const float dt = runtime.observed ? std::clamp(clock - runtime.clock, 0.f, .1f) : 1.f / 60.f;
     runtime.clock = clock;
@@ -349,9 +454,17 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
     std::array<Candidate, 14> candidates{};
     unsigned count = 0;
     const float volume = float(rr64::rival_engine::get_volume_percent() / 100.0);
+    // Use the same ROM gain as the local human engine at 100%. The old fixed
+    // 98.56 ceiling reduced rivals to 70% even before distance attenuation.
+    float local_gain = 0;
+    if (!engine::read_float(m, 0x80005CA0u, local_gain) || !std::isfinite(local_gain) ||
+        local_gain <= 0 || local_gain > 255.f) {
+        reset(m, call);
+        return;
+    }
     for (unsigned slot = 0; slot < 14; ++slot) {
         Bike b;
-        if (!read_bike(m, slot, b) || !rival(b, rules) || !b.ready)
+        if (!read_bike(m, slot, b) || !rival(b, rules) || !b.ready || !sound_profile(m, b))
             continue;
         Candidate c;
         c.source = b;
@@ -361,11 +474,18 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
                 const float d = b.position[j] - ears[i].position[j];
                 sum += d * d;
             }
-            const float distance = std::sqrt(sum), t = std::clamp(1.f - distance / 130.f, 0.f, 1.f),
-                        gain = t * t * volume;
+            const float distance = std::sqrt(sum);
+            // Nearby bikes reach the slider's full level, followed by a longer
+            // smooth fade. Selection and native voice headroom remain bounded.
+            const float t = std::clamp((distance - full_volume_distance) /
+                                           (audible_distance - full_volume_distance),
+                                       0.f, 1.f);
+            const float gain = (1.f - t * t * (3.f - 2.f * t)) * volume;
             if (gain <= c.gain)
                 continue;
             c.gain = gain;
+            c.listener = ears[i];
+            c.doppler_valid = doppler_offset(m, b, ears[i], c.doppler);
             const float dx = b.position[0] - ears[i].position[0],
                         dy = b.position[1] - ears[i].position[1];
             const float length = std::hypot(dx, dy);
@@ -391,7 +511,8 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
         if (e.source.slot < 14) {
             Bike current;
             if (!read_bike(m, e.source.slot, current) || current.bike != e.source.bike ||
-                current.rider != e.source.rider || !rival(current, rules) || !current.ready) {
+                current.rider != e.source.rider || !rival(current, rules) || !current.ready ||
+                !sound_profile(m, current)) {
                 stop(m, call, e);
                 continue;
             }
@@ -410,8 +531,15 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
                 if (candidates[i].source.slot == e.source.slot)
                     target = &candidates[i];
             e.gain = approach(e.gain, target ? target->gain : 0, dt / .18f);
-            if (target)
+            if (target) {
                 e.pan = approach(e.pan, target->pan, 112.f * dt / .12f);
+                if (target->doppler_valid && continuous_listener(e.listener, target->listener))
+                    e.doppler = approach(e.doppler, target->doppler, 12.f * dt / .18f);
+                else
+                    e.doppler = 0;
+                e.listener = target->listener;
+            } else
+                e.doppler = approach(e.doppler, 0, 12.f * dt / .18f);
             if (e.gain <= .001f) {
                 stop(m, call, e);
                 continue;
@@ -426,6 +554,7 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
         for (auto &e : runtime.engines)
             if (e.source.slot >= 14) {
                 e.source = candidates[i].source;
+                e.listener = candidates[i].listener;
                 e.pan = candidates[i].pan;
                 e.gain = std::min(candidates[i].gain, dt / .18f);
                 break;
@@ -442,7 +571,14 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
                 func_800806B4(m, &call);
                 engine::write_u32(m, cache(e.source.slot), ~0u);
             }
-            producer = {m, &call, e.source.bike, e.gain * 98.56f, e.pan};
+            producer = {m,
+                        &call,
+                        e.source.bike,
+                        e.source.slot,
+                        static_cast<gpr>(ADD32(ctx.r29, -0x50)),
+                        e.gain * local_gain,
+                        e.pan,
+                        e.doppler};
             call.r4 = engine::guest_address(e.source.bike);
             func_800571DC(m, &call);
             producer = {};
@@ -451,14 +587,14 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
                 // The native race-start transient returns early while its handle
                 // lives, bypassing 571DC's normal continuous volume update. Retain
                 // that original cue/profile multiplier while still fading it.
-                const auto profile = word(m, 0x800a4b48 + word(m, e.source.bike) * 4);
+                const auto profile = sound_profile(m, e.source);
                 float transient_scale = 0;
                 if (word(m, cache(e.source.slot) + 4) == word(m, profile) &&
                     engine::read_float(m, profile + 0x20, transient_scale) &&
                     std::isfinite(transient_scale)) {
                     call.r4 = engine::guest_address(e.handle);
                     call.r5 = static_cast<unsigned>(
-                        std::clamp(e.gain * 98.56f * transient_scale, 0.f, 255.f));
+                        std::clamp(e.gain * local_gain * transient_scale, 0.f, 255.f));
                     func_800807C0(m, &call);
                 }
                 call.r4 = engine::guest_address(e.handle);
@@ -516,6 +652,13 @@ extern "C" int rr64_rival_engine_allocate(unsigned char *m, void *raw) {
         (producer.memory == m && producer.context == raw) || scoped(child, m, raw, ctx.r29);
     if (!enabled)
         return 0;
+    // A queued native script can outlive the game-thread stop request. Keep
+    // identifying owned parents while disabled so their children cannot start.
+    if (!rr64::rival_engine::get_enabled()) {
+        ++denied;
+        ctx.r2 = 0;
+        return 1;
+    }
     const auto p = pool(m);
     if (!p.valid || p.free <= reserved_effect_voices || p.owned >= maximum_engines) {
         ++denied;

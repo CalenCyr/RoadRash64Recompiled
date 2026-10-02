@@ -6,11 +6,13 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <string_view>
 #include <utility>
 
 namespace {
 std::filesystem::path directory;
 double observed_volume=-1;
+bool observed_enabled=false;
 unsigned checks=0;
 void check(bool condition,const char *message) {
     ++checks;
@@ -38,23 +40,36 @@ namespace rr64::rival_engine {
 // The engine sink records UI delivery without starting any audio or game thread.
 void set_volume_percent(double value) noexcept {observed_volume=value;}
 double get_volume_percent() noexcept {return observed_volume;}
+void set_enabled(bool value) noexcept {observed_enabled=value;}
+bool get_enabled() noexcept {return observed_enabled;}
 }
 int main(int argc,char **argv) {
     using namespace rr64::rival_engine;
-    if(argc!=2)return 2;
-    directory=argv[1];
+    const bool restarted=argc==3 && std::string_view(argv[1])=="--verify-off";
+    if(argc!=2 && !restarted)return 2;
+    directory=argv[restarted?2:1];
+    if(restarted){
+        check(std::filesystem::is_directory(directory),"restart uses existing disposable settings");
+        auto config=make_config();check(config.load_config(),"fresh process loads saved settings");
+        apply_volume_config(config);
+        check(!observed_enabled && observed_volume==35,"disabled rival engines and independent volume survive fresh process");
+        std::cout<<"rival engine config restart passed "<<checks<<" checks\n";return 0;
+    }
     if(std::filesystem::exists(directory) || !std::filesystem::create_directories(directory))return 3;
     auto config=make_config();
     const auto &schema=std::get<recomp::config::ConfigOptionNumber>(config.get_option(volume_option).variant);
     check(schema.min==0 && schema.max==100 && schema.step==1 && schema.precision==0 && schema.percent,"native percentage slider range");
     check(schema.default_value==35,"conservative default");
+    check(std::get<bool>(config.get_option_value(enabled_option)),"rival engines default enabled");
     check(config.get_option(volume_option).description.find("including online players")!=std::string::npos,"opponent scope described");
     check(config.load_config(),"first-run config saved");
     apply_volume_config(config);
-    check(observed_volume==35 && read_json()[volume_option]==35,"first-run default persisted and applied");
+    check(observed_volume==35 && observed_enabled && read_json()[volume_option]==35 && read_json()[enabled_option]==true,"first-run defaults persisted and applied");
 
     write_json({{"main_volume",62}});
     auto old=make_config();check(old.load_config(),"old config loaded");
+    apply_volume_config(old);
+    check(observed_enabled,"existing settings without switch preserve enabled behavior");
     check(observed_volume==35,"missing option uses default at load");
     check(std::get<double>(old.get_option_value("main_volume"))==62,"existing main volume preserved");
     check(old.save_config() && read_json()[volume_option]==35,"old config gains saved default");
@@ -68,8 +83,21 @@ int main(int argc,char **argv) {
         write_json({{volume_option,invalid}});
         auto loaded=make_config();check(loaded.load_config() && observed_volume==35,"malformed option falls back safely");
     }
+    for(const auto &invalid:std::array<nlohmann::json,4>{nullptr,"disabled",0,nlohmann::json::array({false})}) {
+        write_json({{enabled_option,invalid}});
+        auto loaded=make_config();check(loaded.load_config(),"malformed switch config loads safely");
+        apply_volume_config(loaded);check(observed_enabled,"malformed switch retains enabled default");
+    }
     auto changed=make_config();
     check(changed.load_config(),"UI config loaded");
+    for(bool value:{false,true,false}) {
+        const double volume=observed_volume;
+        changed.set_option_value(enabled_option,value);
+        check(observed_enabled==value && observed_volume==volume,"switch reaches engine without changing saved volume");
+        check(changed.save_config() && read_json()[enabled_option]==value,"switch state persisted");
+        auto reloaded=make_config();check(reloaded.load_config(),"saved switch config loads");
+        apply_volume_config(reloaded);check(observed_enabled==value && observed_volume==volume,"switch and volume independently reload");
+    }
     for(double value:{0.0,73.0,100.0}) {
         changed.set_option_value(volume_option,value);
         check(observed_volume==value,"slider update reaches engine immediately including off");
@@ -78,6 +106,8 @@ int main(int argc,char **argv) {
     }
     changed.set_option_value(volume_option,std::numeric_limits<double>::quiet_NaN());
     check(observed_volume==35 && changed.save_config() && read_json()[volume_option]==35,"nonfinite programmatic value cannot reach audio or JSON");
+    changed.set_option_value(enabled_option,false);
+    check(changed.save_config() && read_json()[enabled_option]==false,"persist off fixture for separate-process restart");
     check(std::filesystem::exists(directory/"sound.json.bak"),"normal runtime backup retained");
     std::cout<<"rival engine config smoke passed "<<checks<<" checks\n";
 }

@@ -12,12 +12,15 @@ static recompinput::InputField menu_binding{};
 static int expected_profile = 7;
 namespace recompinput::profiles {
 int get_input_profile_for_player(int player, InputDevice) { return player == 2 ? expected_profile : 0; }
+int get_input_profile_count() { return expected_profile + 1; }
+InputDevice get_input_profile_device(int) { return InputDevice::Controller; }
 InputField& get_input_binding(int profile, GameInput, size_t) {
     if (profile != expected_profile) std::abort();
     return menu_binding;
 }
 void set_input_binding(int, GameInput, size_t, InputField) {}
 }
+namespace recompinput { std::vector<SDL_GameController*> connected_controllers() { return {}; } }
 namespace recompinput::players {
 bool is_single_player_mode() { return false; }
 size_t get_number_of_assigned_players() { return 0; }

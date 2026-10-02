@@ -1,5 +1,6 @@
 #include "rr64_popup_input.hpp"
 #include "rr64_online_menu.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_native.hpp"
 #include "rr64_local_race_options.hpp"
 #include "rr64_local_players.hpp"
@@ -34,6 +35,7 @@ namespace rr64::online_menu {
 namespace {
 
 void online_log(const char *format, ...) {
+    if (!rr64::diagnostics::network_detail_enabled()) { return; }
     va_list args;
     va_start(args, format);
     std::vfprintf(stderr, format, args);

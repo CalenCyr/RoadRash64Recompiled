@@ -8,6 +8,11 @@ or generated guest output. Existing comments explain original-engine contracts.
 
 ## Where to start
 
+Start with [the native build map](BUILD_MODULES.md) for target ownership and
+offline checks, and [player package layout](PLAYER_PACKAGE.md) for distribution
+files. The table below identifies the main runtime boundaries; related feature
+guides describe the engine contracts in more detail.
+
 For the recent traffic, per-player eject, menu borders and geometry reuse changes,
 see [Traffic and presentation editing](TRAFFIC_AND_PRESENTATION_EDITING.md).
 
@@ -21,6 +26,8 @@ see [Traffic and presentation editing](TRAFFIC_AND_PRESENTATION_EDITING.md).
 | Scenery | `rr64_world_objects.cpp`, `rr64_world_object_assets.cpp` | Stable placement identities, animation state and consistent course bounds. |
 | Video | `rr64_video_mode.cpp`, view/frustum headers | Separate camera projection, HUD policy and original framebuffer restrictions. |
 | Audio and music | `rr64_audio_output.cpp`, `rr64_music.cpp` | Queue lifetime, original fades and the shared music-volume setting. |
+| Imported audio mixers | `rr64_course_audio.cpp`, `rr64_mk64_item_audio.cpp` | Prepare fixed-size voice lists once per callback while holding the bank lock; keep sample accumulation order and persistent voice state unchanged. |
+| Diagnostic switches | `rr64_diagnostic_options.hpp` | General diagnostics requires exactly `1`; legacy runtime/autotest flags retain their existing nonzero convention. Errors remain available without verbose capture. |
 | Achievements | `rr64_achievements.cpp`, achievement helpers | Local save identity and bounded UI work. |
 | Player profile names | `rr64_profile_names.cpp` | New-profile/solo boundaries; never overwrite loaded saves. |
 | Campaign completion | `rr64_campaign_completion.cpp` | Native ending rewards, profile checksum and explicit save confirmation. |
@@ -55,3 +62,28 @@ and [Insanity campaign mapping](insanity-campaign.md). Keep gameplay simulation,
 local input/HUD focus, recorded presentation and sound ownership separate.
 The release removes the unused scalar-size HUD wrapper; all draws use the actual
 native weapon rectangle. Tests target that same production entry point.
+
+## Cleanup and performance review
+
+The September 30 audit followed maintained CMake, hook, source and fixture
+references across every project-owned native source/header. No additional
+whole-file deletion was justified: the small guest-entry wrappers and optional
+test-only recorder still have callers. Preserve them unless their entire
+calling path is deliberately replaced.
+
+Routine reports are opt-in. Avoid assembling a verbose message, scanning a
+recorded clip, claiming a diagnostic queue slot or sampling a diagnostic clock
+when its recorder is disabled. Keep failure handling, input validation and
+game-state changes outside those logging gates. A once-only report must not
+perform a locked atomic update on every later frame.
+
+Audio callbacks use bounded stack storage and existing nonblocking locking.
+Only hoist values that cannot change during that callback; never cache pointers
+past the owning lock. Mixer refactors are checked against the original
+production implementation for exact PCM and voice-state equality, not just
+similar-looking equations. Offline callback timings measure those callbacks,
+not total game FPS or Steam Deck performance.
+
+Do not turn a cleanup into a blanket rewrite of generated code, renderer
+dependencies or gameplay hooks. Preserve known fixes and add short comments at
+ownership and lifetime boundaries rather than narrating every statement.

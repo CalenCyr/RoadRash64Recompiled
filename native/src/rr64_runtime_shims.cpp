@@ -1,4 +1,5 @@
 #include "rr64_netplay.hpp"
+#include "rr64_diagnostic_options.hpp"
 #ifdef RR64_EXPERIMENTAL_COURSE
 #include "rr64_mk64_items.hpp"
 #endif
@@ -45,8 +46,7 @@ extern "C" void rr64_record_guest_cadence(unsigned int frames, double seconds, d
 
 namespace {
 void log_once(const char *name, std::atomic_bool &flag) {
-    bool expected = false;
-    if (flag.compare_exchange_strong(expected, true)) {
+    if (rr64::diagnostics::claim_once(flag, rr64::diagnostics::routine_enabled())) {
         std::fprintf(stderr, "[RR64-SHIM] %s\n", name);
         std::fflush(stderr);
     }
@@ -112,9 +112,7 @@ bool environment_flag_enabled(const char *name) {
 }
 
 bool runtime_trace_enabled() {
-    static const bool enabled =
-        environment_flag_enabled("RR64_RUNTIME_TRACE") || environment_flag_enabled("RR64_AUTOTEST");
-    return enabled;
+    return rr64::diagnostics::runtime_trace_enabled();
 }
 
 std::string environment_text(const char *name) {
@@ -362,9 +360,12 @@ extern "C" void rr64_trace_race_frame(unsigned char *rdram, void *context, unsig
             if (rumble_enabled.load(std::memory_order_acquire)) {
                 recompinput::trigger_rumble_pulse(slot, 0.55f);
             }
-            std::fprintf(stderr, "[RR64-RIDER] Left-stick eject triggered for player %u.\n",
-                         slot + 1);
-        } else if (eject_requested && live_gameplay_shortcuts) {
+            if (rr64::diagnostics::routine_enabled()) {
+                std::fprintf(stderr, "[RR64-RIDER] Left-stick eject triggered for player %u.\n",
+                             slot + 1);
+            }
+        } else if (eject_requested && live_gameplay_shortcuts &&
+                   rr64::diagnostics::routine_enabled()) {
             // This only emits on an actual L3 edge. If an unrecognized race-end
             // state ever rejects the request, the next user test captures all
             // relevant guest flags without adding per-frame log noise.
@@ -617,29 +618,6 @@ extern "C" void rr64_set_maximum_view_distance_enabled(int enabled) {
 
 extern "C" int rr64_is_maximum_view_distance_enabled() {
     return maximum_view_distance_active() ? 1 : 0;
-}
-
-extern "C" unsigned int rr64_maximum_view_distance_map_range(unsigned int original_bits) {
-    if (!maximum_view_distance_terrain_active()) {
-        return original_bits;
-    }
-
-    // func_8007B8D4 selects one of four authored terrain streaming tiers from
-    // the active camera range: 1000, 2000, and 3000 units are the boundaries.
-    // Tier four is also the largest shape that fits the game's fixed 31-entry
-    // candidate arrays. Raise only the tier-selection input to that boundary;
-    // the original streamer still owns terrain loading, unloading, collision,
-    // and rendering, and dynamic entities are not touched here.
-    constexpr float kFarthestStockTerrainTier = 3000.0f;
-    const float original = float_from_bits(original_bits);
-    if (original >= kFarthestStockTerrainTier) {
-        return original_bits;
-    }
-
-    unsigned int maximum_bits = 0;
-    static_assert(sizeof(maximum_bits) == sizeof(kFarthestStockTerrainTier));
-    std::memcpy(&maximum_bits, &kFarthestStockTerrainTier, sizeof(maximum_bits));
-    return maximum_bits;
 }
 
 // The original spawn guard uses route end minus its authored margin. Change

@@ -2,6 +2,7 @@
 #include "rr64_presentation_options.hpp"
 #include "rr64_actor_render_snapshot.hpp"
 #include "rr64_actor_render_diagnostics.hpp"
+#include "rr64_diagnostic_options.hpp"
 #include "rr64_actor_held_pose.hpp"
 #include "rr64_native.hpp"
 
@@ -118,13 +119,7 @@ std::atomic_uint64_t fallback_actor_count{0};
 std::array<std::atomic_uint64_t, static_cast<std::size_t>(lod::ActivityCounter::Count)> activity{};
 std::array<std::atomic_uint64_t, static_cast<std::size_t>(lod::FindFailure::Count)> find_failures{};
 std::array<std::atomic_uint64_t, 4> view_published{}, view_detailed{}, view_fallback{};
-bool view_diagnostics_enabled() {
-    static const bool enabled = [] {
-        const auto *value = std::getenv("RR64_DIAGNOSTICS");
-        return value && std::strcmp(value, "1") == 0;
-    }();
-    return enabled;
-}
+bool view_diagnostics_enabled() { return rr64::diagnostics::detailed_enabled(); }
 std::array<std::atomic_uint32_t, 6> last_scene{};
 std::array<std::atomic_uint32_t, 2> last_camera_planes{};
 struct ActorDetailCounters {

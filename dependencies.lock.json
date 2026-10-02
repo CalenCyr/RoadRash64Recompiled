@@ -57,7 +57,7 @@
       },
       {
         "path": "ultramodern/include/ultramodern/rr64_scheduler_diagnostics.hpp",
-        "sha256": "2ef012dd2af06f35093995c5a4f3d64f4c6818a5559081745abdbc1a14935f67"
+        "sha256": "9f65f5e2c17e260d88c4080bfcf00c253b04b84441b0fb63d89398960d579aea"
       },
       {
         "path": "ultramodern/include/ultramodern/rr64_snapshot_gate.hpp",
@@ -173,6 +173,10 @@
       {
         "path": "src/hle/rt64_rr64_authored_frame.h",
         "sha256": "d886235c3e45c1b9dab7852fcde2cc1b86687ffadc845e73528e4384f74245da"
+      },
+      {
+        "path": "src/hle/rt64_rr64_camera_boundary.h",
+        "sha256": "1a95d759587a6c0a56dc63ee72b80024a6daeb40770181561dda6978ad888db5"
       },
       {
         "path": "src/hle/rt64_rr64_command_profile.h",

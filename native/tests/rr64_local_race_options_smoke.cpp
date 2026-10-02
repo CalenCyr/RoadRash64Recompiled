@@ -187,7 +187,7 @@ int main() {
     ok &= get(ai_pool+5*4)==3 && get(ai_pool+7*4)==2 && ai_context.r21==2;
     rr64_local_options_input(rdram); // back to default Off
     ok &= valid_online_options(512u|1024u|10u) && valid_online_options(2048u) &&
-          !valid_online_options(0x08000000u);
+          valid_online_options(mk64_items_disabled_bit) && !valid_online_options(0x10000000u);
     reset_online();ok &= !(online_options()&1024u);
     apply_online_options(512u|1024u);ok &= online_options()==1536u;
     // Appended cop slot follows the effective bike list, not the map's list.
@@ -524,7 +524,14 @@ int main() {
     // These are distinct preferences even while the solo selector is active.
     set_thrash_options(512u | (6u << 6) | 10u);
     const unsigned solo_preset = thrash_options();
-    for (unsigned invalid : {11u, 15u, 0x08000000u, 0xFFFFFFFFu}) {
+    // Bit 27 is a valid online rule; the remembered item preference has its
+    // own ownership and is intentionally stripped from the solo preset.
+    const bool items_before_solo_preset = mk64_items_enabled();
+    set_thrash_options(solo_preset | mk64_items_disabled_bit);
+    check_solo(thrash_options() == solo_preset, "online item rule is stripped from solo preset");
+    check_solo(mk64_items_enabled() == items_before_solo_preset,
+               "solo preset cannot change remembered item preference");
+    for (unsigned invalid : {11u, 15u, 0x10000000u, 0xFFFFFFFFu}) {
         set_thrash_options(invalid);
         check_solo(thrash_options() == solo_preset, "invalid solo bits do not replace preset");
     }

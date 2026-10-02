@@ -24,7 +24,7 @@ for path in a.generated.glob('funcs_*.c'):
 assert actor, 'Native actor renderer missing'
 hooks = []
 for line in a.config.read_text().splitlines():
-    if 'rr64_mk64_items_actor_call(' not in line or line.lstrip().startswith('#'):
+    if not any(name in line for name in ('rr64_mk64_items_actor_call(', 'rr64_rider_skin_actor_call(')) or line.lstrip().startswith('#'):
         continue
     h = re.fullmatch(r'\s*\{\s*func\s*=\s*"func_(\w+)"\s*,\s*before_vram\s*=\s*'
                      r'(0x[0-9A-Fa-f]+)\s*,\s*text\s*=\s*(".*")\s*\},?\s*', line)
@@ -50,7 +50,7 @@ for name, begin, end in [('bike', 0x80012008, 0x80012030),
                          ('rider', 0x8001205C, 0x8001208C)]:
     marker = f'    // 0x{begin:08X}:'
     chunk = marker + actor.split(marker, 1)[1].split(f'    // 0x{end:08X}:', 1)[0]
-    assert 'rr64_mk64_items_actor_call(' in chunk
+    assert any(name in chunk for name in ('rr64_mk64_items_actor_call(', 'rr64_rider_skin_actor_call('))
     if a.negative_legacy_call:
         hook = next(h['text'] for h in hooks if
                     int(h['address'], 16) == (0x80012028 if name == 'bike' else 0x80012074))

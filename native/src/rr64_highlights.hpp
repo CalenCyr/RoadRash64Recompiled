@@ -37,6 +37,8 @@ unsigned rr64_highlights_viewport_inset(unsigned original);
 void rr64_highlights_actor_end(void);
 unsigned rr64_highlights_hidden(unsigned char *, unsigned node, unsigned original);
 void rr64_highlights_camera_origin(unsigned char *);
+// After terrain/projection setup and before the native scene actor pass.
+void rr64_highlights_traffic_draw(unsigned char *);
 int rr64_highlights_weapon_draw(unsigned char *, void *, unsigned node);
 void rr64_highlights_weapon_matrix(unsigned char *, unsigned record, unsigned matrix);
 #ifdef __cplusplus

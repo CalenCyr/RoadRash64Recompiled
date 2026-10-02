@@ -4,7 +4,8 @@
 #include "../src/rr64_authoritative_eject.hpp"
 #include <cstdio>
 #include <cstdlib>
-namespace { unsigned captures=0;float clock_value=1; }
+namespace { unsigned captures=0;float clock_value=1;bool compiled_terrain=false; }
+extern "C" int rr64_terrain_streaming_bounded(unsigned char*) { return compiled_terrain; }
 namespace rr64::mk64_items {
 bool capture_replay(ReplayState &out) noexcept {
  out={};out.state.enabled=1;out.state.clock=unsigned(clock_value);out.state.random=42;
@@ -354,8 +355,10 @@ int main(){
  c.sequence=1;check(rr64_prediction_capture_before(m.data(),&c,&ctx));
  check(rr64_prediction_capture_after(m.data()));
  rr64::engine::write_u32(m.data(),0x800a7720,17);
+ compiled_terrain=true;
  rr64_prediction_capture_streaming(m.data(),&ctx);
  rr64::engine::write_u32(m.data(),0x800a7720,23);
+ compiled_terrain=false;
  rr64_prediction_capture_streaming(m.data(),&ctx);
  c.sequence=2;check(rr64_prediction_capture_before(m.data(),&c,&ctx));
  check(rr64_prediction_capture_after(m.data()));
@@ -368,7 +371,9 @@ int main(){
      [&](auto&,const auto&){check(streamed==2);return true;},
      [](auto&,const auto& input,auto& out){out={input.rules,input.posts,input.eject,input.items};return true;},
      [&](auto&,const auto& input,const auto& schedule){
-         check(schedule.valid && input.words[1]==(streamed?23u:17u));++streamed;return true;
+         check(schedule.valid && input.words[1]==(streamed?23u:17u));
+         check(input.bounded_terrain == (streamed == 0));
+         ++streamed;return true;
      }));
  // Overflow cannot silently produce a partial, apparently valid correction.
  for(unsigned i=0;i<65;++i)rr64_prediction_capture_streaming(m.data(),&ctx);
