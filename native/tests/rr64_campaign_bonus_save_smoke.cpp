@@ -2,9 +2,11 @@
 #include "rr64_campaign_completion.hpp"
 #include "rr64_engine_layout.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <string_view>
 #include <vector>
@@ -14,7 +16,9 @@ extern "C" void func_8001F9BC(unsigned char *, recomp_context *);
 extern "C" void func_800207DC(unsigned char *, recomp_context *);
 extern "C" void func_80020ECC(unsigned char *, recomp_context *);
 extern "C" void func_8005F480(unsigned char *, recomp_context *);
+extern "C" void func_8005F420(unsigned char *, recomp_context *);
 extern "C" void test_bonus_native_save(unsigned char *, recomp_context *);
+extern "C" void test_campaign_menu_entry(unsigned char *, recomp_context *);
 
 namespace {
 using namespace rr64::engine;
@@ -113,6 +117,133 @@ unsigned load(unsigned char *m, unsigned slot) {
   invalidate(m);
   scan(m);
   return selected_load(m, slot);
+}
+
+void enter_menu(unsigned char *m, unsigned mode) {
+  recomp_context ctx{};
+  ctx.r29 = guest_address(stack);
+  ctx.r16 = mode;
+  ctx.r18 = ctx.r3 = guest_address(0x800A0000u);
+  ctx.r2 = guest_address(0x800A4FF0u);
+  test_campaign_menu_entry(m, &ctx);
+  check(word(m, 0x800A1810u) == mode, "native dispatcher commits requested mode before scanning saves");
+  check(!rr64_campaign_passive_scan(), "passive scan scope ends before the native menu initializes");
+}
+
+// Reach Thrash from fresh memory without ever selecting a Big Game profile.
+// Expected masks come from the native unlock helper, including reversed tiers.
+void verify_startup_unlocks() {
+  constexpr unsigned unlocks = 0x800A5334u;
+  unsigned startup_cases = 0;
+  for (unsigned scenario = 0; scenario < 14; ++scenario) {
+    std::vector<unsigned char> boot(kRdramSize);
+    auto *m = boot.data();
+    files = {};
+    exists = {};
+    read_error = scan_error = write_error = 0;
+    unsigned expected_level = 0, expected_special = 0;
+    if (scenario != 7) {
+      const unsigned chapter = scenario < 5 ? scenario : scenario == 6 || scenario == 11 ? 5 : scenario == 10 ? 6 : 4;
+      seed(m, chapter, scenario == 5 ? 3 : 0);
+      if (scenario < 5 || scenario == 11)
+        write_u32(m, profile + 0x50, 0); // Progress need not finish this chapter.
+      native_checksum(m, profile);
+      save(m, 0);
+      if (scenario == 9 || scenario == 11) {
+        // The real writer fixes the version and downgrades incomplete bonuses;
+        // construct these unsupported values only in the simulated device file.
+        write_u32(m, buffer + (scenario == 9 ? 0 : 0x3C), scenario == 9 ? 3 : 5);
+        native_checksum(m, buffer);
+        for (unsigned i = 0; i < files[0].size(); ++i)
+          read_u8(m, buffer + i, files[0][i]);
+      }
+      if (scenario == 8)
+        files[0][0x38] ^= 1; // Valid-looking chapter, invalid native checksum.
+      if (scenario < 5) expected_level = scenario;
+      if (scenario == 5) { expected_level = 4; expected_special = 1u << 5; }
+      if (scenario == 6) { expected_level = 4; expected_special = (1u << 6) | (1u << 7); }
+    }
+    std::fill(boot.begin(), boot.end(), 0);
+    recomp_context ctx{};
+    ctx.r4 = guest_address(profile);
+    func_8005F480(m, &ctx);
+    ctx.r4 = 0; ctx.r5 = 1;
+    func_8005F420(m, &ctx);
+    const auto live = bytes(m, profile, 0xF8);
+    const auto saved_files = files;
+    const unsigned old_reads = reads, old_writes = writes, old_deletes = deletes;
+    const unsigned old_directories = directory_reads;
+    if (scenario == 12) read_error = 9;
+    if (scenario == 13) scan_error = 8;
+    // Boot/controller init, racing and Thrash itself must not perform Pak I/O.
+    for (unsigned mode : {1u, 3u, 33u}) enter_menu(m, mode);
+    check(reads == old_reads && directory_reads == old_directories,
+          "non-main modes do not scan saves");
+    enter_menu(m, 32);
+
+    auto expected = boot;
+    for (unsigned tier = 0; tier < 15; ++tier)
+      write_u16(expected.data(), unlocks + tier * 2, 0);
+    ctx = {};
+    ctx.r4 = expected_level; ctx.r5 = 1;
+    func_8005F420(expected.data(), &ctx);
+    for (unsigned tier = 5; tier <= 7; ++tier) {
+      if (!(expected_special & (1u << tier))) continue;
+      ctx.r4 = tier; ctx.r5 = 0;
+      func_8005F420(expected.data(), &ctx);
+    }
+    if (bytes(m, unlocks, 30) != bytes(expected.data(), unlocks, 30)) {
+      std::fprintf(stderr, "Startup case %u: saved chapter=%u status=%u; actual/expected unlocked tiers:",
+                   scenario, word(m, cache + 0x3C), word(m, status));
+      for (unsigned tier = 0; tier < 15; ++tier) {
+        std::uint16_t actual = 0, wanted = 0;
+        read_u16(m, unlocks + tier * 2, actual);
+        read_u16(expected.data(), unlocks + tier * 2, wanted);
+        std::fprintf(stderr, " %u:%u/%u", tier, actual, wanted);
+      }
+      std::fputc('\n', stderr);
+    }
+    check(bytes(m, unlocks, 30) == bytes(expected.data(), unlocks, 30),
+          "cold scan restores only earned normal and special tiers before selecting a save");
+    check(bytes(m, profile, 0xF8) == live && writes == old_writes && files == saved_files,
+          "startup unlock scan preserves live profile, cash, bike and every saved payload");
+    check(deletes == old_deletes,
+          "passive startup scan never deletes valid, corrupt or unsupported save slots");
+    check(word(m, 0x800A77C8u) == 0 && word(m, 0x800A77CCu) == 0,
+          "earned unlock restoration does not enable an unlock-all cheat");
+    if (scenario < 8 || scenario == 10 || scenario == 11) {
+      check(directory_reads == old_directories + 1 && reads == old_reads + (scenario == 7 ? 0 : 1),
+            "fresh startup scans the directory and reads only present slots");
+      for (unsigned entry = 0; entry < 3; ++entry) enter_menu(m, 32);
+      check(directory_reads == old_directories + 1 && reads == old_reads + (scenario == 7 ? 0 : 1),
+            "repeated menu entry reuses the native save cache");
+    }
+    ++startup_cases;
+  }
+  read_error = scan_error = 0;
+
+  // Force a real uncached scan through the helper and preserve every register
+  // the native dispatcher needs for its indirect menu initializer call.
+  std::vector<unsigned char> memory(kRdramSize);
+  auto *m = memory.data();
+  files = {}; exists = {};
+  write_u32(m, 0x800A1810u, 32);
+  recomp_context ctx{};
+  ctx.r29 = guest_address(stack);
+  ctx.r4 = guest_address(0x800256C0u);
+  ctx.r2 = ctx.r18 = guest_address(0x800A0000u);
+  ctx.r16 = guest_address(0x800A5070u);
+  ctx.r17 = guest_address(0x800A1BDCu);
+  ctx.r31 = 0x8004850Cu;
+  ctx.f0.fl = 1.0f; ctx.f12.fl = 4.25f;
+  const auto original_context = ctx;
+  const unsigned old_directories = directory_reads;
+  rr64_campaign_menu_unlocks(m, &ctx);
+  check(directory_reads == old_directories + 1 &&
+            std::memcmp(&ctx, &original_context, sizeof(ctx)) == 0,
+        "uncached startup scan preserves caller registers and floating-point state");
+  check(!rr64_campaign_passive_scan(), "passive flag is not retained after scanning");
+  std::printf("Startup unlock scan: %u fresh profiles and saved/error cases passed.\n", startup_cases);
 }
 } // namespace
 
@@ -477,6 +608,8 @@ int main(int argc, char **argv) {
                   0x01020304u,
           "all original campaign qualification loads and stores pass through");
   }
+
+  verify_startup_unlocks();
 
   std::printf("Campaign bonus save: %u checks passed; %u native writes, %u "
               "native reads\n",

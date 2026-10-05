@@ -177,7 +177,7 @@ int main(int argc,char**argv){
     position(1,-400,0);frames();check(active()==0,"out-of-range engine fades and releases");
     // Clock-based fades are monotonic and do not allocate a second voice.
     reset();position(1,0,15);unsigned old_gain=0;for(unsigned i=0;i<5;++i){frame(.01f);auto h=word(cache(1));check(row_for(h)&&half(row_for(h)+0x9E)>=old_gain,"fade in monotonic");old_gain=half(row_for(h)+0x9E);check(active()==1,"fade keeps one engine voice");}
-    rr64::rival_engine::set_volume_percent(0);frames();check(active()==0,"zero slider fades to disabled");
+    rr64::rival_engine::set_volume_percent(0);frames(60);check(active()==0,"zero slider fades to disabled");
     // Feature-off is stronger than zero volume: one native stop request, then
     // no listeners/profiles/rules, producers, mixer updates or allocations.
     reset();position(1,8,0);call(func_8005980C,bike(0));const auto own_engine=word(cache(0));
@@ -254,7 +254,7 @@ int main(int argc,char**argv){
     }
     // Bike source and listening rider must separate after an eject.
     reset();for(unsigned s=2;s<14;++s)position(s,3000+float(s),0);position(1,8,0);frames();auto near=half(row_for(word(cache(1)))+0x9E);
-    shortword(body(0)+rr64::engine::rider::bike_attached,0);vec(body(0)+0x8C,1000,0);frames();check(active()==0,"fallen listener follows body away from parked own bike");
+    shortword(body(0)+rr64::engine::rider::bike_attached,0);vec(body(0)+0x8C,1000,0);frames(60);check(active()==0,"fallen listener follows body away from parked own bike");
     position(1,1008,0);frames();check(row_for(word(cache(1)))&&half(row_for(word(cache(1)))+0x9E)==near,"engine source stays on rival bike near fallen listener");
     vec(0x800B7418,1000,0);vec(0x800B7424,1000,-1);frames();const auto turned=coefficients(effective_pan(row_for(word(cache(1)))));check(turned[0]>turned[1],"camera turn reverses stereo while fallen");
     // Lifecycle cases must release all owned voices and leave unrelated effects.
@@ -304,7 +304,7 @@ int main(int argc,char**argv){
         }
         put(actor(2)+8,2);
         if(phase==3){scalar(0x800A1818,0);scalar(0x800A1820,0);}
-        frames();const auto managed_row=row_for(word(cache(1)));
+        frames(60);const auto managed_row=row_for(word(cache(1)));
         check(managed_row!=0,"all valid bike models play through idle acceleration coast and start");
         const auto effect=half(managed_row+0xA6),gain=half(managed_row+0x9E);
         const auto pitch=value(managed_row+0x30);
@@ -327,7 +327,7 @@ int main(int argc,char**argv){
     // Retain nearby detail and extend useful range without increasing voices.
     unsigned preceding_gain=0;
     for(float distance:{0.f,8.f,12.f,60.f,130.f,200.f,300.f,320.f,400.f}){
-        reset();rr64::rival_engine::set_volume_percent(100);position(1,distance,0);frames();
+        reset();rr64::rival_engine::set_volume_percent(100);position(1,distance,0);frames(60);
         const auto voice=row_for(word(cache(1))),gain=voice?half(voice+0x9E):0;
         if(distance<=12)check(gain>0&&(!preceding_gain||gain==preceding_gain),"close range retains full local-equivalent level");
         else check(gain<=preceding_gain,"extended distance curve fades monotonically");
@@ -335,6 +335,111 @@ int main(int argc,char**argv){
         if(distance>=320)check(!voice,"extended range ends in released silence");
         preceding_gain=gain;
     }
+    // A quiet pack handoff must have an audible fade, not disappear in one
+    // update merely because its initial gain was below a full-scale fade step.
+    reset();position(1,100,0);position(2,150,0);position(3,240,0);frames(60);
+    const auto outgoing=word(cache(3));
+    check(row_for(outgoing)&&managed()==3,"quiet handoff begins with three native engines");
+    unsigned fading_gain=half(row_for(outgoing)+0x9E);
+    check(fading_gain>1,"quiet outgoing engine has measurable native gain");
+    position(4,200,0);
+    unsigned audible_fade_frames=0;
+    for(unsigned i=0;i<60;++i){
+        frame();const auto voice=row_for(outgoing),gain=voice?half(voice+0x9E):0;
+        check(gain<=fading_gain,"deselected quiet engine fades monotonically");
+        if(i<2)check(voice&&gain>0,"quiet handoff retains an audible outgoing voice across frames");
+        audible_fade_frames+=gain>0;
+        fading_gain=gain;
+        check(active()<=3&&managed()<=3,"source handoff keeps the three-voice budget");
+    }
+    check(audible_fade_frames>=2&&!row_for(outgoing)&&row_for(word(cache(4)))&&managed()==3,
+          "quiet fade completes and the approaching rival receives its bounded voice");
+
+    // Move continuously rather than taking the >80-unit teleport cleanup path.
+    // Read native mixer gain; the test does not reproduce the attenuation curve.
+    reset();position(1,340,0);frames(60);
+    unsigned moving_handle=0,moving_gain=0;
+    for(int distance=340;distance>=8;distance-=4){
+        position(1,float(distance),0);frame();
+        const auto voice=row_for(word(cache(1))),gain=voice?half(voice+0x9E):0;
+        check(gain>=moving_gain,"approaching bike gains volume without a silent dip");
+        if(voice&&!moving_handle)moving_handle=word(cache(1));
+        if(moving_handle)check(voice&&word(cache(1))==moving_handle,"approach retains one continuous engine handle");
+        moving_gain=gain;
+    }
+    frames(60);check(row_for(moving_handle)!=0,"approaching rival reaches listener audibly");
+    moving_gain=half(row_for(moving_handle)+0x9E);
+    unsigned receding_steps=0;
+    for(int distance=12;distance<=340;distance+=4){
+        position(1,float(distance),0);frame();
+        const auto voice=row_for(word(cache(1))),gain=voice?half(voice+0x9E):0;
+        check(gain<=moving_gain,"receding bike fades without restarting louder");
+        if(voice)check(word(cache(1))==moving_handle,"receding bike keeps its handle until silence");
+        if(gain<moving_gain)++receding_steps;
+        moving_gain=gain;
+    }
+    frames(60);check(!row_for(moving_handle)&&active()==0&&receding_steps>3,
+                     "gradual recession has intermediate gains before releasing silence");
+
+    // Real model0 metadata makes idle audible at280 but its coast clip falls
+    // below the native start threshold. Preserve the old loop at integer silence
+    // instead of stopping it before a replacement which cannot start.
+    reset();position(1,280,0);scalar(bike(1)+0xC,6000);frames(60);
+    const auto quiet_handle=word(cache(1));
+    check(row_for(quiet_handle)&&half(row_for(quiet_handle)+0x9E)>0,"quiet RPM fixture starts an audible idle loop");
+    const auto before_quiet_transition=native_calls;
+    scalar(bike(1)+0x490,4000);scalar(bike(1)+0x494,0);scalar(bike(1)+0x498,3500);
+    frames(20);
+    check(word(cache(1))==quiet_handle&&row_for(quiet_handle)&&half(row_for(quiet_handle)+0x9E)<=1,
+          "inaudible RPM replacement retains its old handle and lowers native gain");
+    check(native_calls[1]==before_quiet_transition[1]&&native_calls[3]==before_quiet_transition[3],
+          "below-threshold RPM changes do not stop or reallocate native voices");
+    position(1,260,0);frames(60);
+    check(row_for(word(cache(1)))&&word(cache(1))!=quiet_handle&&
+              half(row_for(word(cache(1)))+0xA6)==word(word(0x800A4B48)+12),
+          "closer rival transitions to its correct authored coast sample");
+    // Native engine changes stop their old loop before requesting the next.
+    // A packed field must retain sound while those stops await the audio worker.
+    for(unsigned type:{0u,12u,25u,26u}){
+        reset();
+        for(unsigned s=1;s<=3;++s){position(s,float(s),5);put(bike(s),type);scalar(bike(s)+0xC,6000);}
+        frames();check(managed()==3,"transition fixture begins with three audible rivals");
+        for(unsigned phase:{1u,2u,0u,1u}){
+            for(unsigned s=1;s<=3;++s){
+                scalar(bike(s)+0x490,phase==1?3500.f:phase==2?4000.f:500.f);
+                scalar(bike(s)+0x494,phase==1?4000.f:0.f);
+                scalar(bike(s)+0x498,phase==1?3000.f:phase==2?3500.f:1000.f);
+            }
+            for(unsigned i=0;i<4;++i){
+                frame();check(managed()==3,"packed idle to acceleration transition has no silent frame");
+                check(active()==3,"completed sound transition retains three native rows");
+            }
+            const auto profile=word(0x800A4B48+type*4);
+            const unsigned offset=phase==1?8:phase==2?12:value(profile+0x24)>0?4:12;
+            for(unsigned s=1;s<=3;++s)
+                check(half(row_for(word(cache(s)))+0xA6)==word(profile+offset),"packed transitions eventually reach every native RPM sample");
+        }
+    }
+    // An occupied transition row is not free, even across several game frames.
+    reset();for(unsigned s=1;s<=3;++s){position(s,float(s),5);scalar(bike(s)+0xC,6000);}
+    frames();for(unsigned s=1;s<=3;++s){scalar(bike(s)+0x490,3500);scalar(bike(s)+0x494,4000);scalar(bike(s)+0x498,3000);}
+    for(unsigned i=0;i<10;++i){frame(1.f/60.f,false);check(active()==4&&managed()==3,"worker delay allows only one retiring transition row");}
+    child_voice(row_for(word(cache(1))));check(active()==4,"transition allowance cannot admit a script child");
+    settle_releases();frames();check(active()==3&&managed()==3,"worker release completes remaining transitions");
+    // Capacity pressure preserves the old loop instead of spending effect reserve.
+    reset(8);for(unsigned s=1;s<=3;++s){position(s,float(s),5);scalar(bike(s)+0xC,6000);}
+    frames();const auto protected_effect=start_native();
+    std::array<unsigned,3> old_handles{word(cache(1)),word(cache(2)),word(cache(3))};
+    for(unsigned s=1;s<=3;++s){scalar(bike(s)+0x490,3500);scalar(bike(s)+0x494,4000);scalar(bike(s)+0x498,3000);}
+    frames();check(active()==4&&managed()==3&&row_for(protected_effect),"congested transition preserves four free rows and unrelated effect");
+    for(unsigned s=1;s<=3;++s)check(word(cache(s))==old_handles[s-1],"no spare transition row keeps existing loop alive");
+    auto end_effect=context(protected_effect);end_effect.r5=0;func_800806B4(m,&end_effect);settle_releases();frames();
+    for(unsigned s=1;s<=3;++s)check(word(cache(s))!=old_handles[s-1],"sound transition retries after capacity returns");
+    // Full-volume falloff is intentionally flat; voice priority must not be.
+    reset();shortword(body(0)+rr64::engine::rider::bike_attached,0);
+    for(unsigned s=1;s<=3;++s)position(s,18.f+2.f*s,0);
+    frames();position(4,1,0);frames(30);
+    check(row_for(word(cache(4)))&&managed()==3,"closest passby replaces farther engines beside fallen listener");
     test_rival_doppler_cases();
     // Bounded producer benchmark: real fourteen-racer/four-view scan and
     // actual native memory operations; no sound device, IO or allocator calls.

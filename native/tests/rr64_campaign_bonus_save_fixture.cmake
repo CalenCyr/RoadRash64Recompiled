@@ -7,6 +7,7 @@ add_custom_command(OUTPUT "${_rr64_bonus_save_fixture}"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract_campaign_bonus_save_fixture.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/../config/roadrash64.us.toml"
         "${_rr64_bonus_save_generated}/funcs_6.c"
+        "${_rr64_bonus_save_generated}/funcs_10.c"
         "${_rr64_bonus_save_generated}/funcs_15.c"
         "${_rr64_bonus_save_generated}/funcs_26.c"
     VERBATIM)

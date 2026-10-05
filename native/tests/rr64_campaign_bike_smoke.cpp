@@ -34,6 +34,8 @@ extern "C" void func_8001BAF8(unsigned char*, recomp_context*) {}
 extern "C" void func_800470F0(unsigned char*, recomp_context*) {}
 extern "C" void func_80046F68(unsigned char*, recomp_context* c) { preview_bike=unsigned(c->r6); c->r2=0; }
 extern "C" void func_80024EB8(unsigned char*, recomp_context*) {}
+// Full startup scanning is exercised by RR64CampaignBonusSaveSmoke.
+extern "C" void func_800207DC(unsigned char*, recomp_context* c) { c->r2 = 0; }
 extern "C" int rr64_offline_bikes_active(unsigned char*, unsigned) { return 0; }
 extern "C" unsigned rr64_offline_bikes_entry(unsigned char*, unsigned, unsigned stock) { return stock; }
 extern "C" unsigned rr64_offline_bikes_count(unsigned char*, unsigned stock, unsigned) { return stock; }
@@ -228,10 +230,16 @@ int main(int argc, char** argv) {
         if(reason==2) write_u32(m,cache,3);
         checksum(m,cache);
         if(reason==3) write_u32(m,cache+4,0);
-        const auto before = bytes(m,unlocks,30);
+        auto expected = memory;
+        if(reason < 2) {
+            ctx.r4 = reason == 0 ? 3 : 4;
+            ctx.r5 = 1;
+            func_8005F420(expected.data(), &ctx);
+        }
         ctx.r16=S32(cache); ctx.r18=5; ctx.r17=reason==4 ? 6 : 5;
         test_validated_campaign_save(m,&ctx);
-        check(bytes(m,unlocks,30)==before,"Incomplete/corrupt/rejected profile granted unlocks");
+        check(bytes(m,unlocks,30)==bytes(expected.data(),unlocks,30),
+              "Ordinary progress must unlock earned levels; incomplete/corrupt saves must not grant completion rewards");
     }
     // Drive the original solo left/right selector, not an imitation of its
     // count or pointer lookup. The same committed bike drives the race donor.

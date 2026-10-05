@@ -4,10 +4,13 @@
 
 #include <initializer_list>
 
+extern "C" void func_800207DC(unsigned char *, recomp_context *);
+
 namespace {
 using namespace rr64::engine;
 constexpr unsigned profile = 0x800D6A40u;
 unsigned char *ending_return = nullptr;
+thread_local bool passive_save_scan = false;
 // Per-result decision, derived from the native saved completion counters before
 // the prize routine changes them. No separate unlock or save-file flag is needed.
 unsigned char *results_memory = nullptr;
@@ -35,8 +38,6 @@ void tier(unsigned char *m, unsigned level) {
         write_u16(m, 0x800A5334u + (level + 8) * 2, 1);
 }
 void unlock(unsigned char *m, unsigned record) {
-    for (unsigned level = 0; level < 5; ++level)
-        tier(m, level);
     // Preserve the native ending reward (23340..23400). Profile +20 records
     // the original gang category, assigned by shop Join, not difficulty.
     const unsigned gang = word(m, record + 0x20);
@@ -168,9 +169,36 @@ extern "C" void rr64_campaign_restore_unlocks(unsigned char *m, unsigned record)
     unsigned checksum = 0;
     for (unsigned offset = 0; offset < 0xF8; offset += 4)
         if (offset != 4) checksum += word(m, record + offset);
-    if (word(m, record) == 4 && checksum == word(m, record + 4) && completed(m, record)) {
+    if (word(m, record) != 4 || checksum != word(m, record + 4))
+        return;
+    const unsigned level = word(m, record + 0x3C);
+    if (level > 5 || (level == 5 && !completed(m, record)))
+        return;
+    // Native Load Game grants these while drawing each valid save label.
+    // Restore them when accepting the record so Thrash needs no menu detour.
+    for (unsigned normal = 0; normal <= level && normal < 5; ++normal)
+        tier(m, normal);
+    if (completed(m, record)) {
         unlock(m, record);
         if (rr64_campaign_bonus_record(m, record))
             tier(m, 6);
     }
+}
+
+extern "C" int rr64_campaign_passive_scan() {
+    return passive_save_scan;
+}
+
+extern "C" void rr64_campaign_menu_unlocks(unsigned char *m, void *context) {
+    if (!m || !context || word(m, 0x800A1810u) != 32 || passive_save_scan)
+        return;
+    // Main-menu entry only. The native Pak cache avoids repeated reads; no
+    // saved profile is loaded into the current campaign or selected player.
+    auto scan_context = *static_cast<recomp_context *>(context);
+    scan_context.f_odd = &scan_context.f0.u32h;
+    struct PassiveScan {
+        PassiveScan() { passive_save_scan = true; }
+        ~PassiveScan() { passive_save_scan = false; }
+    } scope;
+    func_800207DC(m, &scan_context);
 }

@@ -6,6 +6,20 @@ sounds. No new sound assets or SDL_mixer dependency are distributed.
 
 ## Listening behavior
 
+October 4 distance-fade follow-up: a quiet rival previously lost its entire
+gain in one update when another bike took its slot. Gain changes now use a
+60 ms time constant (about 180 ms to complete 95% of a change), including
+newly selected bikes, instead of subtracting a fixed full-volume step. The
+same three-source budget and four reserved effect rows remain in place.
+Native RPM changes also retain their existing loop if the replacement's gain
+would be rejected by the native quiet-sound gate. The retained loop still
+receives normal volume and pitch updates. Final integer gain can reach zero
+at the quiet end of the range; no extra distant voices are kept indefinitely.
+Offline checks and owner listening acceptance are recorded separately in
+root `analysis/rival-distance-fade-20261004/`.
+The owner tested Followup03 and reported that the audio seems fixed. That is
+listening acceptance for this run, not additional Linux or Steam Deck coverage.
+
 Audio > Game Audio > **Rival Engines** enables the managed engine sounds and
 defaults to On. Off requests a stop for active rival loops at the next game
 audio update, rejects further owned script-child voices, and skips subsequent
@@ -29,7 +43,9 @@ The manager selects up to three nearby riding bikes. Sound stays on each bike;
 the listener follows the local rider's body when detached. The view direction
 determines stereo left/right. Volume reaches the slider's full level within
 12 world units, then fades smoothly to zero at 320 units. Changes in selection,
-volume and pan are smoothed. Selection favors an
+volume and pan are smoothed. Proximity sets selection priority independently of
+the flat close-range volume curve, so a passing bike can replace a farther one.
+Selection favors an
 already playing bike slightly to avoid rapid switches between similarly distant
 rivals. Original bike profiles and engine state determine sample and RPM pitch.
 The native traffic Doppler calculation adds a bounded, smoothed passing pitch
@@ -95,8 +111,13 @@ effects. The stock `58600` gain threshold of 18 rejects quiet engine starts;
 managed rivals permit gains above 1 so fade-in and a low volume setting work.
 
 Admission examines the live native effects rows, not merely the racer cache.
-It permits at most three owned rows and leaves four effects rows free when
-admitting a voice. Added voices use priority zero and cannot steal another row.
+It permits three sustained engine rows and leaves four effects rows free when
+admitting a voice. One additional row is allowed only while replacing an owned
+RPM loop whose old row is awaiting release. Other loop transitions keep playing
+their current sound until there is room. This prevents a full pack from stopping
+all its loops and then denying every replacement. The temporary allowance cannot
+start a fourth bike or script child. Added voices use priority zero and cannot
+steal another row.
 Deferred releases remain occupied until the native audio worker frees them.
 Original race effects may steal these low-priority engines when necessary.
 Music's reserved rows are excluded from this budget.
@@ -132,6 +153,13 @@ verification checks the real producer and native mixer contracts without opening
 an audio device. It does not establish audible balance, physical stereo output,
 Internet acceptance or Steam Deck frame times. Those require listening/runtime
 confirmation. Windows and Linux build results are recorded there when complete.
+
+The October 4 dropout regression executes clustered native idle, acceleration
+and coast changes, including both Insanity models, delayed worker releases,
+reserved effect capacity, and passbys beside a fallen rider. The old manager
+fails the clustered-transition check. Windows passes 31,811 checks with the
+fix; the 20,000-frame bounded fixture allocates no host heap memory. Evidence:
+root `analysis/rival-audio-dropout-20261004/`. Audible confirmation remains pending.
 
 The September 29 follow-up compiled the complete game on Windows and Linux.
 Both passed eleven relevant suites, including 30,180 rival-engine checks,

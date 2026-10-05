@@ -68,6 +68,7 @@ struct UiState {
     unsigned focus_delay_frames = 0;
     bool initialized = false;
     bool online_entry_queued = false;
+    bool session_active = false;
     bool course_blocked = false;
 };
 
@@ -656,10 +657,13 @@ void update_ui() {
             recompui::hide_context(g_ui.context);
         }
     }
-    if (!status.active) {
+    // Reset once when a session ends. Repeating this while offline also
+    // restores the local menu every frame, restarting its route preview.
+    if (g_ui.session_active && !status.active) {
         g_ui.online_entry_queued = false;
         reset_guest_setup_progress();
     }
+    g_ui.session_active = status.active;
 
     restore_page_focus_if_ready();
 

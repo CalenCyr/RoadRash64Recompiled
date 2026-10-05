@@ -7,6 +7,8 @@ void rr64_campaign_results_begin(unsigned char *rdram);
 int rr64_campaign_repeat_completion(unsigned char *rdram);
 int rr64_campaign_finish_menu(unsigned char *rdram);
 void rr64_campaign_restore_unlocks(unsigned char *rdram, unsigned record);
+void rr64_campaign_menu_unlocks(unsigned char *rdram, void *context);
+int rr64_campaign_passive_scan(void);
 unsigned rr64_campaign_shop_promotion(unsigned char *rdram, unsigned native_ready);
 int rr64_campaign_bonus_active(unsigned char *rdram);
 unsigned rr64_campaign_table_address(unsigned char *rdram, unsigned native_address);

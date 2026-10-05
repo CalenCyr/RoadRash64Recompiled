@@ -52,6 +52,7 @@ include(tests/rr64_rival_engine_config_fixture.cmake)
 include(tests/rr64_campaign_bonus_fixture.cmake)
 include(tests/rr64_mk64_item_native_fixture.cmake)
 include(tests/rr64_campaign_bonus_save_fixture.cmake)
+include(tests/rr64_course_ai_fixture.cmake)
 
 # Save labels must not change the base chapter subsequently used for unlocks.
 set(_rr64_bonus_label_generated "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs")

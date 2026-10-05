@@ -1,5 +1,22 @@
 # Completed Big Game saves and Insanity selection
 
+## October 4 — restore earned race levels before selection
+
+Thrash previously saw only the initial unlock flags until the player opened
+Big Game's Load Game menu. That menu grants ordinary levels while drawing each
+valid save's label; the accepted-record hook restored only completion rewards.
+
+The main-menu transition now reads the existing native Pak cache before race
+selection. Accepted records restore their earned ordinary levels as well as
+the existing completion and Insanity bonus rewards. This does not select or
+copy a campaign into the live profile, write a save, or grant unearned levels.
+Automatic scanning suppresses the native scanner's invalid-record deletion.
+The native cache avoids additional disk reads on subsequent menu entries.
+
+Cold-start, invalid-save and cache regression coverage uses the native scan
+and the production menu hook. A fresh launch is still needed for visual
+acceptance of the reported startup sequence.
+
 ## October 1 — show the original ending once
 
 The original results screen (`73054`, branch `7327C`) tests whether every track
@@ -49,8 +66,8 @@ qualification nibbles nonzero. The native reward is Insanity for original-gang
 values one/two, Scooter for three/four, and the cop tier for zero. Profile +20 is
 assigned when joining the original gang; it is not the difficulty setting. No new save
 format, sidecar unlock file, achievement dependency or automatic overwrite is
-introduced. After restarting, open/load the completed Big Game save through the
-native Load Game menu before using its earned tier in Thrash or local multiplayer.
+introduced. The October 4 startup restoration above removes the earlier need
+to visit Load Game before using earned tiers in Thrash or local multiplayer.
 
 ## Offline verification
 

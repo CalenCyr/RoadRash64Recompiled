@@ -3,12 +3,15 @@
 #include "rr64_engine_layout.hpp"
 #include "rr64_native.hpp"
 #include "rr64_campaign_bonus_save.hpp"
+#include "rr64_ai_bike_selection.hpp"
 #include "rr64_netplay.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <vector>
 
 extern "C" {
@@ -24,6 +27,7 @@ void func_80073728(unsigned char*, recomp_context*);
 void func_80072E74(unsigned char*, recomp_context*);
 void func_80072A14(unsigned char*, recomp_context*);
 void func_800516B8(unsigned char*, recomp_context*);
+void stock_func_800516B8(unsigned char*, recomp_context*);
 void bonus_load_8002C3D8(unsigned char*, recomp_context*);
 void bonus_load_8002C718(unsigned char*, recomp_context*);
 void bonus_load_8007290C(unsigned char*, recomp_context*);
@@ -39,9 +43,13 @@ using namespace rr64::engine;
 constexpr unsigned profile=0x800D6A40, descriptor=0x800D8520, actor=0x800D8570;
 unsigned checks=0, completed=0, advanced=0, preview=0, mode=0;
 unsigned allocated_ai=0;
+unsigned expected_ai_tier=7;
+std::vector<unsigned> allocated_rows;
 bool online_active=false;
+unsigned confirmed_network_bike=~0u;
 unsigned word(unsigned char* m, unsigned a) { unsigned v=0; read_u32(m,a,v); return v; }
 unsigned half(unsigned char* m, unsigned a) { std::uint16_t v=0; read_u16(m,a,v); return v; }
+unsigned byte(unsigned char* m, unsigned a) { std::uint8_t v=0; read_u8(m,a,v); return v; }
 void check(bool b,const char* message) { ++checks; if(!b) { std::fprintf(stderr,"FAIL %s\n",message); std::exit(1); } }
 std::vector<unsigned char> bytes(unsigned char* m,unsigned a,unsigned n) {
     std::vector<unsigned char> v(n); for(unsigned i=0;i<n;++i) read_u8(m,a+i,v[i]); return v;
@@ -50,6 +58,8 @@ recomp_context context() { recomp_context c{}; c.r29=S32(0x807F0000); c.r31=0x12
 void postrace_context(recomp_context& c) { c=context(); c.r19=1; c.r21=S32(profile); c.r22=S32(0x800D0000); }
 }
 extern "C" void func_80072880(unsigned char*,recomp_context*) {}
+// Full startup scanning is exercised by RR64CampaignBonusSaveSmoke.
+extern "C" void func_800207DC(unsigned char*,recomp_context* c) { c->r2 = 0; }
 extern "C" void func_80057F88(unsigned char*,recomp_context*) {}
 extern "C" void func_80057FC0(unsigned char*,recomp_context*) {}
 extern "C" void func_80057FF8(unsigned char*,recomp_context*) {}
@@ -60,7 +70,6 @@ extern "C" void func_8006CB8C(unsigned char*,recomp_context*) {}
 extern "C" void func_8005F3B4(unsigned char*,recomp_context*) {}
 extern "C" void func_8006CF60(unsigned char*,recomp_context*) {}
 extern "C" void func_800727A0(unsigned char*,recomp_context* c) { c->r2=7; }
-extern "C" void func_8001A5D8(unsigned char*,recomp_context* c) { c->r2=0; }
 extern "C" void func_800696E0(unsigned char*,recomp_context* c) { preview=unsigned(c->r4); c->f0.fl=1.0f; }
 extern "C" void func_8001A46C(unsigned char* m,recomp_context* c) {
     for(unsigned i=0;i<unsigned(c->r6);++i) { std::uint8_t b; read_u8(m,unsigned(c->r5)+i,b); write_s8(m,unsigned(c->r4)+i,b); }
@@ -70,14 +79,17 @@ extern "C" unsigned rr64_local_bike_level(unsigned original) { return original; 
 extern "C" int rr64_custom_cop_active() { return 0; }
 extern "C" void rr64_custom_cop_ai_pool(unsigned char*,void*) {}
 extern "C" unsigned rr64_online_bike_profile(unsigned char*,unsigned,unsigned donor) { return donor; }
+extern "C" unsigned rr64_online_race_choice(unsigned,unsigned original,unsigned) { return confirmed_network_bike==~0u ? original:confirmed_network_bike; }
 namespace rr64::netplay { Status get_status() { Status s{}; s.active=online_active; return s; } }
-extern "C" void func_8001A590(unsigned char*,recomp_context* c) { c->f0.fl=0.5f; }
+extern "C" void rr64_prediction_verify_random(unsigned char*,unsigned) {}
 extern "C" void func_80051E24(unsigned char* m,recomp_context* c) {
     const unsigned row=unsigned(c->r5), racer=unsigned(c->r4);
     check(row>=0x800A3460 && row<0x800A3460+160*16 && (row-0x800A3460)%16==0,"native AI assignment must have valid donor");
     check(racer>=actor && racer<actor+14*0x118,"native AI destination within14 actors");
-    std::uint8_t bike=0; read_u8(m,row+10,bike);
-    check(bike==25 || bike==26,"full native AI construction uses Insanity model");
+    check(half(m,racer+0x24)==0 || half(m,racer+0x26)!=0,"native AI producer overwrote reserved human");
+    check(byte(m,row+8)==expected_ai_tier,"native AI construction stays in effective bike tier");
+    if(expected_ai_tier==7) check(byte(m,row+10)==25 || byte(m,row+10)==26,"full native AI construction uses Insanity model");
+    allocated_rows.push_back(row);
     ++allocated_ai;
 }
 extern "C" void rr64_local_options_reset_race() {}
@@ -104,6 +116,7 @@ int main(int argc,char** argv) {
         for(unsigned i=0;i<size;++i) write_s8(m,a+i,rom[off+i]);
     };
     seed(0x800A0000,0x7800); seed(0x80007000,0x400); seed(0x80004E80,0x30);
+    seed(0x80000ED8,0x20); // Constants used by the actual native RNG.
     write_u32(m,0x800A6524,0x80600000); write_u32(m,0x800A64E8,0x80610000);
     write_u32(m,profile+0x20,1); write_u32(m,profile+0x14,25);
     write_u32(m,profile+0x50,0x11111111); write_u32(m,profile+0x54,0x00010002);
@@ -139,6 +152,133 @@ int main(int argc,char** argv) {
             check(word(m,0x800A6680)==(invalid==~0u ? count-1:0),"native selection wraps within chapter");
         }
     }
+
+    // Model changes keep the closest available native physics/skill profile.
+    // A copied RNG context must not clobber the producer's live registers;
+    // police, reserved humans and invalid profiles must not consume a draw.
+    const auto donor_table=bytes(m,0x800A3460,160*16);
+    const unsigned ai_actor=actor+4*0x118;
+    for(unsigned i=0;i<0x118;++i) write_s8(m,ai_actor+i,0);
+    for(unsigned i=4;i<160;++i) {
+        const unsigned original=0x800A3460+i*16;
+        const unsigned tier=byte(m,original+8), family=byte(m,original+9);
+        if(tier==12) break;
+        if(tier<1 || tier>7) continue;
+        for(unsigned sample=0;sample<8;++sample) {
+            auto call=context(); call.r4=S32(ai_actor); call.r5=S32(original);
+            call.r16=0x13579; call.f12.fl=0.375f;
+            const auto before=call;
+            write_u32(m,0x8009DC30,0x9E3779B9u*(sample+1));
+            const unsigned rng_before=word(m,0x8009DC30);
+            const unsigned selected=rr64_ai_bike_profile(m,&call,original);
+            check(std::memcmp(&before,&call,sizeof(call))==0,"AI model selection clobbered native registers");
+            if(family==7) {
+                check(selected==original && word(m,0x8009DC30)==rng_before,"police profiles must bypass randomization");
+                continue;
+            }
+            check(selected>=0x800A34A0 && selected<0x800A3460+160*16 && (selected-0x800A3460)%16==0,"AI selected malformed donor row");
+            check(byte(m,selected+8)==tier && byte(m,selected+9)>=1 && byte(m,selected+9)<=4,"AI selected wrong tier or role");
+            const unsigned model=byte(m,selected+10), rank=byte(m,original+13);
+            unsigned nearest=256;
+            for(unsigned j=4;j<160;++j) {
+                const unsigned candidate=0x800A3460+j*16;
+                if(byte(m,candidate+8)==12) break;
+                if(byte(m,candidate+8)!=tier || byte(m,candidate+10)!=model ||
+                   byte(m,candidate+9)<1 || byte(m,candidate+9)>4) continue;
+                const unsigned other=byte(m,candidate+13);
+                nearest=std::min(nearest,other>rank ? other-rank:rank-other);
+            }
+            const unsigned selected_rank=byte(m,selected+13);
+            check((selected_rank>rank ? selected_rank-rank:rank-selected_rank)==nearest,"AI model change altered native difficulty unnecessarily");
+        }
+    }
+    check(bytes(m,0x800A3460,160*16)==donor_table,"AI randomization modified ROM donor metadata");
+    auto protected_call=context(); protected_call.r4=S32(ai_actor);
+    const unsigned valid_profile=0x800A34A0;
+    write_u16(m,ai_actor+0x24,1); write_u16(m,ai_actor+0x26,0);
+    const unsigned protected_rng=word(m,0x8009DC30);
+    check(rr64_ai_bike_profile(m,&protected_call,valid_profile)==valid_profile,"AI helper changed a reserved human profile");
+    write_u16(m,ai_actor+0x24,0);
+    confirmed_network_bike=25;
+    check(rr64_ai_bike_profile(m,&protected_call,valid_profile)==valid_profile,"AI helper changed a confirmed network human profile");
+    confirmed_network_bike=~0u;
+    for(unsigned invalid:{0u,0x800A3461u,0x80800000u})
+        check(rr64_ai_bike_profile(m,&protected_call,invalid)==invalid,"invalid AI donor must be rejected unchanged");
+    check(rr64_ai_bike_profile(nullptr,&protected_call,valid_profile)==valid_profile &&
+          rr64_ai_bike_profile(m,nullptr,valid_profile)==valid_profile,"null AI helper inputs must be rejected");
+    check(word(m,0x8009DC30)==protected_rng,"rejected AI selection consumed random state");
+
+    // Exercise the real producer and private ROM donor data, including Level
+    // 1's unusual menu order. Every human choice must leave all four ordinary
+    // models reachable. The former allocation path is a negative control;
+    // police and reserved humans keep their original roles in both paths.
+    unsigned ordinary_ai_cases=0, restricted_stock_pools=0;
+    for(unsigned level=0;level<5;++level) {
+        const unsigned tier=level+1;
+        std::set<unsigned> expected_models;
+        std::vector<unsigned> human_profiles;
+        for(unsigned i=4;i<160;++i) {
+            const unsigned row=0x800A3460+i*16;
+            if(byte(m,row+8)==12) break;
+            if(byte(m,row+8)!=tier || byte(m,row+9)==7) continue;
+            if(expected_models.insert(byte(m,row+10)).second) human_profiles.push_back(row);
+        }
+        check(expected_models.size()==4,"private ordinary tier must contain four distinct bike models");
+        const unsigned tracks=level==0 ? 6:8;
+        for(unsigned track=0;track<tracks;++track) for(unsigned human_profile:human_profiles)
+        for(unsigned humans:{1u,4u}) {
+            std::set<unsigned> selected_models, stock_models;
+            const auto produce=[&](bool stock,unsigned rng_seed) {
+                write_u32(m,globals::main_mode,0x18); write_u32(m,globals::pending_mode,0x18);
+                write_u32(m,profile+0x3C,level); write_u32(m,0x800A6680,track);
+                write_u32(m,0x800A6684,~0u);
+                auto call=context(); bonus_native_route(m,&call);
+                check(word(m,descriptor+0x28)==tier,"native chapter selected unexpected donor tier");
+                for(unsigned i=0;i<14*0x118;++i) write_s8(m,actor+i,0);
+                for(unsigned i=0;i<humans;++i) {
+                    const unsigned racer=actor+i*0x118;
+                    write_u32(m,racer+0x18,byte(m,human_profile+10));
+                    write_u32(m,racer+0x20,byte(m,human_profile+9));
+                    write_u16(m,racer+0x24,1); write_u16(m,racer+0x26,0);
+                }
+                const auto reserved=bytes(m,actor,humans*0x118);
+                write_u32(m,0x8009DC30,rng_seed);
+                call=context(); call.r4=S32(descriptor);
+                call.r5=0x3E800000; call.r6=0x3F400000; call.r7=0x3F000000;
+                write_u32(m,unsigned(call.r29)+0x10,2);
+                allocated_ai=0; allocated_rows.clear(); expected_ai_tier=tier;
+                (stock ? stock_func_800516B8:func_800516B8)(m,&call);
+                unsigned population=0; for(unsigned i=0;i<8;++i) population+=half(m,descriptor+0x2C+i*2);
+                check(allocated_ai==population-humans,"ordinary AI count must preserve native human reservation");
+                check(bytes(m,actor,humans*0x118)==reserved,"ordinary AI choice changed a human actor");
+                check(unsigned(call.r29)==0x807F0000 && call.r31==0x12345678,"ordinary AI producer corrupted caller context");
+                return allocated_rows;
+            };
+            for(unsigned sample=0;sample<16;++sample) {
+                const unsigned rng_seed=0x9E3779B9u*(sample+1);
+                const auto stock=produce(true,rng_seed), selected=produce(false,rng_seed);
+                unsigned stock_cops=0, selected_cops=0;
+                for(unsigned row:stock) {
+                    if(byte(m,row+9)==7) ++stock_cops;
+                    else stock_models.insert(byte(m,row+10));
+                }
+                for(unsigned row:selected) {
+                    if(byte(m,row+9)==7) ++selected_cops;
+                    else {
+                        check(expected_models.count(byte(m,row+10))==1,"AI model is outside actual current-level pool");
+                        selected_models.insert(byte(m,row+10));
+                    }
+                }
+                check(selected_cops==stock_cops,"AI randomization changed native police count");
+                if(sample==0) check(produce(false,rng_seed)==selected,"native seeded AI roster must be reproducible");
+                ++ordinary_ai_cases;
+            }
+            if(stock_models!=expected_models) ++restricted_stock_pools;
+            check(selected_models==expected_models,"human bike selection excluded a valid AI bike model");
+        }
+    }
+    check(restricted_stock_pools>0,"negative control did not reproduce the former restricted AI pool");
+    expected_ai_tier=7; allocated_rows.clear();
 
     // Native rider-pool filter must select the actual Insanity model donors,
     // not ordinary Level 5 racers accidentally carried in the donor profile.
@@ -350,5 +490,5 @@ int main(int argc,char** argv) {
         check(mode==0x2F && completed==0 && advanced==0,"incomplete original campaign triggered ending");
     }
     check(bytes(m,0x800A68C8,0x740C-0x68C8)==original_tables,"shared campaign route tables mutated");
-    std::printf("{\"passed\":true,\"checks\":%u,\"nativeDonors\":%u,\"nativeAiCases\":%u,\"nativePrizeCases\":%u,\"nativeEndingCases\":%u,\"gameLaunched\":false}\n",checks,donors,ai_cases,prize_cases,ending_cases);
+    std::printf("{\"passed\":true,\"checks\":%u,\"nativeDonors\":%u,\"nativeAiCases\":%u,\"ordinaryAiCases\":%u,\"restrictedStockPools\":%u,\"nativePrizeCases\":%u,\"nativeEndingCases\":%u,\"gameLaunched\":false}\n",checks,donors,ai_cases,ordinary_ai_cases,restricted_stock_pools,prize_cases,ending_cases);
 }

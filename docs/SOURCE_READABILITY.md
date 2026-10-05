@@ -87,3 +87,18 @@ not total game FPS or Steam Deck performance.
 Do not turn a cleanup into a blanket rewrite of generated code, renderer
 dependencies or gameplay hooks. Preserve known fixes and add short comments at
 ownership and lifetime boundaries rather than narrating every statement.
+
+## 1.4.4 release-candidate review
+
+The October 5 inventory covers all maintained native source, hooks, build/test
+scripts, importer/mod tools and dependency exports. Every production translation
+unit and header has a build/include reference. Generated replay budget calls are
+intentional, even though a simple source-only caller search misses them.
+
+Recent AI selection and course-guidance code follows the existing formatting
+rules; tokens and comments were checked before rebuilding both platforms.
+Use `rr64_ai_bike_selection` for opponent donor selection, `rr64_course_ai` for
+imported-route steering/recovery, and `rr64_rival_engine` for shared native
+engine-voice ownership. These stay separate from rendering and network transport.
+Routine diagnostics remain opt-in; error reporting and regression fixtures stay.
+Player packages exclude test tools, logs, captures, saves and extracted ROM data.

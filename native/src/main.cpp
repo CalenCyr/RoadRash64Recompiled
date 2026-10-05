@@ -139,7 +139,7 @@
 #include "rr64_experimental_course.hpp"
 #endif
 
-constexpr const char* kVersion = "1.4.3";
+constexpr const char* kVersion = "1.4.4";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -1938,7 +1938,7 @@ void init_recompui_config() {
     for (unsigned slot = 0; slot < 4; ++slot) {
         const std::string key = "rr64_local_player_name_" + std::to_string(slot + 1);
         general_config.add_string_option(key, "Local Player " + std::to_string(slot + 1) + " Name",
-            "Name shown in local multiplayer. Uses up to 11 letters, numbers or spaces; unsupported characters are omitted. Empty names use PLAYER 1–4. Controller bindings are configured separately in Controls.",
+            "Name shown in local multiplayer. Uses up to 11 letters, numbers or spaces; unsupported characters are omitted. Empty names use PLAYER 1â€“4. Controller bindings are configured separately in Controls.",
             "PLAYER " + std::to_string(slot + 1), true);
         general_config.add_option_change_callback(key,
             [slot](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {

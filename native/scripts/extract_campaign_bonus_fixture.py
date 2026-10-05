@@ -20,7 +20,7 @@ for path in a.generated.glob('funcs_*.c'):
         all_functions[m[1]] = m[0]
 hooks = []
 for line in a.config.read_text().splitlines():
-    if 'rr64_campaign_' not in line or line.lstrip().startswith('#'):
+    if not any(h in line for h in ('rr64_campaign_', 'rr64_ai_bike_profile')) or line.lstrip().startswith('#'):
         continue
     m = re.fullmatch(r'\s*\{\s*func\s*=\s*"(\w+)"\s*,\s*(?:before_vram\s*=\s*(0x[0-9A-Fa-f]+)\s*,\s*)?text\s*=\s*(".*")\s*\},?\s*', line)
     assert m, ('Audit changed campaign hook format', line)
@@ -39,7 +39,8 @@ for line in a.config.read_text().splitlines():
 
 full = ['func_80073658', 'func_80073728', 'func_80072E74', 'func_80072A14',
         'func_80073000', 'func_8005F420', 'func_8001A250', 'func_800488C4', 'func_80048544',
-        'func_800516B8', 'func_8001A288', 'func_8001A2E8']
+        'func_800516B8', 'func_8001A288', 'func_8001A2E8',
+        'func_8001A500', 'func_8001A52C', 'func_8001A590', 'func_8001A5D8']
 functions = {n: all_functions[n] for n in full}
 
 def slice_native(source, name, start, end, tail=''):
@@ -79,6 +80,13 @@ for name in ['bonus_native_route', 'func_80073658', 'func_80072E74', 'bonus_nati
     stock['stock_'+name] = code
 functions.update(stock)
 
+# Negative control keeps the shipped producer, reservation and demand repair,
+# but omits the new model randomization at the actual allocation call site.
+selection = 'ctx->r5 = rr64_ai_bike_profile(rdram, ctx, ctx->r5);'
+assert functions['func_800516B8'].count(selection) == 1, 'Missing AI selection call site'
+functions['stock_func_800516B8'] = functions['func_800516B8'].replace(selection, '').replace(
+    'void func_800516B8(', 'void stock_func_800516B8(')
+
 # C++ rejects jumps across generated jump-table temporary initialization.
 for name, code in functions.items():
     variables = re.findall(r'    gpr (jr_addend_\w+) = ', code)
@@ -109,7 +117,7 @@ unsigned read(unsigned char* m,unsigned a) { unsigned v=0; read_u32(m,a,v); retu
 void write(unsigned char* m,unsigned a,unsigned v) { write_u32(m,a,v); }
 }
 '''
-a.output.write_text('#include "recomp.h"\n#include "rr64_native.hpp"\n'+support+normalizer[0]+'\n'
+a.output.write_text('#include "recomp.h"\n#include "rr64_native.hpp"\n#include "rr64_ai_bike_selection.hpp"\n'+support+normalizer[0]+'\n'
     '#undef RECOMP_FUNC\n#define RECOMP_FUNC\nextern "C" {\n'+decls+'\n'+''.join(functions.values())+'}\n', encoding='utf-8')
 print(json.dumps(dict(functions=list(functions), campaignHooks=len(hooks), candidateInjection=a.candidate_config,
     externalCalls=sorted(calls-set(functions)))))

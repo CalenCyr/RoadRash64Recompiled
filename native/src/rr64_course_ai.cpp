@@ -7,7 +7,10 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <limits>
+
+extern "C" void func_8004F658(unsigned char *, recomp_context *);
 
 namespace rr64::course_ai {
 namespace {
@@ -18,11 +21,28 @@ bool finite(Vec v) {
 float length(Vec v) {
     return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 }
+float limited_turn_rate(Vec velocity, float deceleration, float rate) {
+    const float speed = std::hypot(velocity[0], velocity[1]);
+    if (!std::isfinite(rate) || !std::isfinite(speed) || speed < .5f ||
+        !std::isfinite(deceleration) || deceleration <= 0)
+        return 0;
+    // Lateral acceleration is speed * angular velocity. Do not certify a
+    // sharper turn than the native tyre/profile grip can deliver.
+    return std::clamp(rate, -deceleration / speed, deceleration / speed);
+}
+Vec displacement(Vec velocity, float elapsed, float rate) {
+    if (rate == 0)
+        return {velocity[0] * elapsed, velocity[1] * elapsed, velocity[2] * elapsed};
+    const double angle = double(rate) * elapsed;
+    const double along = std::sin(angle) / rate, across = (1 - std::cos(angle)) / rate;
+    return {float(velocity[0] * along - velocity[1] * across),
+            float(velocity[1] * along + velocity[0] * across), velocity[2] * elapsed};
+}
 }
 Decision inspect(const course_walls::World *walls, const course_hazards::Data *hazards,
                  const netplay::CourseHazardState &presented,
                  std::span<const course_walls::Sphere> spheres, Vec velocity, Vec forward,
-                 float braking_acceleration) noexcept {
+                 float braking_acceleration, float turn_rate) noexcept {
     Decision result;
     if (spheres.empty() || spheres.size() > 3 || !finite(velocity) || !finite(forward) ||
         !std::isfinite(braking_acceleration) || braking_acceleration <= 0 ||
@@ -34,6 +54,7 @@ Decision inspect(const course_walls::World *walls, const course_hazards::Data *h
     const float speed = length(velocity);
     if (!std::isfinite(speed) || speed > 1000)
         return result;
+    turn_rate = limited_turn_rate(velocity, braking_acceleration, turn_rate);
     // The native AI's friction/profile estimate supplies deceleration. Add a
     // short reaction margin; cap prediction at two seconds (20 fixed queries).
     // At rest, probe only a small forward clearance so a waiting AI can resume.
@@ -47,19 +68,23 @@ Decision inspect(const course_walls::World *walls, const course_hazards::Data *h
     }
     const unsigned steps = std::clamp(unsigned(std::ceil(result.horizon / .1f)), 1u, 20u);
     const float delta = result.horizon / steps;
-    Vec move{};
-    for (unsigned k = 0; k < 3; ++k)
-        move[k] = velocity[k] * delta;
+    Vec previous{};
     std::array<course_walls::Sphere, 3> probes{};
     std::copy(spheres.begin(), spheres.end(), probes.begin());
     auto forecast = presented;
     for (unsigned step = 0; step < steps; ++step) {
+        const Vec next = displacement(velocity, (step + 1) * delta, turn_rate);
+        Vec move{}, sample_velocity{};
+        for (unsigned k = 0; k < 3; ++k) {
+            move[k] = turn_rate == 0 ? velocity[k] * delta : next[k] - previous[k];
+            sample_velocity[k] = turn_rate == 0 ? velocity[k] : move[k] / delta;
+        }
         if (walls) {
             // Resolve the whole compound so an outward initial overlap cannot
             // hide a second, approaching wall at a corner. This remains a pure
             // query; actual depenetration belongs to the physics adapter.
-            const auto hit = course_walls::resolve(
-                *walls, {probes.data(), spheres.size()}, move, velocity);
+            const auto hit = course_walls::resolve(*walls, {probes.data(), spheres.size()}, move,
+                                                   sample_velocity);
             if (hit.contacts && hit.normal_speed > 1e-5f) {
                 result.brake = true;
                 result.wall = hit.triangle_id;
@@ -73,7 +98,7 @@ Decision inspect(const course_walls::World *walls, const course_hazards::Data *h
                 for (unsigned k = 0; k < 3; ++k)
                     forecast.poses[i].position[k] += forecast.poses[i].velocity[k] * delta;
             const auto hit = course_hazards::resolve_state(
-                *hazards, forecast, {probes.data(), spheres.size()}, move, velocity, delta);
+                *hazards, forecast, {probes.data(), spheres.size()}, move, sample_velocity, delta);
             if (hit.contacts && hit.normal_speed > 1e-5f) {
                 result.brake = true;
                 result.hazard = hit.id;
@@ -83,22 +108,25 @@ Decision inspect(const course_walls::World *walls, const course_hazards::Data *h
         for (unsigned i = 0; i < spheres.size(); ++i)
             for (unsigned k = 0; k < 3; ++k)
                 probes[i].center[k] += move[k];
+        previous = next;
     }
     return result;
 }
 
 Decision choose(const course_walls::World *walls, const course_walls::World *floor,
-                const course_hazards::Data *hazards,
-                const netplay::CourseHazardState &presented,
+                const course_hazards::Data *hazards, const netplay::CourseHazardState &presented,
                 std::span<const course_walls::Sphere> spheres, Vec velocity, Vec forward,
-                Vec normal, float deceleration, float left, float right,
-                float preferred_side) noexcept {
-    Decision result = inspect(walls, hazards, presented, spheres, velocity, forward, deceleration);
-    if (!result.brake || !finite(normal) || !std::isfinite(left) ||
-        !std::isfinite(right) || left > right)
+                Vec normal, float deceleration, float left, float right, float preferred_side,
+                float turn_rate) noexcept {
+    turn_rate = limited_turn_rate(velocity, deceleration, turn_rate);
+    Decision result =
+        inspect(walls, hazards, presented, spheres, velocity, forward, deceleration, turn_rate);
+    if (!result.brake || !finite(normal) || !std::isfinite(left) || !std::isfinite(right) ||
+        left > right)
         return result;
     const float norm = std::hypot(normal[0], normal[1]);
-    if (!(norm > .01f)) return result;
+    if (!(norm > .01f))
+        return result;
     normal = {normal[0] / norm, normal[1] / norm, 0};
     const float speed = std::hypot(velocity[0], velocity[1]);
     // Avoidance begins with the actual velocity. Side displacement grows
@@ -109,64 +137,96 @@ Decision choose(const course_walls::World *walls, const course_walls::World *flo
     const float dt = horizon / steps;
     if (speed < .5f) {
         const float forward_length = std::hypot(forward[0], forward[1]);
-        if (!(forward_length > .01f)) return result;
+        if (!(forward_length > .01f))
+            return result;
         velocity[0] = forward[0] / forward_length * .5f;
         velocity[1] = forward[1] / forward_length * .5f;
     }
     const float reach = std::clamp(std::max(speed, 3.f) * horizon * .45f, 1.5f, 12.f);
+    // Reuse this bounded base path for every side candidate. Starting with the
+    // real velocity preserves drift; the road's bend is not a lane-change error.
+    std::array<Vec, 21> path{}, normals{};
+    for (unsigned step = 1; step <= steps; ++step) {
+        const float elapsed = (float(step) / steps) * horizon, angle = turn_rate * elapsed;
+        path[step] = displacement(velocity, elapsed, turn_rate);
+        if (turn_rate == 0) {
+            normals[step] = normal;
+            continue;
+        }
+        const float sine = std::sin(angle), cosine = std::cos(angle);
+        normals[step] = {normal[0] * cosine - normal[1] * sine,
+                         normal[1] * cosine + normal[0] * sine, 0};
+    }
     const float side = preferred_side < 0 ? -1.f : 1.f;
     float best = std::numeric_limits<float>::infinity(), chosen = 0;
     // Six candidates at most, evaluated only after a real approaching contact.
     // Every candidate sees the same hazard snapshot and fixed prediction times.
-    for (float fraction : {.4f, .7f, 1.f}) for (float direction : {side, -side}) {
-        const float offset = direction * reach * fraction;
-        if (offset < left || offset > right) continue;
-        std::array<course_walls::Sphere, 3> probes{};
-        std::copy(spheres.begin(), spheres.end(), probes.begin());
-        auto forecast = presented;
-        Vec previous{};
-        bool safe = true;
-        for (unsigned step = 1; step <= steps; ++step) {
-            const float t = float(step) / steps, elapsed = t * horizon;
-            // Cubic lane change, including zero initial lateral velocity.
-            const float lateral = offset * t * t * (3.f - 2.f * t);
-            Vec next{}, move{}, sample_velocity{};
-            for (unsigned k = 0; k < 3; ++k) {
-                next[k] = velocity[k] * elapsed + normal[k] * lateral;
-                move[k] = next[k] - previous[k];
-                sample_velocity[k] = move[k] / dt;
-            }
-            if (walls) {
-                const auto hit = course_walls::resolve(*walls,
-                    {probes.data(), spheres.size()}, move, sample_velocity);
-                if (hit.contacts && hit.normal_speed > 1e-5f) { safe = false; break; }
-            }
-            if (hazards) {
-                for (unsigned i = 0; i < forecast.count; ++i)
+    for (float fraction : {.4f, .7f, 1.f})
+        for (float direction : {side, -side}) {
+            const float offset = direction * reach * fraction;
+            if (offset < left || offset > right)
+                continue;
+            std::array<course_walls::Sphere, 3> probes{};
+            std::copy(spheres.begin(), spheres.end(), probes.begin());
+            auto forecast = presented;
+            Vec previous{};
+            bool safe = true;
+            for (unsigned step = 1; step <= steps; ++step) {
+                const float t = float(step) / steps;
+                // Cubic lane change, including zero initial lateral velocity.
+                const float lateral = offset * t * t * (3.f - 2.f * t);
+                Vec next{}, move{}, sample_velocity{};
+                for (unsigned k = 0; k < 3; ++k) {
+                    next[k] = path[step][k] + normals[step][k] * lateral;
+                    move[k] = next[k] - previous[k];
+                    sample_velocity[k] = move[k] / dt;
+                }
+                if (walls) {
+                    const auto hit = course_walls::resolve(*walls, {probes.data(), spheres.size()},
+                                                           move, sample_velocity);
+                    if (hit.contacts && hit.normal_speed > 1e-5f) {
+                        safe = false;
+                        break;
+                    }
+                }
+                if (hazards) {
+                    for (unsigned i = 0; i < forecast.count; ++i)
+                        for (unsigned k = 0; k < 3; ++k)
+                            forecast.poses[i].position[k] += forecast.poses[i].velocity[k] * dt;
+                    const auto hit = course_hazards::resolve_state(*hazards, forecast,
+                                                                   {probes.data(), spheres.size()},
+                                                                   move, sample_velocity, dt);
+                    if (hit.contacts && hit.normal_speed > 1e-5f) {
+                        safe = false;
+                        break;
+                    }
+                }
+                for (unsigned i = 0; i < spheres.size(); ++i)
                     for (unsigned k = 0; k < 3; ++k)
-                        forecast.poses[i].position[k] += forecast.poses[i].velocity[k] * dt;
-                const auto hit = course_hazards::resolve_state(*hazards, forecast,
-                    {probes.data(), spheres.size()}, move, sample_velocity, dt);
-                if (hit.contacts && hit.normal_speed > 1e-5f) { safe = false; break; }
+                        probes[i].center[k] += move[k];
+                if (floor && step % 2 == 0) {
+                    // A side route must have real finite support. The forward path
+                    // is deliberately not subject to this test: authored jumps keep
+                    // native momentum and remain legitimate airborne trajectories.
+                    auto support = probes[0];
+                    support.radius = .05f;
+                    support.center[2] += 2;
+                    const auto hit = course_walls::sweep_sphere(*floor, support, {0, 0, -6});
+                    if (!hit.hit || hit.normal[2] < .3f) {
+                        safe = false;
+                        break;
+                    }
+                }
+                previous = next;
             }
-            for (unsigned i = 0; i < spheres.size(); ++i)
-                for (unsigned k = 0; k < 3; ++k) probes[i].center[k] += move[k];
-            if (floor && step % 2 == 0) {
-                // A side route must have real finite support. The forward path
-                // is deliberately not subject to this test: authored jumps keep
-                // native momentum and remain legitimate airborne trajectories.
-                auto support = probes[0];
-                support.radius = .05f;
-                support.center[2] += 2;
-                const auto hit = course_walls::sweep_sphere(*floor, support, {0, 0, -6});
-                if (!hit.hit || hit.normal[2] < .3f) { safe = false; break; }
+            const float cost =
+                std::abs(offset) +
+                (preferred_side != 0 && offset * preferred_side < 0 ? reach * .2f : 0.f);
+            if (safe && cost < best) {
+                best = cost;
+                chosen = offset;
             }
-            previous = next;
         }
-        const float cost = std::abs(offset) +
-            (preferred_side != 0 && offset * preferred_side < 0 ? reach * .2f : 0.f);
-        if (safe && cost < best) { best = cost; chosen = offset; }
-    }
     if (std::isfinite(best)) {
         result.brake = false;
         result.steer = true;
@@ -205,8 +265,8 @@ bool eligible_racer(unsigned char *m, unsigned actor) {
     constexpr unsigned actors = 0x800D8570, stride = 0x118;
     const unsigned slot = (actor - actors) / stride;
     if (actor < actors || slot >= kMaximumRacers || (actor - actors) % stride ||
-        !half(m, actor + 0x24) || half(m, actor + 0x26) != 1 ||
-        word(m, actor + 8) != 0xFFFFFFFF || word(m, actor + 0x20) == 7)
+        !half(m, actor + 0x24) || half(m, actor + 0x26) != 1 || word(m, actor + 8) != 0xFFFFFFFF ||
+        word(m, actor + 0x20) == 7)
         return false;
     const auto rules = netplay::get_physics_rules();
     if (rules.active) {
@@ -254,18 +314,20 @@ thread_local std::array<PlannedControl, kMaximumRacers> planned{};
 
 PlannedControl *plan_for(unsigned actor) {
     constexpr unsigned actors = 0x800D8570, stride = 0x118;
-    if (actor < actors || (actor - actors) % stride ||
-        (actor - actors) / stride >= kMaximumRacers) return nullptr;
+    if (actor < actors || (actor - actors) % stride || (actor - actors) / stride >= kMaximumRacers)
+        return nullptr;
     return &planned[(actor - actors) / stride];
 }
 
 unsigned spheres_for(unsigned char *m, unsigned bike,
                      std::array<course_walls::Sphere, 3> &spheres) {
     const unsigned count = word(m, bike + 0x134);
-    if (!count || count > spheres.size()) return 0;
+    if (!count || count > spheres.size())
+        return 0;
     const Vec origin = vector(m, bike + 0x16C), x = vector(m, bike + 0x220),
               y = vector(m, bike + 0x238), z = vector(m, bike + 0x22C);
-    if (!finite(origin) || !finite(x) || !finite(y) || !finite(z)) return 0;
+    if (!finite(origin) || !finite(x) || !finite(y) || !finite(z))
+        return 0;
     for (unsigned i = 0; i < count; ++i) {
         const Vec local = vector(m, bike + 0x138 + i * 12);
         for (unsigned k = 0; k < 3; ++k)
@@ -273,7 +335,8 @@ unsigned spheres_for(unsigned char *m, unsigned bike,
                 ((local[0] * x[k] + local[1] * y[k]) + local[2] * z[k]) + origin[k];
         spheres[i].radius = real(m, bike + 0x15C + i * 4);
         if (!finite(spheres[i].center) || !std::isfinite(spheres[i].radius) ||
-            spheres[i].radius <= 0 || spheres[i].radius > 10) return 0;
+            spheres[i].radius <= 0 || spheres[i].radius > 10)
+            return 0;
     }
     return count;
 }
@@ -281,14 +344,13 @@ unsigned spheres_for(unsigned char *m, unsigned bike,
 float deceleration_for(unsigned char *m, unsigned bike, unsigned profile) {
     // Original55660 tyre grip, bike bias and per-rider braking profile.
     return ((real(m, bike + 0x9C) * real(m, 0x80005050) + real(m, 0x80005054)) *
-        real(m, 0x8009F260)) * std::min(real(m, bike + 0x3E0), real(m, bike + 0x318)) *
-        real(m, profile + 0x18);
+            real(m, 0x8009F260)) *
+           std::min(real(m, bike + 0x3E0), real(m, bike + 0x318)) * real(m, profile + 0x18);
 }
 
 Guidance *guidance_for(unsigned actor) {
     constexpr unsigned actors = 0x800D8570, stride = 0x118;
-    if (actor < actors || (actor - actors) % stride ||
-        (actor - actors) / stride >= kMaximumRacers)
+    if (actor < actors || (actor - actors) % stride || (actor - actors) / stride >= kMaximumRacers)
         return nullptr;
     return &guidance[(actor - actors) / stride];
 }
@@ -304,36 +366,42 @@ bool route_turn_radius(unsigned char *m, unsigned stack, float speed, float &rad
     constexpr unsigned stride = 0x50;
     const unsigned cache = word(m, 0x800A21C8), count = word(m, 0x800A21C4),
                    wrap = word(m, 0x800A21C0);
-    if (!valid_guest_range(stack, 0x64) || count < 4 || count > 8196 ||
-        !wrap || wrap > count || !valid_guest_range(cache, count * stride) ||
-        !std::isfinite(speed) || speed < 0 || speed > 1000)
+    if (!valid_guest_range(stack, 0x64) || count < 4 || count > 8196 || !wrap || wrap > count ||
+        !valid_guest_range(cache, count * stride) || !std::isfinite(speed) || speed < 0 ||
+        speed > 1000)
         return false;
     unsigned segment = word(m, stack + 0x58);
     double parameter = real(m, stack + 0x60);
-    if (segment >= count || !std::isfinite(parameter)) return false;
+    if (segment >= count || !std::isfinite(parameter))
+        return false;
     using Point = std::array<double, 2>;
-    struct Curve { std::array<Point, 3> p; double lo, hi; };
+    struct Curve {
+        std::array<Point, 3> p;
+        double lo, hi;
+    };
     const auto read = [&](unsigned index, Curve &curve) {
         const unsigned address = cache + index * stride;
-        for (unsigned i = 0; i < 3; ++i) for (unsigned k = 0; k < 2; ++k) {
-            curve.p[i][k] = real(m, address + i * 8 + k * 4);
-            if (!std::isfinite(curve.p[i][k])) return false;
-        }
+        for (unsigned i = 0; i < 3; ++i)
+            for (unsigned k = 0; k < 2; ++k) {
+                curve.p[i][k] = real(m, address + i * 8 + k * 4);
+                if (!std::isfinite(curve.p[i][k]))
+                    return false;
+            }
         curve.lo = real(m, address + 0x1C);
         curve.hi = real(m, address + 0x20);
-        return std::isfinite(curve.lo) && std::isfinite(curve.hi) &&
-               0 <= curve.lo && curve.lo <= curve.hi && curve.hi <= 1;
+        return std::isfinite(curve.lo) && std::isfinite(curve.hi) && 0 <= curve.lo &&
+               curve.lo <= curve.hi && curve.hi <= 1;
     };
     const auto point = [](const Curve &curve, double t) {
         const double u = 1 - t;
         Point p{};
         for (unsigned k = 0; k < 2; ++k)
-            p[k] = u*u*curve.p[0][k] + 2*u*t*curve.p[1][k] + t*t*curve.p[2][k];
+            p[k] = u * u * curve.p[0][k] + 2 * u * t * curve.p[1][k] + t * t * curve.p[2][k];
         return p;
     };
     Curve initial;
-    if (!read(segment, initial) || parameter < initial.lo - 1e-5 ||
-        parameter > initial.hi + 1e-5) return false;
+    if (!read(segment, initial) || parameter < initial.lo - 1e-5 || parameter > initial.hi + 1e-5)
+        return false;
     parameter = std::clamp(parameter, initial.lo, initial.hi);
     const Point middle = point(initial, parameter);
     // A spatial window has no retained steering history to drag through a
@@ -353,28 +421,31 @@ bool route_turn_radius(unsigned char *m, unsigned stack, float speed, float &rad
                 // Native cache construction appends the wrapped approach.
                 // Follow it continuously instead of jumping to curve0's
                 // earlier starting-grid point in the middle of this sample.
-                if (direction > 0 && index + 1 >= count) return false;
+                if (direction > 0 && index + 1 >= count)
+                    return false;
                 index = direction > 0 ? index + 1 : (index ? index - 1 : wrap - 1);
-                if (!read(index, curve)) return false;
+                if (!read(index, curve))
+                    return false;
                 t = direction > 0 ? curve.lo : curve.hi;
                 const Point joined = point(curve, t);
                 // Do not bridge unrelated/incomplete cache entries, including
                 // a nonclosed route that happens to have a wrap index.
-                if (std::hypot(joined[0]-here[0], joined[1]-here[1]) > .1) return false;
+                if (std::hypot(joined[0] - here[0], joined[1] - here[1]) > .1)
+                    return false;
                 here = joined;
                 continue;
             }
             const double fraction = (t - curve.lo) / (curve.hi - curve.lo) * 8;
-            const double grid = direction > 0 ? std::floor(fraction + 1e-8) + 1 :
-                                               std::ceil(fraction - 1e-8) - 1;
-            const double next_t = curve.lo + std::clamp(grid, 0.0, 8.0) *
-                                              (curve.hi - curve.lo) / 8;
+            const double grid =
+                direction > 0 ? std::floor(fraction + 1e-8) + 1 : std::ceil(fraction - 1e-8) - 1;
+            const double next_t = curve.lo + std::clamp(grid, 0.0, 8.0) * (curve.hi - curve.lo) / 8;
             const Point next = point(curve, next_t);
-            const double length = std::hypot(next[0]-here[0], next[1]-here[1]);
-            if (!std::isfinite(length)) return false;
+            const double length = std::hypot(next[0] - here[0], next[1] - here[1]);
+            if (!std::isfinite(length))
+                return false;
             if (length >= remaining && length > 1e-9) {
                 for (unsigned k = 0; k < 2; ++k)
-                    result[k] = here[k] + (next[k]-here[k]) * remaining / length;
+                    result[k] = here[k] + (next[k] - here[k]) * remaining / length;
                 return true;
             }
             remaining -= length;
@@ -384,24 +455,58 @@ bool route_turn_radius(unsigned char *m, unsigned stack, float speed, float &rad
         return false;
     };
     Point before{}, after{};
-    if (!advance(-1, before) || !advance(1, after)) return false;
-    const Point a{middle[0]-before[0], middle[1]-before[1]},
-                b{after[0]-middle[0], after[1]-middle[1]};
+    if (!advance(-1, before) || !advance(1, after))
+        return false;
+    const Point a{middle[0] - before[0], middle[1] - before[1]},
+        b{after[0] - middle[0], after[1] - middle[1]};
     const double denominator = std::hypot(a[0], a[1]) * std::hypot(b[0], b[1]) *
-                               std::hypot(after[0]-before[0], after[1]-before[1]);
-    if (!(denominator > 1e-6) || !std::isfinite(denominator)) return false;
-    const double curvature = 2 * (a[0]*b[1] - a[1]*b[0]) / denominator;
-    if (!std::isfinite(curvature)) return false;
+                               std::hypot(after[0] - before[0], after[1] - before[1]);
+    if (!(denominator > 1e-6) || !std::isfinite(denominator))
+        return false;
+    const double curvature = 2 * (a[0] * b[1] - a[1] * b[0]) / denominator;
+    if (!std::isfinite(curvature))
+        return false;
     // Native17204 uses zero as the straight-line sentinel, not infinity.
     radius = std::abs(curvature) < 1e-6 ? 0.f : float(1 / curvature);
     return std::isfinite(radius);
 }
 
+float forecast_turn_rate(unsigned char *m, unsigned bike, Vec velocity, Vec forward, Vec normal,
+                         float radius) {
+    const float speed = std::hypot(velocity[0], velocity[1]),
+                normal_length = std::hypot(normal[0], normal[1]),
+                forward_length = std::hypot(forward[0], forward[1]);
+    if (!finite(velocity) || !finite(forward) || !finite(normal) || !std::isfinite(radius) ||
+        radius == 0 || speed < .5f || normal_length < .01f || forward_length < .01f)
+        return 0;
+    // Native projection stores the left lateral normal. Positive radius/turn
+    // rotates +x toward +y, starting from physical velocity, not the route pose.
+    // A sideways slide/backwards rider cannot promise to follow this bend.
+    const Vec tangent{normal[1] / normal_length, -normal[0] / normal_length, 0};
+    if ((velocity[0] * tangent[0] + velocity[1] * tangent[1]) / speed < .8660254f ||
+        (forward[0] * tangent[0] + forward[1] * tangent[1]) / forward_length < .8660254f)
+        return 0;
+    // These are 3AD84's two wheel support queries and contact bottoms. Query
+    // heights are terrain units (four per world unit); allow one probe radius
+    // of separation, never the far-below floor that is also found during a jump.
+    for (const auto offsets :
+         {std::array{0x5C0u, 0x344u, 0x304u}, std::array{0x62Cu, 0x40Cu, 0x3CCu}}) {
+        const unsigned query = bike + offsets[0];
+        const float height = real(m, query + 8) * .25f,
+                    bottom = real(m, bike + offsets[1]) - real(m, bike + offsets[2]),
+                    margin = real(m, bike + offsets[2]);
+        if (!valid_guest_range(word(m, query + 0x34), 12) || !std::isfinite(height) ||
+            !std::isfinite(bottom) || !std::isfinite(margin) || margin <= 0 || margin > 10 ||
+            std::abs(bottom - height) > margin)
+            return 0;
+    }
+    return speed / radius;
+}
+
 void fit_corridor(unsigned char *m, recomp_context &c, unsigned kind) {
     if (kind > 1)
         return;
-    const unsigned actor = unsigned(kind ? c.r18 : c.r17),
-                   profile = unsigned(kind ? c.r23 : c.r20);
+    const unsigned actor = unsigned(kind ? c.r18 : c.r17), profile = unsigned(kind ? c.r23 : c.r20);
     auto *permission = guidance_for(actor);
     if (!permission)
         return;
@@ -416,7 +521,8 @@ void fit_corridor(unsigned char *m, recomp_context &c, unsigned kind) {
         return;
     }
     auto &pass = *permission;
-    if (kind == 0) pass = {m, actor, profile, false};
+    if (kind == 0)
+        pass = {m, actor, profile, false};
     unsigned left_address, right_address;
     if (kind == 0) {
         const unsigned steering = unsigned(c.r16);
@@ -435,10 +541,9 @@ void fit_corridor(unsigned char *m, recomp_context &c, unsigned kind) {
     // corridors can be narrower than twice that margin, inverting its bounds
     // and choosing a target outside the lane. Adapt only temporary f2, never
     // widen the authored road or overwrite a shared AI profile.
-    const float left = real(m, left_address), right = real(m, right_address),
-                margin = c.f2.fl;
-    if (!std::isfinite(left) || !std::isfinite(right) || right < left ||
-        !std::isfinite(margin) || margin < 0)
+    const float left = real(m, left_address), right = real(m, right_address), margin = c.f2.fl;
+    if (!std::isfinite(left) || !std::isfinite(right) || right < left || !std::isfinite(margin) ||
+        margin < 0)
         return;
     float half_width = (right - left) * .5f;
     if (!std::isfinite(half_width))
@@ -465,11 +570,13 @@ void relax_line(unsigned char *m, recomp_context &c) {
     *permission = {}; // Consume even when eligibility/owner validation fails.
     auto *control = plan_for(actor);
     const PlannedControl previous = control ? *control : PlannedControl{};
-    if (control) *control = {};
+    if (control)
+        *control = {};
     if (!eligible_racer(m, actor) || !valid_guest_range(ai, 0xB4) ||
         !valid_guest_range(projection, 0x20) || word(m, actor + 0x104) != ai ||
         word(m, actor + 0xF0) != projection) {
-        if (control) *control = {};
+        if (control)
+            *control = {};
         return;
     }
     const bool clear = pass.memory == m && pass.actor == actor && pass.unobstructed &&
@@ -485,8 +592,10 @@ void relax_line(unsigned char *m, recomp_context &c) {
     if (!std::isfinite(half_width) || !finite(velocity))
         return;
     float radius = c.f0.fl;
-    if (std::isfinite(radius) && route_turn_radius(m, unsigned(c.r29),
-            std::hypot(velocity[0], velocity[1]), radius))
+    const bool smoothed =
+        std::isfinite(radius) &&
+        route_turn_radius(m, unsigned(c.r29), std::hypot(velocity[0], velocity[1]), radius);
+    if (smoothed)
         c.f0.fl = radius;
     // MK64 navigation widths describe the donor's racing line, not a physical
     // rail. Give native momentum room beyond those widths; farther away,
@@ -500,24 +609,31 @@ void relax_line(unsigned char *m, recomp_context &c) {
     const auto *hazards = course_hazards::data();
     if (control && count && (walls || hazards)) {
         const float previous_side = previous.memory == m && previous.actor == actor &&
-            previous.bike == bike && tick - previous.tick <= 2 ? previous.side : 0;
+                                            previous.bike == bike && tick - previous.tick <= 2
+                                        ? previous.side
+                                        : 0;
         const auto state = hazards ? course_hazards::capture_state() : netplay::CourseHazardState{};
         // projection+14 is the native signed lateral normal used by4EB6C's
         // velocity damping. The same basis means a positive target has the
         // same steering sign as the original neighbour-avoidance branch.
         const Vec normal{real(m, projection + 0x14), real(m, projection + 0x18), 0};
-        const auto decision = choose(walls, course_walls::surface_world(), hazards, state,
-            {spheres.data(), count}, velocity, vector(m, bike + 0x220), normal,
-            deceleration_for(m, bike, word(m, actor + 0xF8)),
-            broad_left - current, broad_right - current, previous_side);
-        *control = {m, actor, bike, tick, decision,
-                    decision.steer ? decision.lateral : previous_side};
+        const Vec forward = vector(m, bike + 0x220);
+        const float turn_rate =
+            smoothed ? forecast_turn_rate(m, bike, velocity, forward, normal, radius) : 0;
+        const auto decision =
+            choose(walls, course_walls::surface_world(), hazards, state, {spheres.data(), count},
+                   velocity, forward, normal, deceleration_for(m, bike, word(m, actor + 0xF8)),
+                   broad_left - current, broad_right - current, previous_side, turn_rate);
+        *control = {m,    actor,    bike,
+                    tick, decision, decision.steer ? decision.lateral : previous_side};
         if (decision.steer) {
             c.f12.fl = -decision.lateral;
             return; // Retain complete native steering response to an obstacle.
         }
-    } else if (control) *control = {};
-    if (!clear || target < left || target > right) return;
+    } else if (control)
+        *control = {};
+    if (!clear || target < left || target > right)
+        return;
     const float nearest = std::clamp(current, broad_left, broad_right);
     c.f12.fl = current - nearest;
 }
@@ -533,19 +649,20 @@ void avoid(unsigned char *m, const recomp_context &c) {
         return;
     std::array<course_walls::Sphere, 3> spheres{};
     const unsigned count = spheres_for(m, bike, spheres);
-    if (!count) return;
+    if (!count)
+        return;
     const float target = real(m, stack + 0x64);
     if (!std::isfinite(target))
         return;
     auto *control = plan_for(actor);
     Decision decision;
-    if (control && control->memory == m && control->actor == actor &&
-        control->bike == bike && control->tick == word(m, 0x800A182C)) {
+    if (control && control->memory == m && control->actor == actor && control->bike == bike &&
+        control->tick == word(m, 0x800A182C)) {
         decision = control->decision;
     } else {
         const auto state = hazards ? course_hazards::capture_state() : netplay::CourseHazardState{};
-        decision = inspect(walls, hazards, state, {spheres.data(), count},
-            vector(m, bike + 0x178), vector(m, bike + 0x220), deceleration_for(m, bike, profile));
+        decision = inspect(walls, hazards, state, {spheres.data(), count}, vector(m, bike + 0x178),
+                           vector(m, bike + 0x220), deceleration_for(m, bike, profile));
     }
     // An alternate line was already fed into this frame's native steering.
     // Preserve native corner/traffic braking; add an emergency stop only when
@@ -556,27 +673,21 @@ void avoid(unsigned char *m, const recomp_context &c) {
     }
 }
 
-void reacquire(unsigned char *m, recomp_context &c) {
-    const unsigned actor = unsigned(c.r30);
-    // Original5A9DC admits only forward-facing curves ahead of saved progress.
-    // A crash can leave an attached, healthy AI facing backwards or behind that
-    // search window. It then returns -1 on every retry. Reacquire navigation
-    // from physical position only after that exact failure, like a rider
-    // looking for the track; do not reset the crash animation or move the bike.
-    if (unsigned(c.r2) != 0xFFFFFFFF || !eligible_racer(m, actor)) return;
+unsigned nearest_route_segment(unsigned char *m, unsigned actor) {
     const auto *data = experimental_course::route_data();
     if (!data || !data->records_be || !data->record_heights ||
         data->height_count != data->record_count || data->record_count < 5 ||
         data->record_count > 8192 || data->byte_count != data->record_count * 16 ||
         data->wrap_segment < 2 || data->wrap_segment + 2 >= data->record_count ||
-        (data->wrap_segment & 1)) return;
-    const unsigned bike = word(m, actor + 0xE0), course_projection = word(m, actor + 0xEC);
-    if (!valid_guest_range(course_projection, 12)) return;
+        (data->wrap_segment & 1))
+        return 0;
+    const unsigned bike = word(m, actor + 0xE0);
     const Vec here = vector(m, bike + 0x16C);
-    if (!finite(here)) return;
+    if (!finite(here))
+        return 0;
     const auto number = [](const std::uint8_t *p) {
         return std::bit_cast<float>((unsigned(p[0]) << 24) | (unsigned(p[1]) << 16) |
-            (unsigned(p[2]) << 8) | unsigned(p[3]));
+                                    (unsigned(p[2]) << 8) | unsigned(p[3]));
     };
     double best = std::numeric_limits<double>::infinity();
     unsigned segment = 0;
@@ -592,35 +703,117 @@ void reacquire(unsigned char *m, recomp_context &c) {
             points[i] = {number(p + 8), number(p + 12), data->record_heights[s + i]};
             valid &= finite(points[i]);
         }
-        if (!valid) continue;
+        if (!valid)
+            continue;
         const auto error = [&](double t) {
             const double u = 1 - t;
             double sum = 0;
             for (unsigned k = 0; k < 3; ++k) {
-                const double d = u*u*points[0][k] + 2*u*t*points[1][k] +
-                    t*t*points[2][k] - here[k];
-                sum += d*d;
+                const double d = u * u * points[0][k] + 2 * u * t * points[1][k] +
+                                 t * t * points[2][k] - here[k];
+                sum += d * d;
             }
             return sum;
         };
         double local = std::numeric_limits<double>::infinity(), parameter = 0;
         for (unsigned sample = 0; sample <= 8; ++sample) {
             const double t = sample / 8.0, e = error(t);
-            if (e < local) { local = e; parameter = t; }
+            if (e < local) {
+                local = e;
+                parameter = t;
+            }
         }
         double lo = std::max(0.0, parameter - .125), hi = std::min(1.0, parameter + .125);
         for (unsigned iteration = 0; iteration < 12; ++iteration) {
-            const double a = (2*lo+hi)/3, b = (lo+2*hi)/3;
-            if (error(a) < error(b)) hi = b; else lo = a;
+            const double a = (2 * lo + hi) / 3, b = (lo + 2 * hi) / 3;
+            if (error(a) < error(b))
+                hi = b;
+            else
+                lo = a;
         }
-        local = std::min(local, error((lo+hi)*.5));
-        if (local < best) { best = local; segment = s; }
+        local = std::min(local, error((lo + hi) * .5));
+        if (local < best) {
+            best = local;
+            segment = s;
+        }
     }
-    if (!segment || !std::isfinite(best)) return;
+    return std::isfinite(best) ? segment : 0;
+}
+
+void reacquire(unsigned char *m, recomp_context &c) {
+    const unsigned actor = unsigned(c.r30);
+    // Original5A9DC can reject a remounted rider facing backwards or behind
+    // saved progress. Supply guidance from physical position after failure.
+    if (unsigned(c.r2) != 0xFFFFFFFF || !eligible_racer(m, actor))
+        return;
+    const unsigned course_projection = word(m, actor + 0xEC);
+    if (!valid_guest_range(course_projection, 12))
+        return;
+    const unsigned segment = nearest_route_segment(m, actor);
+    if (!segment)
+        return;
     // This is the same transient field native5ABB8 writes on success. Native
     //4F658/52038 still perform actual curve projection and lap/progress rules.
     write_u32(m, course_projection, segment);
     c.r2 = segment;
+}
+
+void retry_projection(unsigned char *m, recomp_context &c) {
+    //4EB6C before4ED04: the search returned a curve, but actual projection
+    // rejected it. A forward-only search can otherwise repeat this forever.
+    const unsigned actor = unsigned(c.r19), projection = unsigned(c.r18), rider = unsigned(c.r21),
+                   stack = unsigned(c.r29);
+    if (c.r2 != 0 || !eligible_racer(m, actor) || word(m, actor + 0xF0) != projection ||
+        word(m, actor + 0xE4) != rider || !valid_guest_range(projection, 0x20) ||
+        !valid_guest_range(stack - 0x200, 0x2A0))
+        return;
+    const unsigned course_projection = word(m, actor + 0xEC), cache = word(m, 0x800A21C8),
+                   count = word(m, 0x800A21C4), wrap = word(m, 0x800A21C0);
+    if (!valid_guest_range(course_projection, 12) || count < 4 || count > 8196 || !wrap ||
+        wrap >= count || !valid_guest_range(cache, count * 0x50))
+        return;
+    const unsigned segment = nearest_route_segment(m, actor);
+    if (!segment || segment >= count || word(m, cache + segment * 0x50 + 0x18) != segment)
+        return;
+    const unsigned bike = word(m, actor + 0xE0);
+    if (!finite(vector(m, rider + 0x8C)) || !finite(vector(m, bike + 0xDC)))
+        return;
+
+    // Retry the native projection once. Preserve its scratch and partial
+    // outputs on failure; success publishes only the original call's outputs.
+    std::array<unsigned char, 0x2A0> saved_stack{};
+    std::array<unsigned char, 0x14> saved_projection{};
+    std::memcpy(saved_stack.data(), m + (stack - 0x200 - kRdramBegin), saved_stack.size());
+    std::memcpy(saved_projection.data(), m + (projection + 0xC - kRdramBegin),
+                saved_projection.size());
+    write_u32(m, stack + 0x4C, segment);
+    for (unsigned i = 0; i < 3; ++i)
+        write_u32(m, projection + 0x14 + 4 * i, word(m, bike + 0xDC + 4 * i));
+    write_u32(m, stack + 0x10, projection + 0x10);
+    write_u32(m, stack + 0x14, stack + 0x38);
+    write_u32(m, stack + 0x18, projection + 0x14);
+    auto call = c;
+    call.f_odd = &call.f0.u32h;
+    call.r4 = guest_address(actor);
+    call.r5 = guest_address(rider + 0x8C);
+    call.r6 = guest_address(stack + 0x4C);
+    call.r7 = guest_address(projection + 0xC);
+    func_8004F658(m, &call);
+    const unsigned projected_segment = word(m, stack + 0x4C);
+    std::array<unsigned char, 12> projected_point{};
+    std::memcpy(projected_point.data(), m + (stack + 0x38 - kRdramBegin), projected_point.size());
+    std::memcpy(m + (stack - 0x200 - kRdramBegin), saved_stack.data(), saved_stack.size());
+    if (!call.r2 || projected_segment >= count || !std::isfinite(real(m, projection + 0xC)) ||
+        !std::isfinite(real(m, projection + 0x10)) || !finite(vector(m, projection + 0x14))) {
+        std::memcpy(m + (projection + 0xC - kRdramBegin), saved_projection.data(),
+                    saved_projection.size());
+        return;
+    }
+    write_u32(m, stack + 0x4C, projected_segment);
+    std::memcpy(m + (stack + 0x38 - kRdramBegin), projected_point.data(), projected_point.size());
+    write_u32(m, course_projection, segment);
+    c.r2 = call.r2;
+    // The caller still requires52038 before marking navigation recovered.
 }
 }
 }
@@ -642,4 +835,9 @@ extern "C" void rr64_course_ai_relax_line(unsigned char *m, void *context) {
 extern "C" void rr64_course_ai_reacquire(unsigned char *m, void *context) {
     if (context)
         rr64::course_ai::reacquire(m, *static_cast<recomp_context *>(context));
+}
+
+extern "C" void rr64_course_ai_retry_projection(unsigned char *m, void *context) {
+    if (context)
+        rr64::course_ai::retry_projection(m, *static_cast<recomp_context *>(context));
 }

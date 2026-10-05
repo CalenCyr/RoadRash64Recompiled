@@ -10,8 +10,8 @@ p.add_argument('output', type=Path)
 p.add_argument('config', type=Path)
 p.add_argument('--candidate-config', action='store_true')
 a = p.parse_args()
-names = {'func_8001F960', 'func_8001F990', 'func_8001F9BC', 'func_800207DC', 'func_80020BE8', 'func_80020ECC',
-         'func_8005F480', '_bcopy', '_bzero'}
+names = {'func_8001F960', 'func_8001F990', 'func_8001F9BC', 'func_800207DC', 'func_80020BE8', 'func_80020ECC', 'func_80048484',
+         'func_8005F420', 'func_8005F480', '_bcopy', '_bzero'}
 functions = {}
 for path in a.generated.glob('funcs_*.c'):
     for match in re.finditer(r'RECOMP_FUNC void (\w+)\(.*?(?=RECOMP_FUNC void|\Z)',
@@ -22,7 +22,7 @@ assert functions.keys() == names
 
 hooks = 0
 for line in a.config.read_text().splitlines():
-    if not re.search(r'rr64_campaign_bonus_(?:new_profile|scan|capture|load|save)\(', line) or line.lstrip().startswith('#'):
+    if not re.search(r'rr64_campaign_(?:bonus_(?:new_profile|scan|capture|load|save)|menu_unlocks|passive_scan|restore_unlocks)\(', line) or line.lstrip().startswith('#'):
         continue
     match = re.fullmatch(r'\s*\{\s*func\s*=\s*"(\w+)"\s*,\s*'
                          r'(?:before_vram\s*=\s*(0x[0-9A-Fa-f]+)\s*,\s*)?'
@@ -44,7 +44,7 @@ for line in a.config.read_text().splitlines():
         code = code.replace(marker, '    ' + statement + '\n' + marker)
     functions[name] = code
     hooks += 1
-assert hooks == 5
+assert hooks == 8
 
 def slice_function(name, alias, start, end, tail=''):
     code = functions[name]
@@ -60,15 +60,19 @@ def slice_function(name, alias, start, end, tail=''):
             '\n' + tail + '\n}\n')
 
 parts = [functions[n] for n in ('func_8001F960', 'func_8001F990', 'func_8001F9BC',
-                               '_bcopy', '_bzero', 'func_8005F480',
+                               '_bcopy', '_bzero', 'func_8005F420', 'func_8005F480',
                                'func_800207DC', 'func_80020ECC')]
 parts.append(slice_function('func_80020BE8', 'test_bonus_native_save',
                            0x80020E04, 0x80020E60))
+# Run the real mode commit and its hook up to, but not into, the menu initializer.
+parts.append(slice_function('func_80048484', 'test_campaign_menu_entry',
+                           0x800484E4, 0x80048504))
 code = ''.join(parts)
 calls = set(re.findall(r'^\s+(\w+)\(rdram, ctx\);', code, re.M))
-decls = '\n'.join(f'void {name}(uint8_t*,recomp_context*);' for name in sorted(calls))
+decls = '\n'.join(f'void {name}(uint8_t*,recomp_context*);' for name in sorted(calls)
+                  if not name.startswith('rr64_'))
 output = ('#include "recomp.h"\n#include "rr64_native.hpp"\nextern "C" {\n' +
           decls + '\n' + code + '\n}\n')
 a.output.parent.mkdir(parents=True, exist_ok=True)
 a.output.write_text(output)
-print(f'Extracted five persistence hooks, full native scan/cache/error paths, checksum, 248-byte copies and 256-byte Pak I/O; candidate={a.candidate_config}')
+print(f'Extracted eight save/unlock hooks, native menu entry, full scan/cache/error paths, checksum, 248-byte copies and 256-byte Pak I/O; candidate={a.candidate_config}')

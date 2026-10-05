@@ -10,11 +10,12 @@ struct Decision {
     float lateral = 0;
     bool steer = false;
 };
-// Read-only, bounded lookahead. It does not change the route or move an actor.
+// Read-only, bounded lookahead. Positive turn_rate is radians/second from +x
+// toward +y; zero preserves linear prediction. No route or actor is moved.
 Decision inspect(const course_walls::World *, const course_hazards::Data *,
                  const netplay::CourseHazardState &, std::span<const course_walls::Sphere>,
-                 course_walls::Vec velocity, course_walls::Vec forward,
-                 float braking_acceleration) noexcept;
+                 course_walls::Vec velocity, course_walls::Vec forward, float braking_acceleration,
+                 float turn_rate = 0) noexcept;
 // Prefer a swept, supported side route over stopping in front of a finite
 // obstacle. The caller supplies its native lateral normal and usable offsets.
 // An absent floor world permits fixture-only geometric queries; production
@@ -23,8 +24,8 @@ Decision choose(const course_walls::World *, const course_walls::World *floor,
                 const course_hazards::Data *, const netplay::CourseHazardState &,
                 std::span<const course_walls::Sphere>, course_walls::Vec velocity,
                 course_walls::Vec forward, course_walls::Vec lateral_normal,
-                float braking_acceleration, float left, float right,
-                float preferred_side = 0) noexcept;
+                float braking_acceleration, float left, float right, float preferred_side = 0,
+                float turn_rate = 0) noexcept;
 }
 extern "C" {
 #endif
@@ -40,6 +41,9 @@ void rr64_course_ai_relax_line(unsigned char *memory, void *context);
 // 5A9DC before5ABC0: fp=actor,v0=native curve or -1. Reacquire only
 // failed imported guidance; native remount, world pose and scoring are intact.
 void rr64_course_ai_reacquire(unsigned char *memory, void *context);
+//4EB6C before4ED04: v0=projection result; s3=actor,s2=projection,s5=rider.
+// Retry failed imported reacquisition once; original progress checks follow.
+void rr64_course_ai_retry_projection(unsigned char *memory, void *context);
 #ifdef __cplusplus
 }
 #endif

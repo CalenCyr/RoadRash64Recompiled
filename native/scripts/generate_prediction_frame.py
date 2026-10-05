@@ -83,7 +83,7 @@ for text in [*(functions[n] for n in sorted(seen)),prefix,order]:
     # The original private sound path still uses its isolated mixer services.
     text=re.sub(r'if \(rr64_rival_engine_(?:gain|allocate)\(rdram, ctx\)\) return;',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)
-    text=re.sub(r'\brr64_rival_engine_(?:frame|gate|threshold|pitch|no_steal|allocated|child_adopt)\(rdram, ctx\);',
+    text=re.sub(r'\brr64_rival_engine_(?:frame|gate|threshold|pitch|transition|no_steal|allocated|child_adopt)\(rdram, ctx\);',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)
     text=re.sub(r'\brr64_rival_engine_(?:mode|recovery)\(rdram, ctx, \(unsigned\)ctx->r(?:4|17)\);',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)

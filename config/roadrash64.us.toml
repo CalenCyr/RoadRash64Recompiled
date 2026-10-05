@@ -48,6 +48,11 @@ renamed = []
 # by the native helper, allowing a black-screen run to identify the exact guest
 # initialization call that did not return.
 hook = [
+    # Tile bounds are inclusive. The shared 4-bit sprite path used width/height
+    # instead of the last texel, exposing the next TMEM row beside route dots.
+    # Match the 8-bit path; leave rectangle positions, scales and UVs intact.
+    { func = "func_8001CFB8", before_vram = 0x8001E0D4, text = "ctx->r2 = ADD32(ctx->r2, -4);" },
+    { func = "func_8001CFB8", before_vram = 0x8001E0E0, text = "ctx->r3 = ADD32(ctx->r3, -4);" },
     # Optional native rider skins extend selector wrap points only. The guest
     # keeps valid male/female donor IDs; appearance IDs live outside save data.
     { func = "func_800256C0", before_vram = 0x80026CB8, text = "ctx->r3 = (int32_t)rr64_rider_skin_cycle(rdram, 0, (int32_t)ctx->r3);" },
@@ -338,6 +343,8 @@ hook = [
     { func = "func_8005980C", before_vram = 0x80059858, text = "rr64_rival_engine_gate(rdram, ctx);" },
     { func = "func_80059648", text = "if (rr64_rival_engine_gain(rdram, ctx)) return;" },
     { func = "func_80058600", before_vram = 0x80058610, text = "rr64_rival_engine_threshold(rdram, ctx);" },
+    # Keep the previous rival loop audible until a replacement voice can fit.
+    { func = "func_800571DC", before_vram = 0x800574B4, text = "rr64_rival_engine_transition(rdram, ctx);" },
     { func = "func_800571DC", before_vram = 0x8005753C, text = "rr64_rival_engine_pitch(rdram, ctx);" },
     # Every rival row, including native script children, needs free capacity.
     # Its allocator may never steal an existing voice; four effect rows remain.
@@ -500,6 +507,9 @@ hook = [
     # Failed stock AI reacquisition may leave a recovered rider facing backwards.
     # Supply only a navigation segment; original projection still owns the route.
     { func = "func_8005A9DC", before_vram = 0x8005ABC0, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_ai_reacquire(rdram,ctx);\n#endif\n" },
+    # A successful search can still fail actual projection. Retry guidance once
+    # before returning without controls; native progress validation follows.
+    { func = "func_8004EB6C", before_vram = 0x8004ED04, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_ai_retry_projection(rdram,ctx);\n#endif\n" },
     # Pair the shared offline freeze callback above with the physics guard.
     # This takes the loop's inactive branch for paired bike/rider
     # physics, preserving its delay-slot pointer increments. No actor flag is
@@ -629,6 +639,10 @@ hook = [
     { func = "func_80022C90", before_vram = 0x80023810, text = "ctx->r4 = rr64_campaign_ending_exit(rdram, ctx->r4);" },
     { func = "func_80073658", before_vram = 0x80073718, text = "rr64_campaign_finish_menu(rdram);" },
     { func = "func_800207DC", before_vram = 0x80020AB4, text = "if (ctx->r18 == ctx->r17) rr64_campaign_restore_unlocks(rdram, (unsigned)ctx->r16);" },
+    # Restore saved race unlocks before the main menu, without loading a profile.
+    # Passive discovery must never run the native invalid-save deletion path.
+    { func = "func_80048484", before_vram = 0x80048504, text = "rr64_campaign_menu_unlocks(rdram, ctx);" },
+    { func = "func_800207DC", before_vram = 0x80020AC0, text = "if (rr64_campaign_passive_scan()) { MEM_W(0, ctx->r20) = 1; goto L_80020B10; }" },
 
     # func_80061224 is entered only after the stock bike/rider collision path
     # accepts an impact. Pulse every involved local port at that boundary so
@@ -780,7 +794,8 @@ hook = [
     { func = "func_80051F00", before_vram = 0x80051F5C, text = "ctx->r3 = (int32_t)rr64_local_bike_profile(rdram, ctx->r11, ctx->r3); ctx->r3 = (int32_t)rr64_online_bike_profile(rdram, ctx->r11, ctx->r3);" },
     # Replicated network riders use native AI allocation slots. Preserve their
     # confirmed identity before its profile store and physics resolution.
-    { func = "func_800516B8", before_vram = 0x80051D04, text = "ctx->r5 = (int32_t)rr64_online_bike_profile(rdram, ctx->r4, ctx->r5);" },
+    # Randomize actual AI models before restoring any confirmed online human's selection.
+    { func = "func_800516B8", before_vram = 0x80051D04, text = "ctx->r5 = rr64_ai_bike_profile(rdram, ctx, ctx->r5); ctx->r5 = (int32_t)rr64_online_bike_profile(rdram, ctx->r4, ctx->r5);" },
     { func = "func_8003EF78", before_vram = 0x8003EFD0, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
     { func = "func_8003EF78", before_vram = 0x8003F008, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },
     { func = "func_8003E924", before_vram = 0x8003E9F0, text = "ctx->r2 = rr64_local_bike_level(ctx->r2);" },

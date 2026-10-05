@@ -1,10 +1,14 @@
-# Multiplayer and course ownership in 1.4.3
+# 1.4.4 compatibility
+
+Use matching protocol 68 builds. Imported racer guidance is owned by the host.
+
+# Multiplayer and course ownership in 1.4.4
 
 Online remains experimental. Preserve original local multiplayer behavior unless
 a change explicitly requires altering it. The active implementation is the
 host-authoritative runtime in `native/src/rr64_netplay.cpp` and its authoritative
 step/prediction helpers. Earlier relay/lobby prototypes are not foundations for
-new work. 1.4.3 uses protocol **66**; all participants must use the same release.
+new work. 1.4.4 uses protocol **68**; all participants must use the same release.
 Public 1.4.2 protocol 65 sessions are incompatible.
 
 - The host owns shared settings, race state and pause. Each participant selects

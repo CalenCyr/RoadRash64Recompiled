@@ -159,6 +159,7 @@ struct UiState {
     recompui::Element* pending_focus = nullptr;
     unsigned focus_delay_frames = 0;
     bool initialized = false, online_entry_queued = false, course_blocked = false;
+    bool session_active = false;
 };
 UiState g_ui;
 std::atomic_bool g_reset_local_requested = false, g_reset_session_requested = false;
@@ -204,8 +205,8 @@ int main() {
         require(recompui::pending_text.empty(), "hidden offline lobby queued a text update");
         require(fixture::current_context == 2, "hidden update lost the caller context");
     }
-    require(fixture::text_writes == 0 && fixture::resets == 100'000,
-        "hidden refresh must retain offline setup cleanup without allocating text");
+    require(fixture::text_writes == 0 && fixture::resets == 0,
+        "offline polling must not rearm local option restoration and rebuild the route preview every frame");
 
     // Show requests are handled before visibility: latest names/ready state
     // must be queued on that same frame, with no empty or stale first frame.
@@ -237,9 +238,14 @@ int main() {
     require(fixture::queued_entries == old_entries + 1 && g_ui.online_entry_queued,
         "hidden GameSetup must queue exactly one original-menu transition");
     require(recompui::pending_text.empty(), "hidden GameSetup accumulated text");
+    const auto resets_before_disconnect = fixture::resets;
     netplay::state = {};
     update_ui();
-    require(!g_ui.online_entry_queued, "offline teardown must clear online-entry state");
+    require(!g_ui.online_entry_queued && fixture::resets == resets_before_disconnect + 1,
+        "online-to-offline teardown must clear entry state and restore local choices once");
+    for (unsigned frame = 0; frame < 1000; ++frame) update_ui();
+    require(fixture::resets == resets_before_disconnect + 1,
+        "stable offline frames must let the native route preview finish building after disconnect");
 
     // Guest menu teardown/re-entry is consumed while hidden, including local
     // multiplayer input assignment and return-to-single-player requests.

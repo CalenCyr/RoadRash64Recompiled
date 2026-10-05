@@ -39,7 +39,9 @@ unsigned written_revision = 0;
 unsigned solo_written_revision = 0;
 std::filesystem::path settings_path;
 std::filesystem::path solo_settings_path;
-bool initialized = false, menu_active = false, restore_choices = true;
+bool initialized = false, menu_active = false;
+// Session resets arrive from the UI thread; the game thread consumes them.
+std::atomic<bool> restore_choices{true};
 bool mk64_items_row = false;
 // Packed preferences: AI count [0:3], pedestrian density [4:5], bike choice
 // [6:8], Custom Cop Mode [9], allow AI cops [10] (off for old presets). Bike choice 0 follows the
@@ -360,10 +362,9 @@ extern "C" int rr64_local_options_input(unsigned char *rdram) {
         return 0;
     }
     unsigned bits = choices();
-    if (restore_choices) {
+    if (restore_choices.exchange(false, std::memory_order_acq_rel)) {
         write(rdram, layout::pedestrian_choice, (bits >> 4) & 3);
         write(rdram, layout::menu_dirty, 1);
-        restore_choices = false;
     }
     const unsigned row = read(rdram, layout::menu_cursor);
     const unsigned buttons = read(rdram, layout::menu_buttons) & 0x60;

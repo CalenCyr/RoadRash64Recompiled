@@ -74,6 +74,7 @@ struct Scope {
     unsigned bike = 0, slot = 14;
     gpr stack = 0;
     float gain = 0, pan = 128, doppler = 0;
+    unsigned replacing = 0;
 };
 thread_local Scope producer;
 struct Binding {
@@ -137,12 +138,13 @@ VoicePool pool(unsigned char *m) {
     }
     return p;
 }
-bool owned_handle(unsigned char *m, unsigned handle, const VoicePool &p) {
+bool owned_handle(unsigned char *m, unsigned handle, const VoicePool &p, bool retiring = false) {
     if (!p.valid)
         return false;
     for (unsigned i = 4; i < p.count; ++i) {
         const auto row = p.base + i * voice_stride;
-        if (word(m, row + 4) && word(m, row + 0x44) == handle && owned(m, row, handle, p))
+        if (word(m, row + 4) && word(m, row + 0x44) == handle && owned(m, row, handle, p) &&
+            (!retiring || word(m, row + 0x10) != ~0u))
             return true;
     }
     return false;
@@ -394,6 +396,36 @@ extern "C" void rr64_rival_engine_pitch(unsigned char *m, void *raw) {
     // this steady-engine branch and retain their original authored pitch.
     ctx.f20.fl += producer.doppler;
 }
+extern "C" void rr64_rival_engine_transition(unsigned char *m, void *raw) {
+    if (!raw || prediction::active() || producer.memory != m || producer.context != raw ||
+        producer.slot >= 14)
+        return;
+    auto &ctx = *static_cast<recomp_context *>(raw);
+    if (ctx.r29 != producer.stack || static_cast<unsigned>(ctx.r18) != producer.bike ||
+        static_cast<unsigned>(ctx.r17) != cache(producer.slot))
+        return;
+    const auto handle = word(m, cache(producer.slot));
+    const auto effect = word(m, cache(producer.slot) + 4);
+    const auto voices = pool(m);
+    if (static_cast<unsigned>(ctx.r16) == effect || !owned_handle(m, handle, voices))
+        return;
+    float gain = 0;
+    // 58600 rejects replacements at its quiet-start threshold before the
+    // allocator. Keep the existing loop and let its normal volume update fade
+    // it; stopping it first creates a gap when distant bikes change RPM clips.
+    if (!engine::read_float(m, static_cast<unsigned>(ctx.r29) + 0x18, gain) ||
+        !std::isfinite(gain) || gain <= 1.f) {
+        ctx.r16 = effect;
+        return;
+    }
+    // Native 574C0 stops the old RPM loop before starting its replacement.
+    // Keep it playing if no transition row is available: otherwise a full pack
+    // can stop every engine, then deny every restart until the worker releases.
+    if (voices.free > reserved_effect_voices && voices.owned < maximum_engines + 1)
+        producer.replacing = handle;
+    else
+        ctx.r16 = effect;
+}
 extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
     if (!m || !raw || prediction::active())
         return;
@@ -443,6 +475,9 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
                 rr64::rival_engine::get_volume_percent());
     }
     const float dt = runtime.observed ? std::clamp(clock - runtime.clock, 0.f, .1f) : 1.f / 60.f;
+    // Reach 95% of a gain change in about 180 ms at every volume. A fixed
+    // full-scale step erased quiet, distant voices in a single update.
+    const float gain_blend = -std::expm1(-dt / .06f);
     runtime.clock = clock;
     runtime.observed = true;
     std::array<Listener, 4> ears{};
@@ -475,14 +510,16 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
                 sum += d * d;
             }
             const float distance = std::sqrt(sum);
+            const float rank = 1.f / (full_volume_distance + distance);
             // Nearby bikes reach the slider's full level, followed by a longer
             // smooth fade. Selection and native voice headroom remain bounded.
             const float t = std::clamp((distance - full_volume_distance) /
                                            (audible_distance - full_volume_distance),
                                        0.f, 1.f);
             const float gain = (1.f - t * t * (3.f - 2.f * t)) * volume;
-            if (gain <= c.gain)
+            if (rank <= c.rank)
                 continue;
+            c.rank = rank;
             c.gain = gain;
             c.listener = ears[i];
             c.doppler_valid = doppler_offset(m, b, ears[i], c.doppler);
@@ -496,7 +533,8 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
         }
         if (c.gain <= .001f)
             continue;
-        c.rank = c.gain;
+        // Rank by proximity rather than the nearly flat close-range gain.
+        // A passing bike can then replace a farther voice, even at full volume.
         for (const auto &e : runtime.engines)
             if (e.source.slot == slot && e.source.bike == b.bike)
                 c.rank *= 1.15f;
@@ -530,7 +568,10 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
             for (unsigned i = 0; i < selected; ++i)
                 if (candidates[i].source.slot == e.source.slot)
                     target = &candidates[i];
-            e.gain = approach(e.gain, target ? target->gain : 0, dt / .18f);
+            const float target_gain = target ? target->gain : 0;
+            e.gain += (target_gain - e.gain) * gain_blend;
+            if (std::abs(target_gain - e.gain) < .001f)
+                e.gain = target_gain;
             if (target) {
                 e.pan = approach(e.pan, target->pan, 112.f * dt / .12f);
                 if (target->doppler_valid && continuous_listener(e.listener, target->listener))
@@ -540,7 +581,7 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
                 e.listener = target->listener;
             } else
                 e.doppler = approach(e.doppler, 0, 12.f * dt / .18f);
-            if (e.gain <= .001f) {
+            if (!target && e.gain <= .001f) {
                 stop(m, call, e);
                 continue;
             }
@@ -556,7 +597,7 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
                 e.source = candidates[i].source;
                 e.listener = candidates[i].listener;
                 e.pan = candidates[i].pan;
-                e.gain = std::min(candidates[i].gain, dt / .18f);
+                e.gain = candidates[i].gain * gain_blend;
                 break;
             }
     }
@@ -660,7 +701,12 @@ extern "C" int rr64_rival_engine_allocate(unsigned char *m, void *raw) {
         return 1;
     }
     const auto p = pool(m);
-    if (!p.valid || p.free <= reserved_effect_voices || p.owned >= maximum_engines) {
+    // One temporary row bridges an owned loop's pending stop. It cannot add a
+    // fourth source or script child, and still leaves four genuinely free rows.
+    const bool replacement = producer.memory == m && producer.context == raw &&
+                             owned_handle(m, producer.replacing, p, true);
+    if (!p.valid || p.free <= reserved_effect_voices ||
+        p.owned >= maximum_engines + unsigned(replacement)) {
         ++denied;
         ctx.r2 = 0;
         return 1;

@@ -19,6 +19,7 @@ add_executable(RoadRash64Recompiled
     src/rr64_custom_cop_ui.cpp
     src/rr64_custom_cop_runtime.cpp
     src/rr64_local_race_options.cpp
+    src/rr64_ai_bike_selection.cpp
     src/rr64_thrash_options.cpp
     src/rr64_campaign_completion.cpp
     src/rr64_campaign_bonus_save.cpp
